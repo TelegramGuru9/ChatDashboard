@@ -12,7 +12,7 @@ alembic==1.12.1
 pgvector==0.2.4
 
 # ==================== TELEGRAM ====================
-Telethon==1.30.4
+Telethon==1.36.0
 
 # ==================== AI & EMBEDDINGS ====================
 anthropic==0.7.1
