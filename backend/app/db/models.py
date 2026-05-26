@@ -73,7 +73,7 @@ class User(Base):
     
     # Tags & Metadata
     tags = Column(ARRAY(String), default=[], nullable=False)  # ["vip", "interested"]
-    metadata = Column(JSONB, default={}, nullable=False)
+    extra_data = Column("metadata", JSONB, default={}, nullable=False)
     # metadata: {
     #   "source": "organic|referral",
     #   "funnel_stage": "awareness|consideration|decision",
@@ -156,7 +156,7 @@ class Message(Base):
     )  # Telegram's parent message ID
     
     # Metadata
-    metadata = Column(JSONB, default={}, nullable=False)
+    extra_data = Column("metadata", JSONB, default={}, nullable=False)
     # metadata: {
     #   "sentiment": "positive|neutral|negative",
     #   "intent": "inquiry|complaint|feedback",
@@ -231,7 +231,7 @@ class Memory(Base):
     last_accessed_at = Column(DateTime, nullable=True)
     
     # Metadata
-    metadata = Column(JSONB, default={}, nullable=False)
+    extra_data = Column("metadata", JSONB, default={}, nullable=False)
     # metadata: {
     #   "source": "conversation|extraction|manual",
     #   "importance": "high|medium|low",
@@ -301,7 +301,7 @@ class Conversation(Base):
     # initial → interested → qualified → nurture → converted → inactive
     
     # Metadata
-    metadata = Column(JSONB, default={}, nullable=False)
+    extra_data = Column("metadata", JSONB, default={}, nullable=False)
     # metadata: {
     #   "conversion_likelihood": 0.75,
     #   "blockers": ["price", "timing"],
@@ -456,7 +456,7 @@ class Analytics(Base):
     avg_claude_tokens_used = Column(Integer, default=0)
     
     # Metadata
-    metadata = Column(JSONB, default={}, nullable=False)
+    extra_data = Column("metadata", JSONB, default={}, nullable=False)
     
     created_at = Column(DateTime, default=get_utc_now, nullable=False)
     updated_at = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
