@@ -15,6 +15,7 @@ from typing import Optional, Callable, Any
 from telethon import TelegramClient, events
 from telethon.errors import SessionPasswordNeededError, AuthKeyUnregisteredError
 from telethon.network import ConnectionTcpAbridged
+from telethon.sessions import StringSession
 from pathlib import Path
 import asyncio
 
@@ -57,9 +58,17 @@ class TelegramClientManager:
             bool: True if connection successful
         """
         try:
-            # Create client
+            # Use StringSession if available (preferred for cloud deploys),
+            # otherwise fall back to file session
+            if settings.TELEGRAM_SESSION_STRING:
+                session = StringSession(settings.TELEGRAM_SESSION_STRING)
+                logger.info("Using StringSession for Telegram auth")
+            else:
+                session = str(Path(settings.TELEGRAM_SESSION_PATH) / settings.TELEGRAM_SESSION_NAME)
+                logger.info("Using file session for Telegram auth")
+
             self.client = TelegramClient(
-                session=Path(settings.TELEGRAM_SESSION_PATH) / settings.TELEGRAM_SESSION_NAME,
+                session=session,
                 api_id=settings.TELEGRAM_API_ID,
                 api_hash=settings.TELEGRAM_API_HASH,
                 connection=ConnectionTcpAbridged,
@@ -68,13 +77,16 @@ class TelegramClientManager:
                 retry_delay=1,
                 request_retries=settings.TELEGRAM_REQUEST_RETRIES,
             )
-            
-            # Connect and authenticate
-            await self.client.start(
-                phone=settings.TELEGRAM_PHONE,
-                code_callback=self._code_callback,
-                password=self._password_callback,
-            )
+
+            # StringSession is already authenticated — just connect, no phone needed
+            if settings.TELEGRAM_SESSION_STRING:
+                await self.client.connect()
+            else:
+                await self.client.start(
+                    phone=settings.TELEGRAM_PHONE,
+                    code_callback=self._code_callback,
+                    password=self._password_callback,
+                )
             
             # Get self user
             me = await self.client.get_me()

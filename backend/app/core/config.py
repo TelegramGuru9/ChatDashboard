@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     TELEGRAM_SESSION_PATH: str = "./sessions"
     TELEGRAM_SESSION_NAME: str = "telegram_session"
     TELEGRAM_BOT_TOKEN: Optional[str] = None
+    TELEGRAM_SESSION_STRING: Optional[str] = None  # StringSession for cloud deploys
     TELEGRAM_FLOOD_SLEEP: int = 60
     TELEGRAM_REQUEST_RETRIES: int = 5
 
