@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     API_V1_STR: str = "/api/v1"
-    CORS_ORIGINS: list = ["*"]
+    CORS_ORIGINS: str = "*"  # plain string — used directly in middleware as ["*"]
 
     # ==================== DATABASE ====================
     # Railway provides postgresql:// — we auto-upgrade to postgresql+asyncpg://
