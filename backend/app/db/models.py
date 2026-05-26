@@ -15,7 +15,8 @@ from sqlalchemy import (
     Column, String, Integer, Float, DateTime, Boolean, Text, JSON,
     ForeignKey, Index, UniqueConstraint, func, ARRAY
 )
-from sqlalchemy.dialects.postgresql import UUID, JSONB, Vector
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from pgvector.sqlalchemy import Vector
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime, timezone
 import uuid

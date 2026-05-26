@@ -1,13 +1,6 @@
 """
-app/api/v1/routes/messages.py
-Message management endpoints.
-
-Endpoints:
-- GET /messages - List messages with pagination
-- GET /messages/{id} - Get message details
-- POST /messages - Create message (manual)
-- GET /messages/{user_id}/history - Get conversation history
-- GET /messages/search - Search messages
+app/api/v1/routes.py
+All API v1 routes: messages, users, leads, AI.
 """
 
 import logging
@@ -15,11 +8,305 @@ from typing import Optional
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select, and_, or_
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
 from app.db.models import Message, User
 from app.db.schemas import (
-    MessageResponse,\n    MessageDetailResponse,\n    PaginationParams,\n    PaginatedResponse,\n)\n\nlogger = logging.getLogger(__name__)\nrouter = APIRouter(prefix=\"/messages\", tags=[\"Messages\"])\n\n\n@router.get(\"\")\nasync def list_messages(\n    skip: int = Query(0, ge=0),\n    limit: int = Query(50, ge=1, le=500),\n    user_id: Optional[UUID] = None,\n    direction: Optional[str] = Query(None, pattern=\"^(incoming|outgoing)$\"),\n    is_ai_generated: Optional[bool] = None,\n    session: AsyncSession = Depends(get_db),\n) -> PaginatedResponse:\n    \"\"\"\n    List messages with filtering and pagination.\n    \n    Query Parameters:\n    - skip: Offset for pagination\n    - limit: Number of items per page\n    - user_id: Filter by user\n    - direction: Filter by direction (incoming/outgoing)\n    - is_ai_generated: Filter by AI generation status\n    \"\"\"\n    try:\n        # Build query\n        query = select(Message)\n        \n        filters = []\n        if user_id:\n            filters.append(Message.user_id == user_id)\n        if direction:\n            filters.append(Message.direction == direction)\n        if is_ai_generated is not None:\n            filters.append(Message.is_ai_generated == is_ai_generated)\n        \n        if filters:\n            query = query.where(and_(*filters))\n        \n        # Count total\n        count_result = await session.execute(\n            select(func.count(Message.id)).where(and_(*filters))\n        )\n        total = count_result.scalar() or 0\n        \n        # Fetch paginated results\n        query = query.order_by(Message.created_at.desc()).offset(skip).limit(limit)\n        result = await session.execute(query)\n        messages = result.scalars().all()\n        \n        return PaginatedResponse(\n            items=[MessageResponse.from_orm(m) for m in messages],\n            total=total,\n            skip=skip,\n            limit=limit,\n            has_more=(skip + limit) < total,\n        )\n        \n    except Exception as e:\n        logger.error(f\"Error listing messages: {e}\")\n        raise HTTPException(status_code=500, detail=\"Failed to list messages\")\n\n\n@router.get(\"/{message_id}\")\nasync def get_message(\n    message_id: UUID,\n    session: AsyncSession = Depends(get_db),\n) -> MessageDetailResponse:\n    \"\"\"\n    Get detailed message information.\n    \"\"\"\n    try:\n        result = await session.execute(\n            select(Message).where(Message.id == message_id)\n        )\n        message = result.scalars().first()\n        \n        if not message:\n            raise HTTPException(\n                status_code=404,\n                detail=\"Message not found\",\n            )\n        \n        return MessageDetailResponse.from_orm(message)\n        \n    except HTTPException:\n        raise\n    except Exception as e:\n        logger.error(f\"Error getting message: {e}\")\n        raise HTTPException(status_code=500, detail=\"Failed to get message\")\n\n\n@router.get(\"/user/{user_id}/history\")\nasync def get_user_history(\n    user_id: UUID,\n    limit: int = Query(100, ge=1, le=500),\n    days: Optional[int] = Query(None, ge=1, le=365),\n    session: AsyncSession = Depends(get_db),\n) -> list[MessageDetailResponse]:\n    \"\"\"\n    Get conversation history with a user.\n    \n    Parameters:\n    - limit: Maximum messages to return\n    - days: Only include messages from last N days\n    \"\"\"\n    try:\n        # Verify user exists\n        user_result = await session.execute(\n            select(User).where(User.id == user_id)\n        )\n        if not user_result.scalars().first():\n            raise HTTPException(status_code=404, detail=\"User not found\")\n        \n        # Build query\n        query = select(Message).where(Message.user_id == user_id)\n        \n        # Filter by days if specified\n        if days:\n            cutoff_date = datetime.utcnow() - timedelta(days=days)\n            query = query.where(Message.created_at >= cutoff_date)\n        \n        # Order and limit\n        query = query.order_by(Message.created_at.desc()).limit(limit)\n        \n        result = await session.execute(query)\n        messages = result.scalars().all()\n        \n        return [MessageDetailResponse.from_orm(m) for m in reversed(messages)]\n        \n    except HTTPException:\n        raise\n    except Exception as e:\n        logger.error(f\"Error getting history: {e}\")\n        raise HTTPException(status_code=500, detail=\"Failed to get history\")\n\n\n@router.get(\"/search\")\nasync def search_messages(\n    q: str = Query(..., min_length=3),\n    user_id: Optional[UUID] = None,\n    skip: int = Query(0, ge=0),\n    limit: int = Query(50, ge=1, le=500),\n    session: AsyncSession = Depends(get_db),\n) -> PaginatedResponse:\n    \"\"\"\n    Search messages by text content.\n    \n    Uses PostgreSQL full-text search for efficiency.\n    \"\"\"\n    try:\n        from sqlalchemy import func, text\n        \n        # Build search query\n        query = select(Message)\n        \n        # Full-text search on text content\n        search_filter = Message.text.ilike(f\"%{q}%\")\n        \n        if user_id:\n            search_filter = and_(search_filter, Message.user_id == user_id)\n        \n        query = query.where(search_filter)\n        \n        # Count\n        count_result = await session.execute(\n            select(func.count(Message.id)).where(search_filter)\n        )\n        total = count_result.scalar() or 0\n        \n        # Paginate\n        query = query.order_by(Message.created_at.desc()).offset(skip).limit(limit)\n        result = await session.execute(query)\n        messages = result.scalars().all()\n        \n        return PaginatedResponse(\n            items=[MessageDetailResponse.from_orm(m) for m in messages],\n            total=total,\n            skip=skip,\n            limit=limit,\n            has_more=(skip + limit) < total,\n        )\n        \n    except Exception as e:\n        logger.error(f\"Error searching messages: {e}\")\n        raise HTTPException(status_code=500, detail=\"Search failed\")\n\n\n# ==================== USER ROUTES ====================\n\nuser_router = APIRouter(prefix=\"/users\", tags=[\"Users\"])\n\n\n@user_router.get(\"\")\nasync def list_users(\n    skip: int = Query(0, ge=0),\n    limit: int = Query(50, ge=1, le=500),\n    conversation_state: Optional[str] = None,\n    min_lead_score: Optional[float] = Query(None, ge=0.0, le=100.0),\n    session: AsyncSession = Depends(get_db),\n) -> PaginatedResponse:\n    \"\"\"\n    List users with optional filtering.\n    \"\"\"\n    try:\n        query = select(User)\n        filters = []\n        \n        if conversation_state:\n            filters.append(User.conversation_state == conversation_state)\n        if min_lead_score is not None:\n            filters.append(User.lead_score >= min_lead_score)\n        \n        if filters:\n            query = query.where(and_(*filters))\n        \n        # Count\n        from sqlalchemy import func\n        count_result = await session.execute(\n            select(func.count(User.id)).where(and_(*filters) if filters else True)\n        )\n        total = count_result.scalar() or 0\n        \n        # Paginate\n        query = query.order_by(User.created_at.desc()).offset(skip).limit(limit)\n        result = await session.execute(query)\n        users = result.scalars().all()\n        \n        return PaginatedResponse(\n            items=[UserResponse.from_orm(u) for u in users],\n            total=total,\n            skip=skip,\n            limit=limit,\n            has_more=(skip + limit) < total,\n        )\n        \n    except Exception as e:\n        logger.error(f\"Error listing users: {e}\")\n        raise HTTPException(status_code=500, detail=\"Failed to list users\")\n\n\n@user_router.get(\"/{user_id}\")\nasync def get_user(\n    user_id: UUID,\n    session: AsyncSession = Depends(get_db),\n):\n    \"\"\"\n    Get user details.\n    \"\"\"\n    from app.db.schemas import UserDetailResponse\n    \n    try:\n        result = await session.execute(\n            select(User).where(User.id == user_id)\n        )\n        user = result.scalars().first()\n        \n        if not user:\n            raise HTTPException(status_code=404, detail=\"User not found\")\n        \n        return UserDetailResponse.from_orm(user)\n        \n    except HTTPException:\n        raise\n    except Exception as e:\n        logger.error(f\"Error getting user: {e}\")\n        raise HTTPException(status_code=500, detail=\"Failed to get user\")\n\n\n# ==================== LEAD ROUTES ====================\n\nlead_router = APIRouter(prefix=\"/leads\", tags=[\"Leads\"])\n\n\n@lead_router.get(\"\")\nasync def list_leads(\n    skip: int = Query(0, ge=0),\n    limit: int = Query(50, ge=1, le=500),\n    status: Optional[str] = None,\n    funnel_stage: Optional[str] = None,\n    min_score: Optional[float] = Query(None, ge=0.0, le=100.0),\n    session: AsyncSession = Depends(get_db),\n):\n    \"\"\"\n    List leads with filtering.\n    \"\"\"\n    from app.db.models import Lead\n    from app.db.schemas import LeadResponse\n    \n    try:\n        query = select(Lead)\n        filters = []\n        \n        if status:\n            filters.append(Lead.status == status)\n        if funnel_stage:\n            filters.append(Lead.funnel_stage == funnel_stage)\n        if min_score is not None:\n            filters.append(Lead.lead_score >= min_score)\n        \n        if filters:\n            query = query.where(and_(*filters))\n        \n        # Count\n        from sqlalchemy import func\n        count_result = await session.execute(\n            select(func.count(Lead.id)).where(and_(*filters) if filters else True)\n        )\n        total = count_result.scalar() or 0\n        \n        # Paginate\n        query = query.order_by(Lead.lead_score.desc()).offset(skip).limit(limit)\n        result = await session.execute(query)\n        leads = result.scalars().all()\n        \n        return PaginatedResponse(\n            items=[LeadResponse.from_orm(l) for l in leads],\n            total=total,\n            skip=skip,\n            limit=limit,\n            has_more=(skip + limit) < total,\n        )\n        \n    except Exception as e:\n        logger.error(f\"Error listing leads: {e}\")\n        raise HTTPException(status_code=500, detail=\"Failed to list leads\")\n\n\n# ==================== AI ROUTES ====================\n\nai_router = APIRouter(prefix=\"/ai\", tags=[\"AI\"])\n\n\n@ai_router.post(\"/generate-response\")\nasync def generate_response(\n    request,  # AIGenerateRequest\n    session: AsyncSession = Depends(get_db),\n):\n    \"\"\"\n    Generate AI response for a user.\n    \"\"\"\n    from app.services.ai.claude_client import claude_client\n    from app.db.schemas import AIGenerateResponse\n    \n    try:\n        # Get user\n        result = await session.execute(\n            select(User).where(User.id == request.user_id)\n        )\n        user = result.scalars().first()\n        \n        if not user:\n            raise HTTPException(status_code=404, detail=\"User not found\")\n        \n        # Check if AI is enabled\n        if not user.ai_enabled:\n            raise HTTPException(\n                status_code=403,\n                detail=\"AI is disabled for this user\",\n            )\n        \n        # Build context and generate\n        # ... implementation ...\n        \n        return {\"status\": \"success\"}\n        \n    except HTTPException:\n        raise\n    except Exception as e:\n        logger.error(f\"Error generating response: {e}\")\n        raise HTTPException(status_code=500, detail=\"Failed to generate response\")\n\n\n@ai_router.post(\"/toggle/{user_id}\")\nasync def toggle_ai(\n    user_id: UUID,\n    enabled: bool,\n    override_minutes: Optional[int] = None,\n    session: AsyncSession = Depends(get_db),\n):\n    \"\"\"\n    Enable/disable AI for a user.\n    \"\"\"\n    try:\n        result = await session.execute(\n            select(User).where(User.id == user_id)\n        )\n        user = result.scalars().first()\n        \n        if not user:\n            raise HTTPException(status_code=404, detail=\"User not found\")\n        \n        user.ai_enabled = enabled\n        \n        if not enabled and override_minutes:\n            from datetime import datetime, timedelta, timezone\n            user.ai_override_until = datetime.now(timezone.utc) + timedelta(minutes=override_minutes)\n        \n        await session.commit()\n        \n        return {\n            \"user_id\": user_id,\n            \"ai_enabled\": user.ai_enabled,\n            \"override_until\": user.ai_override_until,\n        }\n        \n    except HTTPException:\n        raise\n    except Exception as e:\n        logger.error(f\"Error toggling AI: {e}\")\n        raise HTTPException(status_code=500, detail=\"Failed to toggle AI\")\n\n\n# ==================== ROUTER AGGREGATION ====================\n\napi_router = APIRouter()\napi_router.include_router(router)\napi_router.include_router(user_router)\napi_router.include_router(lead_router)\napi_router.include_router(ai_router)\n\n\n__all__ = [\"router\", \"user_router\", \"lead_router\", \"ai_router\", \"api_router\"]\n
+    MessageResponse,
+    MessageDetailResponse,
+    PaginationParams,
+    PaginatedResponse,
+    UserResponse,
+    UserDetailResponse,
+    LeadResponse,
+)
+
+logger = logging.getLogger(__name__)
+
+# ==================== MESSAGE ROUTES ====================
+
+router = APIRouter(prefix="/messages", tags=["Messages"])
+
+
+@router.get("")
+async def list_messages(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    user_id: Optional[UUID] = None,
+    direction: Optional[str] = Query(None, pattern="^(incoming|outgoing)$"),
+    is_ai_generated: Optional[bool] = None,
+    session: AsyncSession = Depends(get_db),
+) -> PaginatedResponse:
+    """List messages with filtering and pagination."""
+    try:
+        filters = []
+        if user_id:
+            filters.append(Message.user_id == user_id)
+        if direction:
+            filters.append(Message.direction == direction)
+        if is_ai_generated is not None:
+            filters.append(Message.is_ai_generated == is_ai_generated)
+
+        where_clause = and_(*filters) if filters else True
+
+        count_result = await session.execute(
+            select(func.count(Message.id)).where(where_clause)
+        )
+        total = count_result.scalar() or 0
+
+        result = await session.execute(
+            select(Message).where(where_clause)
+            .order_by(Message.created_at.desc())
+            .offset(skip).limit(limit)
+        )
+        messages = result.scalars().all()
+
+        return PaginatedResponse(
+            items=[MessageResponse.model_validate(m) for m in messages],
+            total=total,
+            skip=skip,
+            limit=limit,
+            has_more=(skip + limit) < total,
+        )
+    except Exception as e:
+        logger.error(f"Error listing messages: {e}")
+        raise HTTPException(status_code=500, detail="Failed to list messages")
+
+
+@router.get("/{message_id}")
+async def get_message(
+    message_id: UUID,
+    session: AsyncSession = Depends(get_db),
+) -> MessageDetailResponse:
+    """Get detailed message information."""
+    try:
+        result = await session.execute(
+            select(Message).where(Message.id == message_id)
+        )
+        message = result.scalars().first()
+
+        if not message:
+            raise HTTPException(status_code=404, detail="Message not found")
+
+        return MessageDetailResponse.model_validate(message)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting message: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get message")
+
+
+@router.get("/user/{user_id}/history")
+async def get_user_history(
+    user_id: UUID,
+    limit: int = Query(100, ge=1, le=500),
+    days: Optional[int] = Query(None, ge=1, le=365),
+    session: AsyncSession = Depends(get_db),
+) -> list:
+    """Get conversation history with a user."""
+    try:
+        user_result = await session.execute(
+            select(User).where(User.id == user_id)
+        )
+        if not user_result.scalars().first():
+            raise HTTPException(status_code=404, detail="User not found")
+
+        query = select(Message).where(Message.user_id == user_id)
+
+        if days:
+            cutoff_date = datetime.utcnow() - timedelta(days=days)
+            query = query.where(Message.created_at >= cutoff_date)
+
+        query = query.order_by(Message.created_at.desc()).limit(limit)
+        result = await session.execute(query)
+        messages = result.scalars().all()
+
+        return [MessageDetailResponse.model_validate(m) for m in reversed(messages)]
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting history: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get history")
+
+
+# ==================== USER ROUTES ====================
+
+user_router = APIRouter(prefix="/users", tags=["Users"])
+
+
+@user_router.get("")
+async def list_users(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    conversation_state: Optional[str] = None,
+    min_lead_score: Optional[float] = Query(None, ge=0.0, le=100.0),
+    session: AsyncSession = Depends(get_db),
+) -> PaginatedResponse:
+    """List users with optional filtering."""
+    try:
+        filters = []
+
+        if conversation_state:
+            filters.append(User.conversation_state == conversation_state)
+        if min_lead_score is not None:
+            filters.append(User.lead_score >= min_lead_score)
+
+        where_clause = and_(*filters) if filters else True
+
+        count_result = await session.execute(
+            select(func.count(User.id)).where(where_clause)
+        )
+        total = count_result.scalar() or 0
+
+        result = await session.execute(
+            select(User).where(where_clause)
+            .order_by(User.created_at.desc())
+            .offset(skip).limit(limit)
+        )
+        users = result.scalars().all()
+
+        return PaginatedResponse(
+            items=[UserResponse.model_validate(u) for u in users],
+            total=total,
+            skip=skip,
+            limit=limit,
+            has_more=(skip + limit) < total,
+        )
+    except Exception as e:
+        logger.error(f"Error listing users: {e}")
+        raise HTTPException(status_code=500, detail="Failed to list users")
+
+
+@user_router.get("/{user_id}")
+async def get_user(
+    user_id: UUID,
+    session: AsyncSession = Depends(get_db),
+):
+    """Get user details."""
+    try:
+        result = await session.execute(
+            select(User).where(User.id == user_id)
+        )
+        user = result.scalars().first()
+
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        return UserDetailResponse.model_validate(user)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting user: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get user")
+
+
+# ==================== LEAD ROUTES ====================
+
+lead_router = APIRouter(prefix="/leads", tags=["Leads"])
+
+
+@lead_router.get("")
+async def list_leads(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    status: Optional[str] = None,
+    funnel_stage: Optional[str] = None,
+    min_score: Optional[float] = Query(None, ge=0.0, le=100.0),
+    session: AsyncSession = Depends(get_db),
+):
+    """List leads with filtering."""
+    from app.db.models import Lead
+
+    try:
+        filters = []
+
+        if status:
+            filters.append(Lead.status == status)
+        if funnel_stage:
+            filters.append(Lead.funnel_stage == funnel_stage)
+        if min_score is not None:
+            filters.append(Lead.lead_score >= min_score)
+
+        where_clause = and_(*filters) if filters else True
+
+        count_result = await session.execute(
+            select(func.count(Lead.id)).where(where_clause)
+        )
+        total = count_result.scalar() or 0
+
+        result = await session.execute(
+            select(Lead).where(where_clause)
+            .order_by(Lead.lead_score.desc())
+            .offset(skip).limit(limit)
+        )
+        leads = result.scalars().all()
+
+        return PaginatedResponse(
+            items=[LeadResponse.model_validate(l) for l in leads],
+            total=total,
+            skip=skip,
+            limit=limit,
+            has_more=(skip + limit) < total,
+        )
+    except Exception as e:
+        logger.error(f"Error listing leads: {e}")
+        raise HTTPException(status_code=500, detail="Failed to list leads")
+
+
+# ==================== AI ROUTES ====================
+
+ai_router = APIRouter(prefix="/ai", tags=["AI"])
+
+
+@ai_router.post("/toggle/{user_id}")
+async def toggle_ai(
+    user_id: UUID,
+    enabled: bool,
+    override_minutes: Optional[int] = None,
+    session: AsyncSession = Depends(get_db),
+):
+    """Enable/disable AI for a user."""
+    try:
+        result = await session.execute(
+            select(User).where(User.id == user_id)
+        )
+        user = result.scalars().first()
+
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        user.ai_enabled = enabled
+
+        if not enabled and override_minutes:
+            from datetime import timezone
+            user.ai_override_until = datetime.now(timezone.utc) + timedelta(minutes=override_minutes)
+
+        await session.commit()
+
+        return {
+            "user_id": user_id,
+            "ai_enabled": user.ai_enabled,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error toggling AI: {e}")
+        raise HTTPException(status_code=500, detail="Failed to toggle AI")
+
+
+# ==================== ROUTER AGGREGATION ====================
+
+api_router = APIRouter()
+api_router.include_router(router)
+api_router.include_router(user_router)
+api_router.include_router(lead_router)
+api_router.include_router(ai_router)
+
+__all__ = ["router", "user_router", "lead_router", "ai_router", "api_router"]
