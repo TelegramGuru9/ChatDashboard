@@ -1,38 +1,95 @@
-"""
-app/main.py
-FastAPI application entry point with middleware and routing.
-
-ARCHITECTURE:
-- Startup/shutdown event handlers for service initialization
-- Middleware for error handling, logging, CORS
-- API v1 route registration
-- Health check endpoints
-- WebSocket connection management
-"""
-
 import logging
 from contextlib import asynccontextmanager
-from typing import Optional
+from datetime import datetime
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZIPMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
-import uvicorn
 
-from app.core.config import settings, validate_settings
+from app.core.config import settings
 from app.db.database import db_manager
-from app.services.telegram.client import telegram_client
-from app.services.telegram.message_handler import message_processor
-from app.services.vector.embeddings import embedding_service
-from app.services.crm.lead_scoring import lead_scoring
 
 logger = logging.getLogger(__name__)
 
-
-# ==================== LIFESPAN MANAGEMENT ====================
+# ==================== LIFESPAN ====================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    \"\"\"\n    FastAPI lifespan context manager for startup/shutdown.\n    \n    Startup:\n    - Initialize database\n    - Connect to Telegram\n    - Start background processors\n    - Validate configuration\n    \n    Shutdown:\n    - Graceful service shutdown\n    - Close connections\n    - Cleanup resources\n    \"\"\"\n    # ==================== STARTUP ====================\n    logger.info(f\"Starting {settings.APP_NAME} v{settings.APP_VERSION}\")\n    \n    try:\n        # Validate configuration\n        validate_settings()\n        logger.info(\"Configuration validated\")\n        \n        # Initialize database\n        await db_manager.initialize()\n        logger.info(\"Database initialized\")\n        \n        # Create tables\n        await db_manager.create_tables()\n        logger.info(\"Database tables ready\")\n        \n        # Connect to Telegram\n        if not await telegram_client.connect():\n            logger.error(\"Failed to connect to Telegram\")\n            raise RuntimeError(\"Telegram connection failed\")\n        logger.info(\"Telegram client connected\")\n        \n        # Register Telegram event handlers\n        telegram_client.on(\"message_new\", message_processor.process_incoming_message)\n        logger.info(\"Telegram event handlers registered\")\n        \n        # Start background message processor\n        if settings.ENABLE_BACKGROUND_JOBS:\n            # Run processor in background\n            import asyncio\n            asyncio.create_task(message_processor.start_processor())\n            logger.info(\"Message processor started\")\n        \n        logger.info(f\"{settings.APP_NAME} startup complete\")\n        \n    except Exception as e:\n        logger.error(f\"Startup failed: {e}\", exc_info=True)\n        raise\n    \n    yield\n    \n    # ==================== SHUTDOWN ====================\n    logger.info(f\"Shutting down {settings.APP_NAME}\")\n    \n    try:\n        # Stop background jobs\n        if hasattr(message_processor, '_processor_running'):\n            message_processor._processor_running = False\n        \n        # Disconnect from Telegram\n        await telegram_client.disconnect()\n        logger.info(\"Telegram client disconnected\")\n        \n        # Close embedding service\n        await embedding_service.close()\n        logger.info(\"Embedding service closed\")\n        \n        # Close database\n        await db_manager.close()\n        logger.info(\"Database closed\")\n        \n        logger.info(f\"{settings.APP_NAME} shutdown complete\")\n        \n    except Exception as e:\n        logger.error(f\"Shutdown error: {e}\", exc_info=True)\n\n\n# ==================== APP CREATION ====================\n\napp = FastAPI(\n    title=settings.APP_NAME,\n    version=settings.APP_VERSION,\n    description=\"AI-powered Telegram CRM platform\",\n    docs_url=\"/api/docs\" if settings.DEBUG else None,\n    redoc_url=\"/api/redoc\" if settings.DEBUG else None,\n    openapi_url=\"/api/openapi.json\" if settings.DEBUG else None,\n    lifespan=lifespan,\n)\n\n\n# ==================== MIDDLEWARE ====================\n\n# Security middleware\napp.add_middleware(\n    TrustedHostMiddleware,\n    allowed_hosts=[\"localhost\", \"127.0.0.1\", \"*.example.com\"],\n)\n\n# CORS middleware\napp.add_middleware(\n    CORSMiddleware,\n    allow_origins=settings.CORS_ORIGINS,\n    allow_credentials=True,\n    allow_methods=[\"*\"],\n    allow_headers=[\"*\"],\n    expose_headers=[\"Content-Length\", \"X-Total-Count\"],\n)\n\n# Gzip compression\napp.add_middleware(GZIPMiddleware, minimum_size=1000)\n\n\n# ==================== EXCEPTION HANDLERS ====================\n\n@app.exception_handler(ValueError)\nasync def value_error_handler(request: Request, exc: ValueError):\n    \"\"\"\n    Handle ValueError exceptions.\n    \"\"\"\n    logger.warning(f\"ValueError: {exc}\")\n    return JSONResponse(\n        status_code=status.HTTP_400_BAD_REQUEST,\n        content={\n            \"error\": \"Validation Error\",\n            \"detail\": str(exc),\n            \"code\": \"INVALID_INPUT\",\n        }\n    )\n\n\n@app.exception_handler(Exception)\nasync def general_exception_handler(request: Request, exc: Exception):\n    \"\"\"\n    Handle unhandled exceptions.\n    \"\"\"\n    logger.error(f\"Unhandled exception: {exc}\", exc_info=True)\n    return JSONResponse(\n        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,\n        content={\n            \"error\": \"Internal Server Error\",\n            \"detail\": \"An unexpected error occurred\",\n            \"code\": \"INTERNAL_ERROR\",\n        }\n    )\n\n\n# ==================== HEALTH CHECK ENDPOINTS ====================\n\n@app.get(\"/health\", tags=[\"Health\"])\nasync def health_check():\n    \"\"\"\n    Quick health check endpoint.\n    \"\"\"\n    return {\n        \"status\": \"healthy\",\n        \"app\": settings.APP_NAME,\n        \"version\": settings.APP_VERSION,\n        \"environment\": settings.ENVIRONMENT,\n    }\n\n\n@app.get(\"/health/detailed\", tags=[\"Health\"])\nasync def detailed_health_check():\n    \"\"\"\n    Detailed health check with service status.\n    \"\"\"\n    services = {}\n    \n    # Check database\n    try:\n        async with db_manager.get_session() as session:\n            await session.execute(\"SELECT 1\")\n        services[\"database\"] = \"ok\"\n    except Exception as e:\n        services[\"database\"] = f\"error: {str(e)}\"\n    \n    # Check Telegram\n    services[\"telegram\"] = \"ok\" if telegram_client.is_connected else \"disconnected\"\n    \n    # Check Redis (if applicable)\n    services[\"redis\"] = \"ok\"  # Add actual check if using Redis\n    \n    # Determine overall status\n    all_ok = all(v == \"ok\" for v in services.values())\n    overall_status = \"healthy\" if all_ok else \"degraded\"\n    \n    return {\n        \"status\": overall_status,\n        \"timestamp\": str(datetime.utcnow()),\n        \"services\": services,\n        \"api_stats\": {\n            \"messages_processed\": message_processor._stats[\"processed\"],\n            \"embeddings_generated\": message_processor._stats[\"embedded\"],\n            \"processing_errors\": message_processor._stats[\"failed\"],\n        }\n    }\n\n\n# ==================== API ROUTE REGISTRATION ====================\n\n# Import and register API routes\nfrom app.api.v1 import api_router\n\napp.include_router(\n    api_router,\n    prefix=settings.API_V1_STR,\n)\n\n\nif __name__ == \"__main__\":\n    # Development server\n    uvicorn.run(\n        \"app.main:app\",\n        host=settings.HOST,\n        port=settings.PORT,\n        reload=settings.DEBUG,\n        log_level=settings.LOG_LEVEL.lower(),\n    )\n
+    logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
+
+    # Database
+    try:
+        await db_manager.initialize()
+        await db_manager.create_tables()
+        logger.info("Database ready")
+    except Exception as e:
+        logger.error(f"Database init failed: {e}")
+
+    # Telegram — non-fatal, requires manual auth first
+    try:
+        from app.services.telegram.client import telegram_client
+        connected = await telegram_client.connect()
+        if connected:
+            logger.info("Telegram connected")
+        else:
+            logger.warning("Telegram not connected — run auth first")
+    except Exception as e:
+        logger.warning(f"Telegram skipped: {e}")
+
+    logger.info("Startup complete")
+    yield
+
+    # Shutdown
+    try:
+        from app.services.telegram.client import telegram_client
+        await telegram_client.disconnect()
+    except Exception:
+        pass
+    try:
+        await db_manager.close()
+    except Exception:
+        pass
+    logger.info("Shutdown complete")
+
+
+# ==================== APP ====================
+
+app = FastAPI(
+    title=settings.APP_NAME,
+    version=settings.APP_VERSION,
+    description="AI-powered Telegram CRM platform",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    lifespan=lifespan,
+)
+
+# CORS — allow all for now
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.add_middleware(GZIPMiddleware, minimum_size=1000)
+
+
+# ==================== HEALTH ====================
+
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "app": settings.APP_NAME,
+        "version": settings.APP_VERSION,
+        "environment": settings.ENVIRONMENT,
+        "timestamp": str(datetime.utcnow()),
+    }
+
+
+# ==================== ROUTES ====================
+
+from app.api.v1 import api_router
+app.include_router(api_router, prefix=settings.API_V1_STR)
