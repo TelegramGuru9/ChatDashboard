@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 
 const C = {
@@ -112,9 +112,30 @@ export default function SettingsPage() {
   const [jsonError, setJsonError] = useState('');
   const [jsonSuccess, setJsonSuccess] = useState('');
   const [tab, setTab] = useState<'persona'|'model'|'languages'|'advanced'>('persona');
+  const [aiStatus, setAiStatus] = useState<any>(null);
+  const [testingAI, setTestingAI] = useState(false);
+  const [enablingAll, setEnablingAll] = useState(false);
   const jsonRef = useRef<HTMLInputElement>(null);
 
   const api = getApi();
+
+  const testAI = useCallback(async () => {
+    setTestingAI(true);
+    try {
+      const d = await fetch(`${api}/ai/status`).then(r => r.json());
+      setAiStatus(d);
+    } catch (e: any) { setAiStatus({ error: e.message }); }
+    finally { setTestingAI(false); }
+  }, [api]);
+
+  const enableAllAI = useCallback(async () => {
+    setEnablingAll(true);
+    try {
+      const d = await fetch(`${api}/ai/enable-all`, { method: 'POST' }).then(r => r.json());
+      setAiStatus((prev: any) => ({ ...prev, _enabledAll: d.enabled_count }));
+    } catch {}
+    finally { setEnablingAll(false); }
+  }, [api]);
 
   // Load existing persona on mount
   useEffect(() => {
@@ -344,6 +365,53 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
+
+        {/* ── AI Diagnostic Panel ── */}
+        <div style={{ marginTop: '16px', background: C.s1, borderRadius: '16px', padding: '16px 18px', border: `1px solid ${C.sep}` }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: aiStatus ? '12px' : '0' }}>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: '14px' }}>🔬 Test Autopilot</div>
+              <div style={{ fontSize: '11px', color: C.t3, marginTop: '2px' }}>Verify key + Claude reachability + enable AI for all chats</div>
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button onClick={enableAllAI} disabled={enablingAll} style={{
+                padding: '7px 14px', borderRadius: '10px', background: 'rgba(48,209,88,0.12)',
+                border: '1px solid rgba(48,209,88,0.3)', color: C.green,
+                fontSize: '12px', fontWeight: 600, cursor: 'pointer', opacity: enablingAll ? 0.5 : 1,
+              }}>
+                {enablingAll ? '…' : '⚡ Enable All'}
+              </button>
+              <button onClick={testAI} disabled={testingAI} style={{
+                padding: '7px 14px', borderRadius: '10px', background: C.s2,
+                border: `1px solid ${C.sep}`, color: C.t2,
+                fontSize: '12px', fontWeight: 600, cursor: 'pointer', opacity: testingAI ? 0.5 : 1,
+              }}>
+                {testingAI ? '…' : '▶ Run Test'}
+              </button>
+            </div>
+          </div>
+
+          {aiStatus && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {[
+                { label: 'API Key', ok: aiStatus.api_key_set, val: aiStatus.api_key_set ? '✓ Set in Railway' : '✗ Missing — add ANTHROPIC_API_KEY in Railway Variables' },
+                { label: 'Persona', ok: aiStatus.persona_saved, val: aiStatus.persona_saved ? '✓ Saved' : '✗ Not saved — click Save below' },
+                { label: 'Model', ok: true, val: aiStatus.model },
+                { label: 'Claude', ok: aiStatus.claude_reachable, val: aiStatus.claude_reachable ? `✓ Online — "${aiStatus.test_response}"` : `✗ Unreachable — ${aiStatus.error || 'unknown error'}` },
+              ].map(row => (
+                <div key={row.label} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', fontSize: '12px' }}>
+                  <span style={{ width: '60px', color: C.t3, flexShrink: 0 }}>{row.label}</span>
+                  <span style={{ color: row.ok ? C.green : C.red, fontWeight: 500, flex: 1 }}>{row.val}</span>
+                </div>
+              ))}
+              {aiStatus._enabledAll != null && (
+                <div style={{ fontSize: '12px', color: C.green, paddingTop: '4px', borderTop: `1px solid ${C.sep}` }}>
+                  ✓ AI enabled for {aiStatus._enabledAll} chats
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Save button */}
         <button onClick={handleSave} disabled={saving || loading} style={{

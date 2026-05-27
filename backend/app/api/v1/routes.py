@@ -739,6 +739,72 @@ async def toggle_ai(
         raise HTTPException(status_code=500, detail="Failed to toggle AI")
 
 
+@ai_router.post("/enable-all")
+async def enable_ai_for_all(session: AsyncSession = Depends(get_db)):
+    """Set ai_enabled=True for every non-bot user."""
+    try:
+        from sqlalchemy import update as sa_update
+        result = await session.execute(
+            sa_update(User)
+            .where((User.is_bot == False) | (User.is_bot == None))
+            .values(ai_enabled=True)
+            .returning(User.id)
+        )
+        count = len(result.fetchall())
+        await session.commit()
+        logger.info(f"Enabled AI for {count} users")
+        return {"status": "ok", "enabled_count": count}
+    except Exception as e:
+        logger.error(f"Error enabling AI for all: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@ai_router.get("/status")
+async def ai_status():
+    """
+    Check if AI is fully operational:
+    - ANTHROPIC_API_KEY set
+    - Persona configured
+    - Claude reachable (live ping)
+    """
+    from app.core.config import settings
+    result: Dict[str, Any] = {
+        "api_key_set": bool(settings.ANTHROPIC_API_KEY),
+        "model": settings.CLAUDE_MODEL,
+        "persona_saved": False,
+        "claude_reachable": False,
+        "test_response": None,
+        "error": None,
+    }
+    try:
+        async with db_manager.get_session() as session:
+            res = await session.execute(select(Config).where(Config.key == "persona"))
+            cfg = res.scalars().first()
+            result["persona_saved"] = bool(cfg and cfg.value)
+            if cfg and cfg.value:
+                result["model"] = cfg.value.get("model", settings.CLAUDE_MODEL)
+    except Exception as e:
+        result["error"] = f"DB error: {e}"
+
+    if result["api_key_set"]:
+        try:
+            import anthropic, asyncio as aio
+            client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+            def _ping():
+                return client.messages.create(
+                    model=result["model"],
+                    max_tokens=30,
+                    messages=[{"role": "user", "content": "Say 'AI online' in 3 words max."}],
+                )
+            resp = await aio.to_thread(_ping)
+            result["claude_reachable"] = True
+            result["test_response"] = resp.content[0].text.strip()
+        except Exception as e:
+            result["error"] = str(e)
+
+    return result
+
+
 # ==================== CONFIG ROUTES (packages, media, rules) ====================
 
 config_router = APIRouter(prefix="/config", tags=["Config"])
