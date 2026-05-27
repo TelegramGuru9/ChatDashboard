@@ -67,6 +67,37 @@ class DatabaseManager:
                 await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "vector"'))
                 await conn.run_sync(Base.metadata.create_all)
 
+                # ── Auto-migrate: upgrade INTEGER → BIGINT for Telegram IDs ──
+                # Telegram user IDs can exceed 2^31-1 (e.g. 6,000,000,000+).
+                # If the column is still INT4, new accounts silently fail to insert.
+                for migration_sql in [
+                    """
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name='users' AND column_name='user_id'
+                              AND data_type='integer'
+                        ) THEN
+                            ALTER TABLE users ALTER COLUMN user_id TYPE BIGINT;
+                        END IF;
+                    END $$;
+                    """,
+                    """
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name='messages' AND column_name='message_id'
+                              AND data_type='integer'
+                        ) THEN
+                            ALTER TABLE messages ALTER COLUMN message_id TYPE BIGINT;
+                        END IF;
+                    END $$;
+                    """,
+                ]:
+                    await conn.execute(text(migration_sql))
+
             self._initialized = True
             logger.info("Database initialized successfully")
 

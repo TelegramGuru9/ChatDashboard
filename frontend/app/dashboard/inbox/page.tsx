@@ -363,35 +363,45 @@ export default function InboxPage() {
 
         {/* ── Convo list ── */}
         <div style={{ width: selected ? 'min(280px,30%)' : '100%', borderRight:`1px solid ${C.sep}`, display:'flex', flexDirection:'column', background:C.bg, flexShrink:0, transition:'width 0.2s' }} className="convo-panel">
-          <div style={{ padding:'14px 14px 10px', borderBottom:`1px solid ${C.sepL}` }}>
-            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'10px' }}>
+          {/* ── Inbox header ── */}
+          <div style={{ borderBottom:`1px solid ${C.sepL}`, flexShrink:0 }}>
+            {/* Title row */}
+            <div style={{ padding:'12px 14px 8px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
               <h2 style={{ fontSize:'20px', fontWeight:700, margin:0, color:C.t1 }}>Inbox</h2>
-              <button onClick={() => loadConvos()} disabled={loadingConvos} style={{ background:'none', border:'none', color:C.blue, cursor:'pointer', fontSize:'18px', opacity:loadingConvos?0.4:1, padding:'2px 6px', borderRadius:'6px' }}>↺</button>
-            </div>
-            {statusBanner()}
-            {syncStatus && (
-              <div style={{ fontSize:'12px', padding:'5px 10px', borderRadius:'8px', marginBottom:'8px',
-                background: syncStatus.startsWith('✓') ? 'rgba(48,209,88,0.08)' : 'rgba(255,149,10,0.08)',
-                color: syncStatus.startsWith('✓') ? C.green : C.orange }}>
-                {syncStatus}
+              <div style={{ display:'flex', gap:'6px', alignItems:'center' }}>
+                <span style={{ fontSize:'11px', color:C.t3 }}>{convos.length}</span>
+                <button onClick={() => loadConvos()} disabled={loadingConvos} style={{ background:'none', border:'none', color:C.blue, cursor:'pointer', fontSize:'18px', opacity:loadingConvos?0.4:1, padding:'2px 6px', borderRadius:'6px' }}>↺</button>
               </div>
-            )}
-            <input placeholder="Search chats…" value={search} onChange={e => setSearch(e.target.value)}
-              style={{ width:'100%', boxSizing:'border-box', background:C.s2, border:'none', borderRadius:'10px', padding:'8px 12px', color:C.t1, fontSize:'14px', outline:'none' }} />
+            </div>
 
-            {/* Telegram folder tabs */}
-            {folders.length > 0 && (
-              <div style={{ display:'flex', gap:'5px', marginTop:'10px', flexWrap:'wrap' }}>
+            {/* Folder tabs — always visible, scrollable */}
+            <div style={{ overflowX:'auto', paddingBottom:'1px' }} className="folder-scroll">
+              <div style={{ display:'flex', gap:'0', borderBottom:`1px solid ${C.sepL}`, paddingLeft:'4px', minWidth:'max-content' }}>
                 {['All', ...folders].map(f => (
                   <button key={f} onClick={() => { setActiveFolder(f); loadConvos(f !== 'All' ? f : undefined); }} style={{
-                    padding:'4px 11px', borderRadius:'16px', fontSize:'11px', fontWeight:600, cursor:'pointer', border:'1px solid',
-                    background: activeFolder === f ? C.blue : 'transparent',
-                    borderColor: activeFolder === f ? C.blue : C.sep,
-                    color: activeFolder === f ? '#fff' : C.t3, transition:'all 0.15s',
+                    padding:'8px 14px', background:'none', border:'none', cursor:'pointer',
+                    fontSize:'12px', fontWeight:600, whiteSpace:'nowrap',
+                    color: activeFolder === f ? C.blue : C.t3,
+                    borderBottom: activeFolder === f ? `2px solid ${C.blue}` : '2px solid transparent',
+                    transition:'all 0.15s',
                   }}>{f}</button>
                 ))}
               </div>
-            )}
+            </div>
+
+            {/* Search + status */}
+            <div style={{ padding:'8px 14px 10px' }}>
+              {statusBanner()}
+              {syncStatus && (
+                <div style={{ fontSize:'12px', padding:'5px 10px', borderRadius:'8px', marginBottom:'8px',
+                  background: syncStatus.startsWith('✓') ? 'rgba(48,209,88,0.08)' : 'rgba(255,149,10,0.08)',
+                  color: syncStatus.startsWith('✓') ? C.green : C.orange }}>
+                  {syncStatus}
+                </div>
+              )}
+              <input placeholder="Search chats…" value={search} onChange={e => setSearch(e.target.value)}
+                style={{ width:'100%', boxSizing:'border-box', background:C.s2, border:'none', borderRadius:'10px', padding:'8px 12px', color:C.t1, fontSize:'14px', outline:'none' }} />
+            </div>
           </div>
 
           <div style={{ flex:1, overflowY:'auto' }}>
@@ -749,6 +759,9 @@ export default function InboxPage() {
           .empty-thread { display:none !important; }
           .insights-panel { display:none !important; }
         }
+        .folder-scroll::-webkit-scrollbar { height:3px; }
+        .folder-scroll::-webkit-scrollbar-track { background:transparent; }
+        .folder-scroll::-webkit-scrollbar-thumb { background:rgba(84,84,88,0.4); border-radius:2px; }
       `}</style>
     </DashboardLayout>
   );

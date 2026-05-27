@@ -12,7 +12,7 @@ ARCHITECTURE DECISIONS:
 """
 
 from sqlalchemy import (
-    Column, String, Integer, Float, DateTime, Boolean, Text, JSON,
+    Column, String, Integer, BigInteger, Float, DateTime, Boolean, Text, JSON,
     ForeignKey, Index, UniqueConstraint, func, ARRAY
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -44,7 +44,7 @@ class User(Base):
     __tablename__ = "users"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(Integer, unique=True, nullable=False, index=True)
+    user_id = Column(BigInteger, unique=True, nullable=False, index=True)
     
     # Basic info
     first_name = Column(String(255), nullable=False)
@@ -129,7 +129,7 @@ class Message(Base):
     __tablename__ = "messages"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    message_id = Column(Integer, nullable=False)
+    message_id = Column(BigInteger, nullable=False)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     
     # Content
