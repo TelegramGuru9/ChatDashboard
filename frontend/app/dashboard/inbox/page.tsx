@@ -269,12 +269,39 @@ export default function InboxPage() {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [selected]); // eslint-disable-line
 
+  // SSE live stream + 3s safety-net poll
   useEffect(() => {
-    if (pollRef.current) clearInterval(pollRef.current);
     if (!selected) return;
-    pollRef.current = setInterval(() => loadMessages(selected.user_id, true), 5000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [selected, loadMessages]);
+    const sseUrl = `${api}/telegram/stream`;
+    let es: EventSource | null = null;
+
+    const connect = () => {
+      es = new EventSource(sseUrl);
+      es.onmessage = (evt) => {
+        try {
+          const data = JSON.parse(evt.data);
+          if (data.type === 'connected') return;
+          if (data.user_id !== selected.user_id) return;
+          const msg = data.message;
+          if (!msg?.id) return;
+          setMessages(prev => {
+            if (prev.some(m => String(m.id) === String(msg.id))) return prev;
+            return [...prev, { ...msg, id: String(msg.id) }];
+          });
+          setConvos(prev => prev.map(c =>
+            c.user_id === selected.user_id
+              ? { ...c, last_message: msg.text, last_message_direction: msg.direction, last_message_at: msg.created_at }
+              : c
+          ));
+        } catch { /* ignore */ }
+      };
+      es.onerror = () => { es?.close(); setTimeout(connect, 3000); };
+    };
+    connect();
+    // Safety-net poll every 3s in case SSE misses events
+    const safePoll = setInterval(() => loadMessages(selected.user_id, true), 3000);
+    return () => { es?.close(); clearInterval(safePoll); };
+  }, [selected, api]); // eslint-disable-line
 
   const filtered = convos.filter(c => {
     const matchesSearch = !search ||
@@ -452,6 +479,24 @@ export default function InboxPage() {
                 </div>
               </div>
               <button onClick={() => loadMessages(selected.user_id)} style={{ background:'none', border:'none', color:C.blue, cursor:'pointer', fontSize:'16px', padding:'4px' }} title="Refresh">↺</button>
+
+              {/* Autopilot quick toggle */}
+              <div style={{ display:'flex', alignItems:'center', gap:'6px', padding:'5px 10px', borderRadius:'10px',
+                background: insights?.ai_enabled ? 'rgba(48,209,88,0.1)' : 'rgba(255,255,255,0.05)',
+                border: `1px solid ${insights?.ai_enabled ? 'rgba(48,209,88,0.3)' : C.sep}`,
+              }}>
+                <span style={{ fontSize:'11px', fontWeight:600, color: insights?.ai_enabled ? C.green : C.t3 }}>
+                  {insights?.ai_enabled ? '🤖 AI ON' : '🤖 AI OFF'}
+                </span>
+                <div onClick={() => saveInsights({ ai_enabled: !insights?.ai_enabled })}
+                  style={{ width:'32px', height:'18px', borderRadius:'9px', background: insights?.ai_enabled ? C.green : C.s4,
+                    cursor:'pointer', position:'relative', transition:'background 0.2s', flexShrink:0 }}>
+                  <div style={{ position:'absolute', top:'2px', left: insights?.ai_enabled ? '16px' : '2px',
+                    width:'14px', height:'14px', borderRadius:'50%', background:'#fff',
+                    transition:'left 0.2s', boxShadow:'0 1px 3px rgba(0,0,0,0.4)' }} />
+                </div>
+              </div>
+
               <button
                 onClick={() => setPanelOpen(v => !v)}
                 style={{ background: panelOpen ? 'rgba(10,132,255,0.15)' : C.s2, border:`1px solid ${panelOpen ? C.blue : C.sep}`, borderRadius:'8px', color: panelOpen ? C.blue : C.t3, cursor:'pointer', fontSize:'12px', padding:'5px 10px', fontWeight:600 }}

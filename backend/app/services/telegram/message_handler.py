@@ -66,6 +66,19 @@ class MessageProcessor:
                 telegram_id = user.user_id
                 await session.commit()
 
+            # Broadcast to SSE stream (live inbox update)
+            try:
+                import main as _main
+                _main._broadcast_new_message(str(user_id), {
+                    "id": str(message.id),
+                    "text": text,
+                    "direction": "incoming",
+                    "is_ai_generated": False,
+                    "created_at": _naive_utc().isoformat(),
+                })
+            except Exception:
+                pass
+
             # Fire AI response asynchronously (non-blocking)
             if ai_enabled and text:
                 asyncio.create_task(
@@ -251,6 +264,19 @@ class MessageProcessor:
                 )
                 session.add(ai_msg)
                 await session.commit()
+
+            # Broadcast AI reply via SSE
+            try:
+                import main as _main
+                _main._broadcast_new_message(str(user_id), {
+                    "id": str(tg_msg_id),
+                    "text": ai_text,
+                    "direction": "outgoing",
+                    "is_ai_generated": True,
+                    "created_at": _naive_utc().isoformat(),
+                })
+            except Exception:
+                pass
 
             self._stats["ai_responses"] += 1
 

@@ -563,6 +563,50 @@ async def get_folders():
         return {"folders": []}
 
 
+@telegram_router.get("/stream")
+async def stream_messages():
+    """
+    Server-Sent Events endpoint — streams new incoming/outgoing messages to the dashboard in real time.
+    Connect with EventSource('/api/v1/telegram/stream').
+    Each event: data: {"user_id": "...", "message": {...}}
+    """
+    import json
+    from fastapi.responses import StreamingResponse
+    import main as app_main
+
+    queue: asyncio.Queue = asyncio.Queue(maxsize=50)
+    app_main._sse_queues.append(queue)
+
+    async def event_generator():
+        try:
+            # Send a ping immediately so the connection is confirmed
+            yield "data: {\"type\":\"connected\"}\n\n"
+            while True:
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=20)
+                    yield f"data: {json.dumps(item)}\n\n"
+                except asyncio.TimeoutError:
+                    # Keep-alive ping every 20s
+                    yield ": ping\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            try:
+                app_main._sse_queues.remove(queue)
+            except ValueError:
+                pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
 @telegram_router.post("/reconnect")
 async def reconnect_telegram():
     """Attempt to reconnect the Telegram session — re-runs full connect() from scratch."""

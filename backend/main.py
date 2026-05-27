@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-async def _sync_one_entity(client, entity, limit_per_chat: int, folder_name: str | None = None):
+async def _sync_one_entity(client, entity, limit_per_chat: int):
     """Sync a single user entity into the DB. Returns (is_new_user, new_msg_count)."""
     from sqlalchemy import select, and_, func as sqlfunc
     from app.db.models import User, Message
@@ -36,15 +36,6 @@ async def _sync_one_entity(client, entity, limit_per_chat: int, folder_name: str
                 session.add(user)
                 await session.flush()
 
-            # Tag with folder name if provided
-            if folder_name:
-                ed = dict(user.extra_data or {})
-                folders = ed.get("tg_folders", [])
-                if folder_name not in folders:
-                    folders.append(folder_name)
-                    ed["tg_folders"] = folders
-                    user.extra_data = ed
-
             async for tg_msg in client.iter_messages(entity, limit=limit_per_chat):
                 if not tg_msg.message and not tg_msg.media:
                     continue
@@ -58,11 +49,11 @@ async def _sync_one_entity(client, entity, limit_per_chat: int, folder_name: str
                 mt = None
                 if tg_msg.media:
                     n = type(tg_msg.media).__name__
-                    if "Photo" in n:     mt = "photo"
+                    if "Photo" in n:      mt = "photo"
                     elif "Document" in n: mt = "document"
-                    elif "Video" in n:   mt = "video"
-                    elif "Audio" in n:   mt = "audio"
-                    else:               mt = n.lower()
+                    elif "Video" in n:    mt = "video"
+                    elif "Audio" in n:    mt = "audio"
+                    else:                mt = n.lower()
                 msg = Message(
                     message_id=tg_msg.id,
                     user_id=user.id,
@@ -77,10 +68,6 @@ async def _sync_one_entity(client, entity, limit_per_chat: int, folder_name: str
                 session.add(msg)
                 new_msgs += 1
 
-            cnt = await session.execute(
-                sqlfunc.count(Message.id).select().where(Message.user_id == user.id)
-            )
-            # fallback count
             cnt2 = await session.execute(
                 select(sqlfunc.count(Message.id)).where(Message.user_id == user.id)
             )
@@ -92,49 +79,121 @@ async def _sync_one_entity(client, entity, limit_per_chat: int, folder_name: str
         return False, 0
 
 
+async def _get_all_dialogs_raw(client, folder_id: int = 0):
+    """
+    Use GetDialogsRequest directly with manual pagination.
+    This is MORE reliable than iter_dialogs which can stall at ~100.
+    Returns list of (entity, peer) for all user dialogs in folder.
+    folder_id: 0 = main/inbox, 1 = archived
+    """
+    from telethon.tl.functions.messages import GetDialogsRequest
+    from telethon.tl.types import InputPeerEmpty, User as TLUser
+
+    all_entities = []
+    seen = set()
+    offset_date = 0
+    offset_id = 0
+    offset_peer = InputPeerEmpty()
+    PAGE = 100
+
+    while True:
+        try:
+            result = await client(GetDialogsRequest(
+                offset_date=offset_date,
+                offset_id=offset_id,
+                offset_peer=offset_peer,
+                limit=PAGE,
+                hash=0,
+                folder_id=folder_id,
+            ))
+        except Exception as e:
+            logger.error(f"GetDialogsRequest folder={folder_id} failed: {e}")
+            break
+
+        if not result.dialogs:
+            logger.info(f"No more dialogs in folder={folder_id} after {len(all_entities)} entities")
+            break
+
+        # Build entity map from the response
+        entity_map = {}
+        for u in getattr(result, "users", []):
+            entity_map[u.id] = u
+        for c in getattr(result, "chats", []):
+            entity_map[c.id] = c
+
+        added_this_page = 0
+        for dialog in result.dialogs:
+            peer = dialog.peer
+            peer_id = getattr(peer, "user_id", None) or getattr(peer, "chat_id", None) or getattr(peer, "channel_id", None)
+            if peer_id is None or peer_id in seen:
+                continue
+            entity = entity_map.get(peer_id)
+            if entity is None:
+                continue
+            # Only private user chats
+            if not isinstance(entity, TLUser):
+                continue
+            seen.add(peer_id)
+            all_entities.append(entity)
+            added_this_page += 1
+
+        logger.info(f"folder={folder_id}: fetched page, +{added_this_page} users, total={len(all_entities)}")
+
+        # Set up next page offset using the last message
+        if not result.messages:
+            break
+
+        last_msg = result.messages[-1]
+        offset_date = getattr(last_msg, "date", 0)
+        offset_id = getattr(last_msg, "id", 0)
+
+        # offset_peer = peer of last dialog
+        if result.dialogs:
+            last_peer = result.dialogs[-1].peer
+            pid = getattr(last_peer, "user_id", None) or getattr(last_peer, "chat_id", None) or getattr(last_peer, "channel_id", None)
+            if pid and pid in entity_map:
+                try:
+                    offset_peer = await client.get_input_entity(entity_map[pid])
+                except Exception:
+                    offset_peer = InputPeerEmpty()
+
+        # If we got fewer than PAGE results, we're at the end
+        if len(result.dialogs) < PAGE:
+            logger.info(f"folder={folder_id}: last page (got {len(result.dialogs)} < {PAGE}), done")
+            break
+
+    return all_entities
+
+
 async def _do_sync(client, limit_per_chat: int = 100, max_dialogs: int = 0):
     """
-    Pull ALL Telegram dialogs into DB.
-    Iterates BOTH main folder (0) AND archived folder (1).
+    Pull ALL Telegram dialogs into DB using raw GetDialogsRequest pagination.
+    Fetches both main folder (0) and archived folder (1).
     max_dialogs=0 means unlimited.
     """
     synced_users = 0
     synced_messages = 0
     seen_ids: set = set()
 
-    async def _iter_folder(folder_id: int):
-        nonlocal synced_users, synced_messages
-        count = 0
-        try:
-            # limit=None → no cap; folder param selects main(0) or archived(1)
-            async for dialog in client.iter_dialogs(limit=None, folder=folder_id):
-                if not dialog.is_user:
-                    continue
-                entity = dialog.entity
-                tg_id = entity.id
-                if tg_id in seen_ids:
-                    continue
-                seen_ids.add(tg_id)
-                if max_dialogs and count >= max_dialogs:
-                    logger.info(f"Hit max_dialogs={max_dialogs} in folder {folder_id}")
-                    break
-                count += 1
-                is_new, nm = await _sync_one_entity(client, entity, limit_per_chat)
-                if is_new:
-                    synced_users += 1
-                synced_messages += nm
-        except Exception as e:
-            logger.error(f"iter_dialogs folder={folder_id} failed: {e}", exc_info=True)
+    for folder_id in (0, 1):
+        label = "main" if folder_id == 0 else "archived"
+        logger.info(f"Fetching all dialogs from {label} folder…")
+        entities = await _get_all_dialogs_raw(client, folder_id)
+        logger.info(f"{label} folder: {len(entities)} user dialogs found")
 
-    logger.info("Syncing main folder (0)…")
-    await _iter_folder(0)
-    logger.info(f"Main folder done — {len(seen_ids)} unique chats")
+        for entity in entities:
+            tg_id = entity.id
+            if tg_id in seen_ids:
+                continue
+            seen_ids.add(tg_id)
+            if max_dialogs and len(seen_ids) > max_dialogs:
+                break
+            is_new, nm = await _sync_one_entity(client, entity, limit_per_chat)
+            if is_new:
+                synced_users += 1
+            synced_messages += nm
 
-    logger.info("Syncing archived folder (1)…")
-    await _iter_folder(1)
-    logger.info(f"Archived folder done — {len(seen_ids)} total unique chats")
-
-    logger.info(f"Full sync done: {synced_users} new users, {synced_messages} new messages")
+    logger.info(f"Full sync done: {len(seen_ids)} total chats, {synced_users} new users, {synced_messages} new messages")
     return synced_users, synced_messages, 0
 
 
@@ -166,10 +225,10 @@ async def _sync_telegram_folders(client):
                         user = res.scalars().first()
                         if user:
                             ed = dict(user.extra_data or {})
-                            folders = ed.get("tg_folders", [])
-                            if title not in folders:
-                                folders.append(title)
-                                ed["tg_folders"] = folders
+                            folders_list = ed.get("tg_folders", [])
+                            if title not in folders_list:
+                                folders_list.append(title)
+                                ed["tg_folders"] = folders_list
                                 user.extra_data = ed
                                 await session.commit()
                 except Exception as pe:
@@ -192,9 +251,28 @@ async def _sync_telegram_folders(client):
     return folder_names
 
 
+# ── Global SSE broadcast: new messages push to all connected clients ──
+_sse_queues: list = []
+
+
+def _broadcast_new_message(user_id: str, message: dict):
+    """Push a new message event to all SSE subscribers."""
+    dead = []
+    for q in _sse_queues:
+        try:
+            q.put_nowait({"user_id": user_id, "message": message})
+        except Exception:
+            dead.append(q)
+    for q in dead:
+        try:
+            _sse_queues.remove(q)
+        except ValueError:
+            pass
+
+
 async def _startup_sync():
     """Run after startup — wait for Telegram to fully settle, then sync ALL dialogs + folders."""
-    await asyncio.sleep(12)
+    await asyncio.sleep(10)
     from app.services.telegram.client import telegram_client
     if telegram_client.is_connected:
         logger.info("Auto-syncing ALL existing Telegram chats on startup…")
@@ -209,7 +287,6 @@ async def _startup_sync():
 async def lifespan(app: FastAPI):
     logger.info(f"Starting {settings.APP_NAME}")
 
-    # Database
     try:
         await db_manager.initialize()
         await db_manager.create_tables()
@@ -217,12 +294,10 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Database init failed: {e}")
 
-    # Telegram
     try:
         from app.services.telegram.client import telegram_client
         from app.services.telegram.message_handler import message_processor
 
-        # Wire new-message events → processor BEFORE connecting
         telegram_client.on("message_new", message_processor.process_incoming_message)
 
         connected = await telegram_client.connect()
