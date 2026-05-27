@@ -399,10 +399,15 @@ analytics_router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
 
 @analytics_router.get("/summary")
-async def analytics_summary(session: AsyncSession = Depends(get_db)):
+async def analytics_summary(
+    days: int = Query(14, ge=1, le=365),
+    session: AsyncSession = Depends(get_db),
+):
     """Dashboard analytics: totals, funnel, lead distribution."""
     try:
         from sqlalchemy.sql import text as sql_text
+        from datetime import timedelta
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
 
         raw = await session.execute(sql_text("""
             SELECT
@@ -420,13 +425,16 @@ async def analytics_summary(session: AsyncSession = Depends(get_db)):
         """))
         row = raw.fetchone()
 
-        # Messages per day (last 14 days)
-        daily = await session.execute(sql_text("""
-            SELECT DATE(created_at) as day, COUNT(*) as count
-            FROM messages
-            WHERE created_at >= NOW() - INTERVAL '14 days'
-            GROUP BY day ORDER BY day
-        """))
+        # Messages per day (dynamic range)
+        daily = await session.execute(
+            sql_text("""
+                SELECT DATE(created_at) as date, COUNT(*) as count
+                FROM messages
+                WHERE created_at >= :cutoff
+                GROUP BY date ORDER BY date
+            """),
+            {"cutoff": cutoff},
+        )
         daily_rows = daily.fetchall()
 
         # Lead stage distribution
@@ -543,77 +551,123 @@ async def sync_telegram_chats(
         raise HTTPException(status_code=500, detail=str(ex))
 
 
-@telegram_router.post("/broadcast")
-async def broadcast_message(
-    payload: Dict[str, Any] = Body(...),
-    session: AsyncSession = Depends(get_db),
-):
+# ── In-memory broadcast job tracker ──────────────────────────────────────────
+_broadcast_jobs: Dict[str, Any] = {}
+
+
+async def _run_broadcast(job_id: str, text: str, user_rows: list) -> None:
     """
-    Send a message to ALL (or up to limit) non-bot users.
-    Useful for outreach blasts. Includes 0.6s delay per message to avoid flood ban.
-    Body: { "message": "...", "limit": 50, "folder": null }
+    Background task: sends text to each (tg_id, db_uuid) pair.
+    Updates _broadcast_jobs[job_id] in-place so /broadcast/status can poll it.
     """
     from app.services.telegram.client import telegram_client
     from app.db.models import Message as MsgModel
-    import asyncio as aio
+    import uuid as _uuid
+
+    job = _broadcast_jobs[job_id]
+    for tg_id, db_id in user_rows:
+        if job.get("cancelled"):
+            break
+        try:
+            # Use Telethon client directly — no ensure_connected() retry sleep
+            sent_msg = await telegram_client.client.send_message(int(tg_id), text)
+            tg_msg_id = sent_msg.id if sent_msg else None
+            if tg_msg_id:
+                async with db_manager.get_session() as sess:
+                    sess.add(MsgModel(
+                        message_id=tg_msg_id,
+                        user_id=db_id,
+                        text=text,
+                        direction="outgoing",
+                        has_media=False,
+                        is_ai_generated=False,
+                        extra_data={"broadcast": True, "job_id": job_id},
+                        created_at=datetime.utcnow(),
+                    ))
+                    await sess.commit()
+                job["sent"] += 1
+            else:
+                job["failed"] += 1
+        except Exception as e:
+            logger.warning(f"Broadcast tg_id={tg_id}: {e}")
+            job["failed"] += 1
+            job["last_error"] = str(e)
+        await asyncio.sleep(0.6)   # Telegram flood guard (100 msgs/min safe rate)
+
+    job["status"] = "done"
+    logger.info(f"Broadcast {job_id} done: {job['sent']} sent, {job['failed']} failed")
+
+
+@telegram_router.post("/broadcast")
+async def broadcast_message(
+    payload: Dict[str, Any] = Body(...),
+):
+    """
+    Kick off a background broadcast.  Returns immediately with a job_id.
+    Poll GET /broadcast/status?job_id=... for live progress.
+    Body: { "message": "...", "limit": 500, "folder": null }
+    """
+    from app.services.telegram.client import telegram_client
+    from sqlalchemy.sql import text as sql_text
+    import json as _json, uuid as _uuid
 
     if not telegram_client.is_connected:
         raise HTTPException(status_code=503, detail="Telegram not connected")
+    if not telegram_client.client:
+        raise HTTPException(status_code=503, detail="Telegram client not initialised")
 
     text = str(payload.get("message", "")).strip()
     if not text:
         raise HTTPException(status_code=400, detail="message is required")
 
-    limit = min(int(payload.get("limit", 200)), 2000)
+    limit  = min(int(payload.get("limit", 500)), 5000)
     folder = payload.get("folder")
 
-    try:
-        from sqlalchemy.sql import text as sql_text
-        folder_clause = ""
-        params: dict = {"limit": limit}
-        if folder:
-            folder_clause = "AND metadata->'tg_folders' @> :folder_json::jsonb"
-            import json
-            params["folder_json"] = json.dumps([folder])
+    # Fetch recipients from DB
+    folder_clause = ""
+    params: dict = {"limit": limit}
+    if folder:
+        folder_clause = "AND metadata->'tg_folders' @> :folder_json::jsonb"
+        params["folder_json"] = _json.dumps([folder])
 
+    async with db_manager.get_session() as session:
         rows = await session.execute(sql_text(f"""
-            SELECT id, user_id FROM users
+            SELECT user_id, id FROM users
             WHERE (is_bot = false OR is_bot IS NULL) {folder_clause}
             ORDER BY last_message_at DESC NULLS LAST
             LIMIT :limit
         """), params)
-        users_list = rows.fetchall()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"DB error: {e}")
+        user_rows = [(r.user_id, r.id) for r in rows.fetchall()]
 
-    sent = 0
-    failed = 0
-    for row in users_list:
-        try:
-            tg_msg_id = await telegram_client.send_message(row.user_id, text)
-            if tg_msg_id:
-                msg = MsgModel(
-                    message_id=tg_msg_id,
-                    user_id=row.id,
-                    text=text,
-                    direction="outgoing",
-                    has_media=False,
-                    is_ai_generated=False,
-                    extra_data={"broadcast": True},
-                    created_at=datetime.utcnow(),
-                )
-                session.add(msg)
-                sent += 1
-            else:
-                failed += 1
-        except Exception as e:
-            logger.warning(f"Broadcast failed for user {row.user_id}: {e}")
-            failed += 1
-        await aio.sleep(0.6)   # Telegram flood guard
+    if not user_rows:
+        return {"status": "ok", "sent": 0, "failed": 0, "total": 0,
+                "message": "No users found"}
 
-    await session.commit()
-    logger.info(f"Broadcast done: {sent} sent, {failed} failed, text='{text[:60]}'")
-    return {"status": "ok", "sent": sent, "failed": failed, "total": len(users_list)}
+    job_id = str(_uuid.uuid4())[:8]
+    _broadcast_jobs[job_id] = {
+        "status": "running", "sent": 0, "failed": 0,
+        "total": len(user_rows), "text": text[:80],
+    }
+
+    # Fire and forget — HTTP response returns instantly
+    asyncio.create_task(_run_broadcast(job_id, text, user_rows))
+    logger.info(f"Broadcast {job_id} started: {len(user_rows)} users, '{text[:60]}'")
+
+    return {
+        "status": "started",
+        "job_id": job_id,
+        "total": len(user_rows),
+        "eta_seconds": round(len(user_rows) * 0.6),
+    }
+
+
+@telegram_router.get("/broadcast/status")
+async def broadcast_status(job_id: str = Query(...)):
+    """Poll broadcast progress."""
+    job = _broadcast_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
 
 
 @telegram_router.post("/sync-folders")
@@ -897,14 +951,16 @@ async def get_config(key: str):
 
 
 @config_router.post("/{key}")
-async def save_config(key: str, payload: Dict[str, Any] = Body(...)):
+async def save_config(key: str, payload: Any = Body(...)):
     """
     Save or merge config for a key.
-    If payload contains a top-level '__merge': true flag, the existing value
-    is deep-merged rather than replaced.
+    Accepts any JSON value (dict, list, string, …).
+    If payload is a dict containing '__merge': true it deep-merges instead of replacing.
     """
     try:
-        merge = payload.pop("__merge", False)
+        merge = False
+        if isinstance(payload, dict):
+            merge = payload.pop("__merge", False)
         async with db_manager.get_session() as session:
             result = await session.execute(select(Config).where(Config.key == key))
             cfg = result.scalars().first()

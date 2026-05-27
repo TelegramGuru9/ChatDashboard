@@ -330,6 +330,41 @@ class MessageProcessor:
 
             from app.services.telegram.client import telegram_client
 
+            # ── Auto-reply rules: keyword match → send template, skip Claude ─────
+            auto_reply_text = await self._check_auto_reply_rules(incoming_text)
+            if auto_reply_text:
+                auto_reply_text = _clean_response(auto_reply_text)
+                logger.info(f"[auto-reply] rule matched for tg_id={telegram_id}")
+                try:
+                    from telethon.tl.functions.messages import SetTypingRequest
+                    from telethon.tl.types import SendMessageTypingAction
+                    await telegram_client.client(
+                        SetTypingRequest(peer=telegram_id, action=SendMessageTypingAction())
+                    )
+                except Exception:
+                    pass
+                await _human_typing_delay(auto_reply_text, {})
+                tg_msg_id = await telegram_client.send_message(telegram_id, auto_reply_text)
+                if tg_msg_id:
+                    async with db_manager.get_session() as session:
+                        ai_msg = Message(
+                            message_id=tg_msg_id, user_id=user_id, text=auto_reply_text,
+                            direction="outgoing", has_media=False, is_ai_generated=True,
+                            extra_data={"source": "auto_reply"}, created_at=_naive_utc(),
+                        )
+                        session.add(ai_msg)
+                        await session.commit()
+                    try:
+                        import main as _main
+                        _main._broadcast_new_message(str(user_id), {
+                            "id": str(tg_msg_id), "text": auto_reply_text,
+                            "direction": "outgoing", "is_ai_generated": True,
+                            "created_at": _naive_utc().isoformat(),
+                        })
+                    except Exception:
+                        pass
+                return  # Rule handled — no Claude call
+
             async with db_manager.get_session() as session:
                 result = await session.execute(select(Config).where(Config.key == "persona"))
                 cfg = result.scalars().first()
@@ -467,6 +502,36 @@ class MessageProcessor:
 
         except Exception as e:
             logger.error(f"AI response failed for tg_id={telegram_id}: {e}", exc_info=True)
+
+    async def _check_auto_reply_rules(self, incoming_text: str) -> Optional[str]:
+        """
+        Check auto_replies config for a keyword match.
+        Returns the matched rule's response_template, or None.
+        Rules sorted by priority (lower = higher priority).
+        """
+        try:
+            async with db_manager.get_session() as session:
+                result = await session.execute(
+                    select(Config).where(Config.key == "auto_replies")
+                )
+                cfg = result.scalars().first()
+                rules = cfg.value if cfg and isinstance(cfg.value, list) else []
+            if not rules:
+                return None
+            text_lower = incoming_text.lower()
+            enabled = sorted(
+                [r for r in rules
+                 if r.get("enabled") and r.get("keywords") and r.get("response_template")],
+                key=lambda r: r.get("priority", 99),
+            )
+            for rule in enabled:
+                for kw in rule.get("keywords", []):
+                    if str(kw).lower() in text_lower:
+                        logger.info(f"[auto-reply] rule '{rule.get('name','?')}' matched kw='{kw}'")
+                        return rule.get("response_template", "")
+        except Exception as e:
+            logger.error(f"Auto-reply rules check: {e}")
+        return None
 
     # ── Background queue ───────────────────────────────────────────────────────
 

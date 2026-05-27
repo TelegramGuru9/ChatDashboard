@@ -46,40 +46,47 @@ export default function AnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [days, setDays] = useState(14);
 
-  const load = useCallback(async (silent = false) => {
+  const load = useCallback(async (silent = false, d = days) => {
     if (!silent) setLoading(true);
     else setRefreshing(true);
     try {
-      const res = await fetch(`${apiBase()}/analytics/summary`);
+      const res = await fetch(`${apiBase()}/analytics/summary?days=${d}`);
       if (!res.ok) throw new Error(`${res.status}`);
-      const d = await res.json();
-      setData(d);
+      const json = await res.json();
+      setData(json);
       setError('');
     } catch {
-      setError('Could not load analytics. Is the backend running?');
+      setError('Daten konnten nicht geladen werden. Läuft das Backend?');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [days]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(false, days); }, [days]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const chartData = data?.daily_messages ?? [];
   const maxCount = Math.max(...chartData.map(d => d.count), 1);
   const totalLeads = data?.lead_stages?.reduce((a, s) => a + s.count, 0) || 0;
 
   const fmtDate = (iso: string) => {
-    const d = new Date(iso);
-    return d.toLocaleDateString('en', { month: 'short', day: 'numeric' });
+    // Parse "YYYY-MM-DD" in local time to avoid UTC-offset date shifts
+    const parts = (iso || '').split('-');
+    if (parts.length === 3) {
+      const [y, m, day] = parts.map(Number);
+      const d = new Date(y, m - 1, day);
+      return d.toLocaleDateString('de', { month: 'short', day: 'numeric' });
+    }
+    return iso;
   };
 
   const KPI = [
-    { label: 'Total Users',     value: data?.totals.users    ?? 0, color: C.purple, icon: '👥' },
-    { label: 'Messages',        value: data?.totals.messages ?? 0, color: C.blue,   icon: '✉' },
-    { label: 'Active Leads',    value: data?.totals.leads    ?? 0, color: C.green,  icon: '🎯' },
-    { label: 'AI Replies Sent', value: data?.totals.ai_sent  ?? 0, color: C.orange, icon: '🤖' },
+    { label: 'Nutzer gesamt',   value: data?.totals.users    ?? 0, color: C.purple, icon: '👥' },
+    { label: 'Nachrichten',     value: data?.totals.messages ?? 0, color: C.blue,   icon: '✉' },
+    { label: 'Aktive Leads',    value: data?.totals.leads    ?? 0, color: C.green,  icon: '🎯' },
+    { label: 'KI-Antworten',    value: data?.totals.ai_sent  ?? 0, color: C.orange, icon: '🤖' },
   ];
 
   return (
@@ -89,14 +96,26 @@ export default function AnalyticsPage() {
         <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom:'28px', flexWrap:'wrap', gap:'12px' }}>
           <div>
             <h1 style={{ fontSize:'26px', fontWeight:700, margin:0, letterSpacing:'-0.03em' }}>Analytics</h1>
-            <p style={{ color: C.t2, fontSize:'14px', margin:'4px 0 0' }}>Real-time data from your connected Telegram account</p>
+            <p style={{ color: C.t2, fontSize:'14px', margin:'4px 0 0' }}>Echtzeit-Daten deines Telegram-Kontos</p>
           </div>
-          <button onClick={() => load(true)} disabled={refreshing} style={{
-            padding:'9px 16px', borderRadius:'12px', background: C.s2, border:`1px solid ${C.sep}`,
-            color: C.t2, fontSize:'13px', cursor:'pointer', display:'flex', alignItems:'center', gap:'6px',
-          }}>
-            {refreshing ? <Spinner /> : '↻'} Refresh
-          </button>
+          <div style={{ display:'flex', gap:'8px', alignItems:'center' }}>
+            <select
+              value={days}
+              onChange={e => setDays(Number(e.target.value))}
+              style={{ padding:'9px 14px', borderRadius:'12px', background: C.s2, border:`1px solid ${C.sep}`, color: C.t2, fontSize:'13px', cursor:'pointer', outline:'none' }}
+            >
+              <option value={7}>Letzte 7 Tage</option>
+              <option value={14}>Letzte 14 Tage</option>
+              <option value={30}>Letzte 30 Tage</option>
+              <option value={90}>Letzte 90 Tage</option>
+            </select>
+            <button onClick={() => load(true)} disabled={refreshing} style={{
+              padding:'9px 16px', borderRadius:'12px', background: C.s2, border:`1px solid ${C.sep}`,
+              color: C.t2, fontSize:'13px', cursor:'pointer', display:'flex', alignItems:'center', gap:'6px',
+            }}>
+              {refreshing ? <Spinner /> : '↻'} Aktualisieren
+            </button>
+          </div>
         </div>
 
         {error && (
@@ -124,9 +143,9 @@ export default function AnalyticsPage() {
             </div>
 
             <Card style={{ padding:'24px', marginBottom:'20px' }}>
-              <div style={{ fontSize:'13px', fontWeight:600, marginBottom:'20px', color: C.t2 }}>Messages — last 14 days</div>
+              <div style={{ fontSize:'13px', fontWeight:600, marginBottom:'20px', color: C.t2 }}>Nachrichten — letzte {days} Tage</div>
               {chartData.length === 0 ? (
-                <div style={{ textAlign:'center', padding:'40px', color: C.t3, fontSize:'13px' }}>No message data yet</div>
+                <div style={{ textAlign:'center', padding:'40px', color: C.t3, fontSize:'13px' }}>Noch keine Nachrichtendaten</div>
               ) : (
                 <div style={{ display:'flex', alignItems:'flex-end', gap:'6px', height:'160px', paddingBottom:'28px', position:'relative', paddingLeft:'32px' }}>
                   {[0, 0.25, 0.5, 0.75, 1].map(frac => (
@@ -152,7 +171,7 @@ export default function AnalyticsPage() {
                           onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
                         />
                         <span style={{ position:'absolute', bottom:'-22px', fontSize:'9px', color: C.t3, whiteSpace:'nowrap' }}>
-                          {fmtDate(d.date)}
+                          {fmtDate((d as any).date ?? (d as any).day ?? '')}
                         </span>
                       </div>
                     );
@@ -163,9 +182,9 @@ export default function AnalyticsPage() {
 
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1.6fr', gap:'16px' }} className="bottom-grid">
               <Card style={{ padding:'24px' }}>
-                <div style={{ fontSize:'13px', fontWeight:600, marginBottom:'20px', color: C.t2 }}>Lead Stages</div>
+                <div style={{ fontSize:'13px', fontWeight:600, marginBottom:'20px', color: C.t2 }}>Lead-Phasen</div>
                 {!data?.lead_stages?.length ? (
-                  <div style={{ textAlign:'center', padding:'40px 0', color: C.t3, fontSize:'13px' }}>No lead data</div>
+                  <div style={{ textAlign:'center', padding:'40px 0', color: C.t3, fontSize:'13px' }}>Keine Lead-Daten</div>
                 ) : (
                   <div style={{ display:'flex', flexDirection:'column', gap:'12px' }}>
                     {data.lead_stages.map(s => {
@@ -188,13 +207,13 @@ export default function AnalyticsPage() {
               </Card>
 
               <Card style={{ padding:'24px' }}>
-                <div style={{ fontSize:'13px', fontWeight:600, marginBottom:'16px', color: C.t2 }}>Top Contacts by Score</div>
+                <div style={{ fontSize:'13px', fontWeight:600, marginBottom:'16px', color: C.t2 }}>Top Kontakte nach Score</div>
                 {!data?.top_users?.length ? (
-                  <div style={{ textAlign:'center', padding:'40px 0', color: C.t3, fontSize:'13px' }}>No contacts yet</div>
+                  <div style={{ textAlign:'center', padding:'40px 0', color: C.t3, fontSize:'13px' }}>Noch keine Kontakte</div>
                 ) : (
                   <div style={{ display:'flex', flexDirection:'column', gap:'2px' }}>
                     <div style={{ display:'grid', gridTemplateColumns:'1fr 60px 60px', gap:'8px', padding:'0 8px 8px', borderBottom:`1px solid ${C.sep}` }}>
-                      {['Name', 'Score', 'Msgs'].map(h => (
+                      {['Name', 'Score', 'Nachr.'].map(h => (
                         <span key={h} style={{ fontSize:'10px', fontWeight:600, color: C.t3, textTransform:'uppercase', letterSpacing:'0.07em' }}>{h}</span>
                       ))}
                     </div>
