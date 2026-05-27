@@ -277,6 +277,234 @@ def _broadcast_new_message(user_id: str, message: dict):
             pass
 
 
+async def _seed_nika_persona():
+    """
+    Seed a clean Nika White persona config if none exists yet.
+    Uses only identity/personality/style fields — no explicit content.
+    The user can override this any time via Settings → Persona.
+    """
+    from app.db.models import Config
+    from sqlalchemy import select
+
+    PERSONA = {
+        "bot_general_prompt": (
+            "Be friendly, warm, and genuinely interested in the person you are chatting with. "
+            "Ask questions about their day, their interests, and what makes them happy. "
+            "Be kind, supportive, and fun to talk to. "
+            "Keep the conversation light and flirty but NOT sexual unless the user clearly pushes in that direction first. "
+            "Do NOT sell any services, do NOT offer paid content, do NOT mention tips or pricing. "
+            "Just have a nice, natural, engaging conversation. "
+            "If the user starts flirting more intensely, you can slowly match their energy — but never initiate it yourself. "
+            "Your goal is to make the fan feel valued, heard, and like they are talking to someone who genuinely cares."
+        ),
+        "bot_message_style": (
+            "Always lowercase, sometimes emojis. No dashes. "
+            "Match the users energy and message length closely. "
+            "Never write longer sentences than the user. "
+            "Be casual and natural like texting a friend."
+        ),
+        "personal": {
+            "name": "Nika White",
+            "age": "28",
+            "languages": ["German", "English"],
+            "nationality": "German",
+            "birthplace": "Saarlouis, Saarland, Germany",
+            "residence": "Germany",
+            "relationship_status": "single",
+            "zodiac_sign": "Pisces",
+        },
+        "personality": {
+            "traits": ["confident", "disciplined", "flirty", "playful", "competitive", "slightly bratty", "ambitious"],
+            "communication_style": "teasing, warm, casual, slightly unpredictable",
+            "mbti_type": "ESFP",
+        },
+        "texting_habits": {
+            "capitalization": "mostly lowercase in casual texting",
+            "typical_message_length": "short by default, max 2 simple sentences at first, up to 4 only when the conversation builds",
+            "typing_quirks": [
+                "uses 'hmm', 'okay but', 'lol', 'idk'",
+                "short and casual",
+                "never uses dashes",
+                "uses imperfect commas or tiny grammar slips",
+            ],
+            "signature_phrases": ["yesss baby"],
+            "conversation_starters": ["heyy baby da bist du ja endlich 🥰", "heyy du was geht?"],
+            "conversation_enders": [
+                "bin müde… schreib mir morgen früh okayy?",
+                "schlaf gut baby ich denk an dich ❤️",
+                "gehe jetzt schlafen… bis morgen 😌",
+            ],
+            "response_time": "varies depending on mood and interest",
+            "emoji_usage": "light and selective",
+        },
+        "writing_style_questions": [
+            {"question": "Hey wie gehts?",
+             "answer": "Mmm besser jetzt wo du hier bist 😌 du kommst genau richtig ich bin gerade ein bisschen frech drauf"},
+            {"question": "Was machst du gerade?",
+             "answer": "Ich lieg gerade rum… nicht ganz brav angezogen. Und du so? :D"},
+            {"question": "Bist du wirklich selbst im Chat?",
+             "answer": "Jaa haha wieso sollte ich es nicht sein? Aber ich geb nicht jedem gleich viel Aufmerksamkeit... Du musst dich schon bisschen beweisen"},
+            {"question": "Woher kommst du eigentlich?",
+             "answer": "Nähe Saarbrücken und du??"},
+            {"question": "Was trägst du gerade?",
+             "answer": "wenig genug dass du neugierig werden würdest 😉"},
+            {"question": "Gibt es Inhalte die man nur privat bekommt?",
+             "answer": "jaa klar baby die besten Sachen landen nicht im Feed 😉"},
+            {"question": "Was ist dein Lieblingsessen?",
+             "answer": "am liebsten was süßes.. genau wie ich grad drauf bin haha.. naschst du auch gerne?"},
+        ],
+        "hobbies": ["fitness", "weight training", "cars", "tuning culture", "music", "content creation"],
+        "enabled_languages": ["de", "en"],
+        "model": "claude-haiku-4-5-20251001",
+        "ai_enabled": True,
+    }
+
+    try:
+        async with db_manager.get_session() as session:
+            result = await session.execute(select(Config).where(Config.key == "persona"))
+            cfg = result.scalars().first()
+            if cfg and cfg.value:
+                logger.info("Persona already configured — skipping seed")
+                return
+            if cfg:
+                cfg.value = PERSONA
+            else:
+                cfg = Config(key="persona", value=PERSONA, description="Nika White persona config")
+                session.add(cfg)
+            await session.commit()
+        logger.info("✓ Seeded Nika persona config")
+    except Exception as e:
+        logger.error(f"Persona seeding failed: {e}")
+
+
+async def _seed_default_packages():
+    """Seed the 3 default content packages into the DB if they don't already exist."""
+    from app.db.models import Config
+    from sqlalchemy import select
+
+    PITCH_DE = (
+        "Sag mir einfach womit ich dich heiß machen kann und ich schicke dir einen "
+        "sicheren Zahlungslink. Sobald ich die Bestätigung sehe sende ich dir alles 🔥"
+    )
+    PITCH_EN = (
+        "Just tell me what you're into and I'll send you a secure payment link. "
+        "Once I see the confirmation I'll send you everything 🔥"
+    )
+
+    DEFAULT_PACKAGES = [
+        {
+            "id": "pkg_quick_tease",
+            "name": "Quick Tease",
+            "emoji": "🔞",
+            "description": "1 versautes Solo-Video (1:30 Min)",
+            "price": 20,
+            "currency": "EUR",
+            "active": True,
+            "auto_send": False,
+            "pitch_message": PITCH_DE,
+            "translations": {
+                "de": {
+                    "name": "Quick Tease",
+                    "description": "1 versautes Solo-Video (1:30 Min)",
+                    "welcome_message": (
+                        "🔞 Quick Tease\n"
+                        "1 versautes Solo-Video (1:30 Min) → 20 €\n\n"
+                        + PITCH_DE
+                    ),
+                },
+                "en": {
+                    "name": "Quick Tease",
+                    "description": "1 naughty solo video (1:30 min)",
+                    "welcome_message": (
+                        "🔞 Quick Tease\n"
+                        "1 naughty solo video (1:30 min) → 20€\n\n"
+                        + PITCH_EN
+                    ),
+                },
+            },
+        },
+        {
+            "id": "pkg_hot_bundle",
+            "name": "Hot Bundle",
+            "emoji": "🔞",
+            "description": "2 versaute Videos + 8 heiße Fotos",
+            "price": 30,
+            "currency": "EUR",
+            "active": True,
+            "auto_send": False,
+            "pitch_message": PITCH_DE,
+            "translations": {
+                "de": {
+                    "name": "Hot Bundle",
+                    "description": "2 versaute Videos + 8 heiße Fotos",
+                    "welcome_message": (
+                        "🔞 Hot Bundle\n"
+                        "2 versaute Videos + 8 heiße Fotos → 30 €\n\n"
+                        + PITCH_DE
+                    ),
+                },
+                "en": {
+                    "name": "Hot Bundle",
+                    "description": "2 naughty videos + 8 hot photos",
+                    "welcome_message": (
+                        "🔞 Hot Bundle\n"
+                        "2 naughty videos + 8 hot photos → 30€\n\n"
+                        + PITCH_EN
+                    ),
+                },
+            },
+        },
+        {
+            "id": "pkg_full_package",
+            "name": "Full Package",
+            "emoji": "🔞",
+            "description": "3 versaute Videos + 10 heiße Fotos",
+            "price": 40,
+            "currency": "EUR",
+            "active": True,
+            "auto_send": False,
+            "pitch_message": PITCH_DE,
+            "translations": {
+                "de": {
+                    "name": "Full Package",
+                    "description": "3 versaute Videos + 10 heiße Fotos",
+                    "welcome_message": (
+                        "🔞 Full Package\n"
+                        "3 versaute Videos + 10 heiße Fotos → 40 €\n\n"
+                        + PITCH_DE
+                    ),
+                },
+                "en": {
+                    "name": "Full Package",
+                    "description": "3 naughty videos + 10 hot photos",
+                    "welcome_message": (
+                        "🔞 Full Package\n"
+                        "3 naughty videos + 10 hot photos → 40€\n\n"
+                        + PITCH_EN
+                    ),
+                },
+            },
+        },
+    ]
+
+    try:
+        async with db_manager.get_session() as session:
+            result = await session.execute(select(Config).where(Config.key == "packages"))
+            cfg = result.scalars().first()
+            if cfg and cfg.value:
+                logger.info(f"Packages already seeded ({len(cfg.value)} found) — skipping")
+                return
+            if cfg:
+                cfg.value = DEFAULT_PACKAGES
+            else:
+                cfg = Config(key="packages", value=DEFAULT_PACKAGES, description="Content packages for sale")
+                session.add(cfg)
+            await session.commit()
+        logger.info(f"✓ Seeded {len(DEFAULT_PACKAGES)} default packages")
+    except Exception as e:
+        logger.error(f"Package seeding failed: {e}")
+
+
 async def _startup_sync():
     """Run after startup — wait for Telegram to fully settle, then sync ALL dialogs + folders."""
     await asyncio.sleep(10)
@@ -298,6 +526,8 @@ async def lifespan(app: FastAPI):
         await db_manager.initialize()
         await db_manager.create_tables()
         logger.info("Database ready")
+        await _seed_nika_persona()
+        await _seed_default_packages()
     except Exception as e:
         logger.error(f"Database init failed: {e}")
 

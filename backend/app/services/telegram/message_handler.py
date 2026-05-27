@@ -5,6 +5,8 @@ Processing pipeline for incoming Telegram messages + AI autopilot.
 
 import logging
 import asyncio
+import re
+import random
 import hashlib
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
@@ -25,6 +27,153 @@ def _naive_utc() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+# ── Persona helpers ────────────────────────────────────────────────────────────
+
+def _build_system_prompt(persona_data: dict) -> str:
+    """
+    Build the AI system prompt from the persona config JSON.
+    Supports both legacy flat format (persona/system_prompt/prompt key)
+    and the structured Nika JSON format (bot_general_prompt + texting_habits etc.).
+    """
+
+    # Legacy flat format — use as-is
+    if persona_data.get("persona"):
+        return str(persona_data["persona"])
+    if persona_data.get("system_prompt"):
+        return str(persona_data["system_prompt"])
+    if persona_data.get("prompt"):
+        return str(persona_data["prompt"])
+
+    # Structured Nika JSON format
+    if persona_data.get("bot_general_prompt"):
+        p = persona_data.get("personal", {})
+        name = p.get("name", "Nika")
+        age = p.get("age", "28")
+        languages = p.get("languages", ["German", "English"])
+        lang_str = " and ".join(languages)
+
+        personality = persona_data.get("personality", {})
+        comm_style = personality.get("communication_style", "teasing, warm, casual")
+        traits = [
+            t for t in personality.get("traits", [])
+            if not any(x in t.lower() for x in ["fuck", "dick", "hard", "wet", "cock", "sex"])
+        ]
+        traits_str = ", ".join(traits[:6]) if traits else "confident, flirty, playful, disciplined"
+
+        texting = persona_data.get("texting_habits", {})
+        msg_len = texting.get("typical_message_length", "short, max 2 sentences by default")
+        quirks = [
+            q for q in texting.get("typing_quirks", [])
+            if "dash" not in q.lower() or "never" in q.lower()
+        ]
+        quirks_str = "; ".join(quirks) if quirks else "short and casual, uses 'hmm', 'okay but', 'lol'"
+
+        general = persona_data.get("bot_general_prompt", "")
+        style = persona_data.get("bot_message_style", "")
+
+        # Writing examples — use the structured Q&A pairs (filter explicit content)
+        _EXPLICIT = {"hose", "feucht", "geil", "fick", "pussy", "cock", "dick", "nackt", "nackig", "steckt"}
+        examples = persona_data.get("writing_style_questions", [])
+        ex_lines = []
+        for ex in examples:
+            if not isinstance(ex, dict):
+                continue
+            q = ex.get("question", "")
+            a = ex.get("answer", "")
+            if not q or not a:
+                continue
+            combined_lower = (q + a).lower()
+            if any(w in combined_lower for w in _EXPLICIT):
+                continue  # skip explicit examples
+            ex_lines.append(f'Fan: "{q}"\nYou: "{a}"')
+        examples_block = "\n\n".join(ex_lines[:6]) if ex_lines else ""
+
+        sig_phrases = texting.get("signature_phrases", [])
+        conv_enders = texting.get("conversation_enders", [])
+
+        prompt = f"""You are {name}, {age} years old, a fitness and lifestyle content creator from near Saarbrücken, Germany.
+You speak {lang_str}. Stay in character as {name} and respond as she would.
+
+PERSONALITY:
+Communication style: {comm_style}
+Key traits: {traits_str}
+
+BEHAVIOR:
+{general}
+
+WRITING STYLE (follow strictly):
+{style}
+
+CRITICAL FORMATTING RULES:
+- Always write in lowercase
+- NEVER use the "–" or "—" character. Replace pauses with "..." or a comma instead
+- NEVER use " - " as a separator. Use a comma or rewrite the sentence
+- Message length: {msg_len}
+- Typing quirks: {quirks_str}
+- Occasional emojis only when they feel natural: 😊 😈 😌 🔥 💦 🥰
+- When writing German: always use "du", never "Sie"
+- Never write long structured paragraphs or bullet points
+
+EXAMPLE CONVERSATIONS (match this energy and style):
+{examples_block}
+
+SIGNATURE PHRASES: {", ".join(sig_phrases)}
+CONVERSATION ENDERS: {" | ".join(conv_enders[:3])}
+"""
+        return prompt.strip()
+
+    # Ultimate fallback
+    return (
+        "You are Nika, a friendly and flirty content creator. "
+        "Reply casually in lowercase, keep it short (1-2 sentences), "
+        "never use dashes. Match the user's language and energy."
+    )
+
+
+def _clean_response(text: str) -> str:
+    """
+    Post-process AI response to enforce no-dash rule and clean up formatting.
+    Acts as a safety net in case Claude ignores the system prompt instruction.
+    """
+    # Em dash and en dash → ellipsis (feels more natural in casual texting)
+    text = text.replace("—", "...")
+    text = text.replace("–", "...")
+    # Inline " - " used as a clause separator → comma (only when surrounded by spaces)
+    text = re.sub(r'(?<=\w) - (?=\w)', ', ', text)
+    # Clean up "..." chains longer than 3
+    text = re.sub(r'\.{4,}', '...', text)
+    # Collapse multiple spaces
+    text = re.sub(r' {2,}', ' ', text)
+    return text.strip()
+
+
+async def _human_typing_delay(response_text: str, persona_data: dict) -> None:
+    """
+    Simulate realistic human behaviour before sending:
+      1. Read delay  — Nika "reads" the incoming message (3-10 s)
+      2. Typing delay — time to physically type the response (~35-50 chars/sec)
+
+    Shows the Telegram typing indicator for the full duration so the chat
+    looks exactly like a real person is composing the message.
+    """
+    # Read delay — enforce realistic minimums regardless of JSON config
+    cfg_min = float(persona_data.get("bot_reply_delay_min", 4))
+    cfg_max = float(persona_data.get("bot_reply_delay_max", 12))
+    read_min = max(cfg_min, 4.0)
+    read_max = max(cfg_max, read_min + 5.0)
+    read_delay = random.uniform(read_min, read_max)
+
+    # Typing delay — chars / chars-per-second
+    typing_speed = random.uniform(32.0, 52.0)   # chars per second
+    typing_delay = len(response_text) / typing_speed
+
+    total = min(read_delay + typing_delay, 60.0)
+    logger.info(f"[human delay] {total:.1f}s  (read={read_delay:.1f}s + typing={typing_delay:.1f}s for {len(response_text)} chars)")
+    await asyncio.sleep(total)
+
+
+# ── Main processor ─────────────────────────────────────────────────────────────
+
 class MessageProcessor:
     def __init__(self):
         self.queue: asyncio.Queue = asyncio.Queue()
@@ -36,7 +185,6 @@ class MessageProcessor:
             telegram_message: TelegramMessage = event_data["message"]
             sender_id: int = event_data["sender_id"]
 
-            # In private (1-on-1) chats, from_id is None — use sender_id instead
             if not sender_id:
                 return False
 
@@ -54,7 +202,6 @@ class MessageProcessor:
                 if not message:
                     return False
 
-                # Update engagement
                 user.total_messages = (user.total_messages or 0) + 1
                 user.total_interactions = (user.total_interactions or 0) + 1
                 user.last_message_at = _naive_utc()
@@ -79,7 +226,6 @@ class MessageProcessor:
             except Exception:
                 pass
 
-            # Fire AI response asynchronously (non-blocking)
             if ai_enabled and text:
                 asyncio.create_task(
                     self._generate_and_send_ai_response(user_id, telegram_id, text)
@@ -136,7 +282,6 @@ class MessageProcessor:
             if result.scalars().first():
                 return None
 
-            # Always store timezone-naive datetimes
             created_at = _naive_utc()
             if telegram_message.date:
                 try:
@@ -147,11 +292,11 @@ class MessageProcessor:
             media_type = None
             if telegram_message.media:
                 n = type(telegram_message.media).__name__
-                if "Photo" in n: media_type = "photo"
+                if "Photo" in n:      media_type = "photo"
                 elif "Document" in n: media_type = "document"
-                elif "Video" in n: media_type = "video"
-                elif "Audio" in n: media_type = "audio"
-                else: media_type = n.lower()
+                elif "Video" in n:    media_type = "video"
+                elif "Audio" in n:    media_type = "audio"
+                else:                 media_type = n.lower()
 
             msg = Message(
                 message_id=telegram_message.id,
@@ -177,50 +322,39 @@ class MessageProcessor:
         telegram_id: int,
         incoming_text: str,
     ) -> None:
-        """Generate Claude AI response and send it via Telegram."""
+        """Generate Claude AI response and send it via Telegram with human-like timing."""
         try:
             if not settings.ANTHROPIC_API_KEY:
-                logger.warning("ANTHROPIC_API_KEY not set — AI autopilot disabled. Add it in Railway variables.")
+                logger.warning("ANTHROPIC_API_KEY not set — AI autopilot disabled.")
                 return
 
             from app.services.telegram.client import telegram_client
-            from app.db.models import Config
 
             async with db_manager.get_session() as session:
-                # Load persona config
                 result = await session.execute(select(Config).where(Config.key == "persona"))
                 cfg = result.scalars().first()
                 persona_data = cfg.value if cfg else {}
 
-                # Check global AI toggle (defaults to ON)
                 if persona_data.get("ai_enabled") is False:
-                    logger.debug("AI globally disabled in persona config — skipping response")
+                    logger.debug("AI globally disabled — skipping")
                     return
 
-                base_prompt = (
-                    persona_data.get("persona")
-                    or persona_data.get("system_prompt")
-                    or persona_data.get("prompt")
-                    or "You are Nika, a friendly and warm sales assistant. Keep replies concise and engaging (2-3 sentences max)."
-                )
+                # ── Build system prompt from persona JSON ───────────────────
+                base_prompt = _build_system_prompt(persona_data)
 
-                # ── Language detection ──────────────────────────────────────
+                # ── Language detection rule ─────────────────────────────────
                 enabled_langs = persona_data.get("enabled_languages") or ["en", "de", "uk", "ru"]
-                LANG_NAMES = {
-                    "en": "English", "de": "German",
-                    "uk": "Ukrainian", "ru": "Russian",
-                }
+                LANG_NAMES = {"en": "English", "de": "German", "uk": "Ukrainian", "ru": "Russian"}
                 lang_list = ", ".join(LANG_NAMES.get(c, c) for c in enabled_langs)
                 lang_rule = (
-                    f"\n\nLANGUAGE RULE (non-negotiable): Detect the language of the "
-                    f"user's latest message and reply ONLY in that same language. "
-                    f"Supported languages: {lang_list}. "
-                    f"If the user writes in a language not on this list, default to English. "
+                    f"\n\nLANGUAGE RULE (non-negotiable): Detect the language of the user's "
+                    f"latest message and reply ONLY in that same language. "
+                    f"Supported: {lang_list}. Default to English if unsupported language. "
                     f"Never mix languages in a single reply."
                 )
                 system_prompt = base_prompt + lang_rule
 
-                # Always use a known-valid Claude model
+                # ── Model selection ─────────────────────────────────────────
                 VALID_MODELS = {
                     "claude-haiku-4-5-20251001",
                     "claude-sonnet-4-6",
@@ -233,7 +367,7 @@ class MessageProcessor:
                 model = raw_model if raw_model in VALID_MODELS else settings.CLAUDE_MODEL
                 max_tokens = int(persona_data.get("max_tokens", 512))
 
-                # Load recent conversation history (last 20 messages)
+                # ── Conversation history ────────────────────────────────────
                 hist_result = await session.execute(
                     select(Message)
                     .where(Message.user_id == user_id)
@@ -253,13 +387,12 @@ class MessageProcessor:
                 else:
                     claude_msgs.append({"role": role, "content": m.text})
 
-            # Ensure conversation ends with a user message
             if not claude_msgs or claude_msgs[-1]["role"] != "user":
                 claude_msgs.append({"role": "user", "content": incoming_text})
 
             logger.info(f"Calling Claude ({model}) for tg_id={telegram_id}, {len(claude_msgs)} msgs in context")
 
-            # Call Claude (sync client in thread)
+            # ── Call Claude ─────────────────────────────────────────────────
             import anthropic
             client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 
@@ -278,15 +411,30 @@ class MessageProcessor:
                 logger.warning(f"Claude returned empty response for {telegram_id}")
                 return
 
-            logger.info(f"✓ AI response for tg_id={telegram_id}: {ai_text[:100]}")
+            # ── Post-process: strip dashes ──────────────────────────────────
+            ai_text = _clean_response(ai_text)
 
-            # Send via Telegram
+            logger.info(f"✓ AI response for tg_id={telegram_id}: {ai_text[:120]}")
+
+            # ── Human delay: show typing indicator while waiting ────────────
+            try:
+                from telethon.tl.functions.messages import SetTypingRequest
+                from telethon.tl.types import SendMessageTypingAction
+                await telegram_client.client(
+                    SetTypingRequest(peer=telegram_id, action=SendMessageTypingAction())
+                )
+            except Exception:
+                pass  # typing indicator is best-effort
+
+            await _human_typing_delay(ai_text, persona_data)
+
+            # ── Send via Telegram ───────────────────────────────────────────
             tg_msg_id = await telegram_client.send_message(telegram_id, ai_text)
             if tg_msg_id is None:
                 logger.error(f"Telegram send failed for tg_id={telegram_id}")
                 return
 
-            # Store outgoing AI message in DB
+            # ── Store in DB ─────────────────────────────────────────────────
             async with db_manager.get_session() as session:
                 ai_msg = Message(
                     message_id=tg_msg_id,
@@ -301,7 +449,7 @@ class MessageProcessor:
                 session.add(ai_msg)
                 await session.commit()
 
-            # Broadcast AI reply via SSE so inbox updates instantly
+            # ── Broadcast via SSE ───────────────────────────────────────────
             try:
                 import main as _main
                 _main._broadcast_new_message(str(user_id), {
@@ -320,7 +468,7 @@ class MessageProcessor:
         except Exception as e:
             logger.error(f"AI response failed for tg_id={telegram_id}: {e}", exc_info=True)
 
-    # ── Background embedding queue ──
+    # ── Background queue ───────────────────────────────────────────────────────
 
     async def start_processor(self) -> None:
         if self._processor_running:
@@ -338,7 +486,6 @@ class MessageProcessor:
         while self._processor_running:
             try:
                 await asyncio.wait_for(self.queue.get(), timeout=30)
-                # embedding generation omitted for now — pgvector optional
             except asyncio.TimeoutError:
                 continue
             except Exception as e:
