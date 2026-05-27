@@ -80,15 +80,17 @@ async def list_messages(
 @router.get("/conversations")
 async def list_conversations(
     skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(500, ge=1, le=2000),
     session: AsyncSession = Depends(get_db),
 ):
     """
-    Return one row per user — the latest message plus user info.
-    Used for the inbox conversation list view.
+    Return one row per user — latest message + user info.
+    Uses LEFT JOIN so users with NO messages still appear.
     """
     try:
-        # Subquery: latest message per user
+        from sqlalchemy import outerjoin, case, literal
+
+        # Subquery: latest message timestamp per user
         subq = (
             select(
                 Message.user_id,
@@ -98,38 +100,76 @@ async def list_conversations(
             .subquery()
         )
 
-        result = await session.execute(
-            select(User, Message)
-            .join(subq, User.id == subq.c.user_id)
-            .join(
-                Message,
+        # Latest message row per user
+        msg_subq = (
+            select(Message)
+            .where(
                 and_(
-                    Message.user_id == User.id,
                     Message.created_at == subq.c.latest_at,
-                ),
+                    Message.user_id == subq.c.user_id,
+                )
             )
-            .order_by(subq.c.latest_at.desc())
-            .offset(skip)
-            .limit(limit)
+            .correlate(subq)
+            .limit(1)
+            .subquery()
         )
-        rows = result.all()
+
+        # Use raw query for LEFT JOIN to handle users with no messages
+        from sqlalchemy.sql import text as sql_text
+        raw = await session.execute(sql_text("""
+            SELECT
+                u.id            AS user_id,
+                u.user_id       AS telegram_id,
+                u.first_name,
+                u.last_name,
+                u.username,
+                u.lead_score,
+                u.total_messages,
+                u.ai_enabled,
+                u.created_at    AS user_created_at,
+                m.text          AS last_message,
+                m.direction     AS last_direction,
+                m.created_at    AS last_message_at,
+                m.is_ai_generated
+            FROM users u
+            LEFT JOIN (
+                SELECT DISTINCT ON (user_id)
+                    user_id, text, direction, created_at, is_ai_generated
+                FROM messages
+                ORDER BY user_id, created_at DESC
+            ) m ON m.user_id = u.id
+            WHERE u.is_bot = false OR u.is_bot IS NULL
+            ORDER BY COALESCE(m.created_at, u.created_at) DESC
+            LIMIT :limit OFFSET :skip
+        """), {"limit": limit, "skip": skip})
+
+        rows = raw.fetchall()
 
         items = []
-        for user, msg in rows:
+        for row in rows:
+            name = f"{row.first_name or ''} {row.last_name or ''}".strip() or f"User {row.telegram_id}"
             items.append({
-                "user_id": str(user.id),
-                "telegram_id": user.user_id,
-                "name": f"{user.first_name or ''} {user.last_name or ''}".strip() or f"User {user.user_id}",
-                "username": user.username,
-                "lead_score": user.lead_score,
-                "total_messages": user.total_messages,
-                "last_message": msg.text,
-                "last_message_direction": msg.direction,
-                "last_message_at": msg.created_at.isoformat() if msg.created_at else None,
-                "ai_enabled": user.ai_enabled,
+                "user_id": str(row.user_id),
+                "telegram_id": row.telegram_id,
+                "name": name,
+                "username": row.username,
+                "lead_score": row.lead_score or 0,
+                "total_messages": row.total_messages or 0,
+                "last_message": row.last_message,
+                "last_message_direction": row.last_direction or "incoming",
+                "last_message_at": row.last_message_at.isoformat() if row.last_message_at else None,
+                "ai_enabled": row.ai_enabled,
             })
 
-        return {"items": items, "total": len(items)}
+        # Total count of non-bot users
+        count_res = await session.execute(
+            select(func.count(User.id)).where(
+                (User.is_bot == False) | (User.is_bot == None)
+            )
+        )
+        total = count_res.scalar() or 0
+
+        return {"items": items, "total": total}
     except Exception as e:
         logger.error(f"Error listing conversations: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to list conversations")
@@ -266,6 +306,167 @@ async def get_user(user_id: UUID, session: AsyncSession = Depends(get_db)):
     except Exception as e:
         logger.error(f"Error getting user: {e}")
         raise HTTPException(status_code=500, detail="Failed to get user")
+
+
+@user_router.get("/{user_id}/insights")
+async def get_user_insights(user_id: UUID, session: AsyncSession = Depends(get_db)):
+    """Returns rich insight data for the inbox right panel."""
+    try:
+        result = await session.execute(select(User).where(User.id == user_id))
+        user = result.scalars().first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Message stats
+        msg_count = await session.execute(select(func.count(Message.id)).where(Message.user_id == user_id))
+        ai_count  = await session.execute(select(func.count(Message.id)).where(and_(Message.user_id == user_id, Message.is_ai_generated == True)))
+        in_count  = await session.execute(select(func.count(Message.id)).where(and_(Message.user_id == user_id, Message.direction == "incoming")))
+
+        extra = user.extra_data or {}
+        return {
+            "user_id": str(user.id),
+            "telegram_id": user.user_id,
+            "name": f"{user.first_name or ''} {user.last_name or ''}".strip(),
+            "username": user.username,
+            "lead_score": user.lead_score,
+            "ai_enabled": user.ai_enabled,
+            "conversation_state": user.conversation_state,
+            "tags": user.tags or [],
+            "total_messages": msg_count.scalar() or 0,
+            "ai_messages": ai_count.scalar() or 0,
+            "incoming_messages": in_count.scalar() or 0,
+            "first_message_at": user.first_message_at.isoformat() if user.first_message_at else None,
+            "last_message_at": user.last_message_at.isoformat() if user.last_message_at else None,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+            # CRM fields from extra_data
+            "status_label": extra.get("status_label", "COLD"),
+            "interest_tags": extra.get("interest_tags", []),
+            "purchase_status": extra.get("purchase_status", "none"),
+            "purchased_package": extra.get("purchased_package"),
+            "purchase_value": extra.get("purchase_value"),
+            "loop_status": extra.get("loop_status", "active"),
+            "wishperme_status": extra.get("wishperme_status", "none"),
+            "handoff_status": extra.get("handoff_status", "none"),
+            "human_notes": extra.get("human_notes", ""),
+            "next_best_offer": extra.get("next_best_offer", ""),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting insights: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get insights")
+
+
+@user_router.patch("/{user_id}/insights")
+async def update_user_insights(
+    user_id: UUID,
+    payload: Dict[str, Any] = Body(...),
+    session: AsyncSession = Depends(get_db),
+):
+    """Update CRM insight fields (labels, tags, notes) stored in extra_data."""
+    try:
+        result = await session.execute(select(User).where(User.id == user_id))
+        user = result.scalars().first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        extra = dict(user.extra_data or {})
+        crm_fields = ["status_label", "interest_tags", "purchase_status", "purchased_package",
+                      "purchase_value", "loop_status", "wishperme_status", "handoff_status",
+                      "human_notes", "next_best_offer"]
+        for f in crm_fields:
+            if f in payload:
+                extra[f] = payload[f]
+        user.extra_data = extra
+
+        # Also allow direct ai_enabled toggle
+        if "ai_enabled" in payload:
+            user.ai_enabled = bool(payload["ai_enabled"])
+
+        await session.commit()
+        return {"status": "updated"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating insights: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update insights")
+
+
+# ==================== ANALYTICS ====================
+
+analytics_router = APIRouter(prefix="/analytics", tags=["Analytics"])
+
+
+@analytics_router.get("/summary")
+async def analytics_summary(session: AsyncSession = Depends(get_db)):
+    """Dashboard analytics: totals, funnel, lead distribution."""
+    try:
+        from sqlalchemy.sql import text as sql_text
+
+        raw = await session.execute(sql_text("""
+            SELECT
+                (SELECT COUNT(*) FROM users WHERE is_bot = false OR is_bot IS NULL) AS total_users,
+                (SELECT COUNT(*) FROM messages) AS total_messages,
+                (SELECT COUNT(*) FROM messages WHERE direction = 'incoming') AS incoming_messages,
+                (SELECT COUNT(*) FROM messages WHERE direction = 'outgoing') AS outgoing_messages,
+                (SELECT COUNT(*) FROM messages WHERE is_ai_generated = true) AS ai_messages,
+                (SELECT COUNT(*) FROM leads) AS total_leads,
+                (SELECT AVG(lead_score) FROM users WHERE lead_score > 0) AS avg_lead_score,
+                (SELECT COUNT(*) FROM users WHERE lead_score >= 70) AS hot_leads,
+                (SELECT COUNT(*) FROM users WHERE lead_score >= 40 AND lead_score < 70) AS warm_leads,
+                (SELECT COUNT(*) FROM users WHERE lead_score < 40 OR lead_score IS NULL) AS cold_leads,
+                (SELECT COUNT(*) FROM users WHERE ai_enabled = true) AS ai_enabled_count
+        """))
+        row = raw.fetchone()
+
+        # Messages per day (last 14 days)
+        daily = await session.execute(sql_text("""
+            SELECT DATE(created_at) as day, COUNT(*) as count
+            FROM messages
+            WHERE created_at >= NOW() - INTERVAL '14 days'
+            GROUP BY day ORDER BY day
+        """))
+        daily_rows = daily.fetchall()
+
+        # Lead stage distribution
+        stages = await session.execute(sql_text("""
+            SELECT COALESCE(funnel_stage, 'awareness') as stage, COUNT(*) as count
+            FROM leads GROUP BY stage
+        """))
+
+        # Top users by lead score
+        top_users = await session.execute(sql_text("""
+            SELECT id, first_name, last_name, username, lead_score, total_messages
+            FROM users
+            WHERE is_bot = false OR is_bot IS NULL
+            ORDER BY lead_score DESC LIMIT 10
+        """))
+
+        return {
+            "totals": {
+                "users": row.total_users or 0,
+                "messages": row.total_messages or 0,
+                "incoming": row.incoming_messages or 0,
+                "outgoing": row.outgoing_messages or 0,
+                "ai_messages": row.ai_messages or 0,
+                "leads": row.total_leads or 0,
+                "avg_lead_score": round(float(row.avg_lead_score or 0), 1),
+                "hot_leads": row.hot_leads or 0,
+                "warm_leads": row.warm_leads or 0,
+                "cold_leads": row.cold_leads or 0,
+                "ai_enabled": row.ai_enabled_count or 0,
+            },
+            "daily_messages": [{"day": str(r.day), "count": r.count} for r in daily_rows],
+            "lead_stages": [{"stage": r.stage, "count": r.count} for r in stages.fetchall()],
+            "top_users": [
+                {"id": str(r.id), "name": f"{r.first_name or ''} {r.last_name or ''}".strip() or "—",
+                 "username": r.username, "score": r.lead_score or 0, "messages": r.total_messages or 0}
+                for r in top_users.fetchall()
+            ],
+        }
+    except Exception as e:
+        logger.error(f"Analytics error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to load analytics")
 
 
 # ==================== LEAD ROUTES ====================
@@ -516,5 +717,6 @@ api_router.include_router(lead_router)
 api_router.include_router(telegram_router)
 api_router.include_router(ai_router)
 api_router.include_router(config_router)
+api_router.include_router(analytics_router)
 
 __all__ = ["api_router"]
