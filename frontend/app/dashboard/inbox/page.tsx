@@ -70,6 +70,13 @@ function formatTime(iso: string) {
   try { return new Date(iso).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }); } catch { return ''; }
 }
 function scoreColor(s: number) { return s >= 70 ? C.green : s >= 40 ? C.orange : C.t3; }
+function sortByRecent(list: Conversation[]): Conversation[] {
+  return [...list].sort((a, b) => {
+    const ta = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+    const tb = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
+    return tb - ta;
+  });
+}
 function avatarColor(id: number) {
   const colors = [C.blue, C.green, C.orange, C.purple, C.red, C.teal, '#ffd60a'];
   return colors[Math.abs(id) % colors.length];
@@ -301,9 +308,12 @@ export default function InboxPage() {
       } else {
         setMessages(prev => prev.map(m => m.id === tempId ? d : m));
         lastMsgTimeRef.current = d.created_at;
-        setConvos(prev => prev.map(c =>
-          c.user_id === selected.user_id ? { ...c, last_message:text, last_message_direction:'outgoing', last_message_at:d.created_at } : c
-        ));
+        setConvos(prev => {
+          const updated = prev.map(c =>
+            c.user_id === selected.user_id ? { ...c, last_message: text, last_message_direction: 'outgoing', last_message_at: d.created_at } : c
+          );
+          return sortByRecent(updated);
+        });
       }
     } catch (e: any) {
       setSendError(e.message);
@@ -351,11 +361,14 @@ export default function InboxPage() {
             if (prev.some(m => String(m.id) === String(msg.id))) return prev;
             return [...prev, { ...msg, id: String(msg.id) }];
           });
-          setConvos(prev => prev.map(c =>
-            c.user_id === selected.user_id
-              ? { ...c, last_message: msg.text, last_message_direction: msg.direction, last_message_at: msg.created_at }
-              : c
-          ));
+          setConvos(prev => {
+            const updated = prev.map(c =>
+              c.user_id === selected.user_id
+                ? { ...c, last_message: msg.text, last_message_direction: msg.direction, last_message_at: msg.created_at }
+                : c
+            );
+            return sortByRecent(updated);
+          });
         } catch { /* ignore */ }
       };
       es.onerror = () => { es?.close(); setTimeout(connect, 3000); };

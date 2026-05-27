@@ -457,7 +457,7 @@ async def analytics_summary(
                 "messages": row.total_messages or 0,
                 "incoming": row.incoming_messages or 0,
                 "outgoing": row.outgoing_messages or 0,
-                "ai_messages": row.ai_messages or 0,
+                "ai_sent": row.ai_messages or 0,
                 "leads": row.total_leads or 0,
                 "avg_lead_score": round(float(row.avg_lead_score or 0), 1),
                 "hot_leads": row.hot_leads or 0,
@@ -465,10 +465,10 @@ async def analytics_summary(
                 "cold_leads": row.cold_leads or 0,
                 "ai_enabled": row.ai_enabled_count or 0,
             },
-            "daily_messages": [{"day": str(r.day), "count": r.count} for r in daily_rows],
+            "daily_messages": [{"date": str(r.date), "count": r.count} for r in daily_rows],
             "lead_stages": [{"stage": r.stage, "count": r.count} for r in stages.fetchall()],
             "top_users": [
-                {"id": str(r.id), "name": f"{r.first_name or ''} {r.last_name or ''}".strip() or "—",
+                {"user_id": str(r.id), "name": f"{r.first_name or ''} {r.last_name or ''}".strip() or "—",
                  "username": r.username, "score": r.lead_score or 0, "messages": r.total_messages or 0}
                 for r in top_users.fetchall()
             ],

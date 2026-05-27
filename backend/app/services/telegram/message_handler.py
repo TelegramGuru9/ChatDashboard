@@ -331,10 +331,11 @@ class MessageProcessor:
             from app.services.telegram.client import telegram_client
 
             # ── Auto-reply rules: keyword match → send template, skip Claude ─────
-            auto_reply_text = await self._check_auto_reply_rules(incoming_text)
-            if auto_reply_text:
-                auto_reply_text = _clean_response(auto_reply_text)
-                logger.info(f"[auto-reply] rule matched for tg_id={telegram_id}")
+            auto_reply_match = await self._check_auto_reply_rules(incoming_text)
+            if auto_reply_match:
+                auto_reply_text = _clean_response(auto_reply_match["text"])
+                rule_action     = auto_reply_match.get("action", "")
+                logger.info(f"[auto-reply] rule matched action={rule_action} for tg_id={telegram_id}")
                 try:
                     from telethon.tl.functions.messages import SetTypingRequest
                     from telethon.tl.types import SendMessageTypingAction
@@ -350,9 +351,23 @@ class MessageProcessor:
                         ai_msg = Message(
                             message_id=tg_msg_id, user_id=user_id, text=auto_reply_text,
                             direction="outgoing", has_media=False, is_ai_generated=True,
-                            extra_data={"source": "auto_reply"}, created_at=_naive_utc(),
+                            extra_data={"source": "auto_reply", "action": rule_action},
+                            created_at=_naive_utc(),
                         )
                         session.add(ai_msg)
+
+                        # Tag chat as WARM whenever the package menu is sent
+                        if rule_action == "send_package_menu":
+                            user_res = await session.execute(
+                                select(User).where(User.id == user_id)
+                            )
+                            u = user_res.scalars().first()
+                            if u:
+                                extra = dict(u.extra_data or {})
+                                extra["lead_label"] = "WARM"
+                                u.extra_data = extra
+                                logger.info(f"[auto-reply] tagged user {user_id} as WARM")
+
                         await session.commit()
                     try:
                         import main as _main
@@ -503,10 +518,10 @@ class MessageProcessor:
         except Exception as e:
             logger.error(f"AI response failed for tg_id={telegram_id}: {e}", exc_info=True)
 
-    async def _check_auto_reply_rules(self, incoming_text: str) -> Optional[str]:
+    async def _check_auto_reply_rules(self, incoming_text: str) -> Optional[Dict[str, Any]]:
         """
         Check auto_replies config for a keyword match.
-        Returns the matched rule's response_template, or None.
+        Returns dict {"text": ..., "label": ..., "action": ...} or None.
         Rules sorted by priority (lower = higher priority).
         """
         try:
@@ -528,7 +543,11 @@ class MessageProcessor:
                 for kw in rule.get("keywords", []):
                     if str(kw).lower() in text_lower:
                         logger.info(f"[auto-reply] rule '{rule.get('name','?')}' matched kw='{kw}'")
-                        return rule.get("response_template", "")
+                        return {
+                            "text": rule.get("response_template", ""),
+                            "label": rule.get("label", ""),
+                            "action": rule.get("action", ""),
+                        }
         except Exception as e:
             logger.error(f"Auto-reply rules check: {e}")
         return None
