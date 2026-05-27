@@ -45,7 +45,6 @@ interface Insights {
   human_notes?: string;
   ai_enabled?: boolean;
   tg_folders?: string[];
-  lead_label?: string;
   message_count?: number;
   incoming_count?: number;
   outgoing_count?: number;
@@ -192,7 +191,10 @@ export default function InboxPage() {
       const res = await fetch(`${api}/telegram/sync?limit_per_chat=150&max_dialogs=0`, { method:'POST' });
       const d = await res.json();
       if (res.ok) {
-        if (!silent) setSyncStatus(`✓ Synced ${d.synced_messages} messages from ${d.synced_users} new chats`);
+        const totalMsg = d.total_dialogs > 0
+          ? `✓ Found ${d.total_dialogs} chats · ${d.synced_users} new · ${d.synced_messages} new msgs`
+          : `✓ Synced ${d.synced_messages} messages from ${d.synced_users} new chats`;
+        if (!silent) setSyncStatus(totalMsg);
         // Also fetch folder tags in background
         fetch(`${api}/telegram/sync-folders`, { method:'POST' }).then(() => loadFolders()).catch(() => {});
         await loadConvos(activeFolder !== 'All' ? activeFolder : undefined);

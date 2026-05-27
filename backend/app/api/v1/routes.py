@@ -311,9 +311,10 @@ async def get_user_insights(user_id: UUID, session: AsyncSession = Depends(get_d
             raise HTTPException(status_code=404, detail="User not found")
 
         # Message stats
-        msg_count = await session.execute(select(func.count(Message.id)).where(Message.user_id == user_id))
-        ai_count  = await session.execute(select(func.count(Message.id)).where(and_(Message.user_id == user_id, Message.is_ai_generated == True)))
-        in_count  = await session.execute(select(func.count(Message.id)).where(and_(Message.user_id == user_id, Message.direction == "incoming")))
+        total_cnt = (await session.execute(select(func.count(Message.id)).where(Message.user_id == user_id))).scalar() or 0
+        ai_cnt    = (await session.execute(select(func.count(Message.id)).where(and_(Message.user_id == user_id, Message.is_ai_generated == True)))).scalar() or 0
+        in_cnt    = (await session.execute(select(func.count(Message.id)).where(and_(Message.user_id == user_id, Message.direction == "incoming")))).scalar() or 0
+        out_cnt   = total_cnt - in_cnt
 
         extra = user.extra_data or {}
         return {
@@ -325,13 +326,20 @@ async def get_user_insights(user_id: UUID, session: AsyncSession = Depends(get_d
             "ai_enabled": user.ai_enabled,
             "conversation_state": user.conversation_state,
             "tags": user.tags or [],
-            "total_messages": msg_count.scalar() or 0,
-            "ai_messages": ai_count.scalar() or 0,
-            "incoming_messages": in_count.scalar() or 0,
+            # Field names used by frontend stats panel
+            "message_count": total_cnt,
+            "incoming_count": in_cnt,
+            "outgoing_count": out_cnt,
+            "ai_count": ai_cnt,
+            # Legacy aliases (kept for compatibility)
+            "total_messages": total_cnt,
+            "ai_messages": ai_cnt,
+            "incoming_messages": in_cnt,
             "first_message_at": user.first_message_at.isoformat() if user.first_message_at else None,
             "last_message_at": user.last_message_at.isoformat() if user.last_message_at else None,
             "created_at": user.created_at.isoformat() if user.created_at else None,
             # CRM fields from extra_data
+            "lead_label": extra.get("lead_label", extra.get("status_label", "")),
             "status_label": extra.get("status_label", "COLD"),
             "interest_tags": extra.get("interest_tags", []),
             "purchase_status": extra.get("purchase_status", "none"),
@@ -364,7 +372,7 @@ async def update_user_insights(
             raise HTTPException(status_code=404, detail="User not found")
 
         extra = dict(user.extra_data or {})
-        crm_fields = ["status_label", "interest_tags", "purchase_status", "purchased_package",
+        crm_fields = ["lead_label", "status_label", "interest_tags", "purchase_status", "purchased_package",
                       "purchase_value", "loop_status", "wishperme_status", "handoff_status",
                       "human_notes", "next_best_offer"]
         for f in crm_fields:
@@ -526,10 +534,10 @@ async def sync_telegram_chats(
 
     try:
         import main as app_main
-        u, m, e = await app_main._do_sync(telegram_client.client, limit_per_chat, max_dialogs)
+        u, m, total = await app_main._do_sync(telegram_client.client, limit_per_chat, max_dialogs)
         # Also sync folders in background
         asyncio.create_task(app_main._sync_telegram_folders(telegram_client.client))
-        return {"status": "ok", "synced_users": u, "synced_messages": m, "errors": e}
+        return {"status": "ok", "synced_users": u, "synced_messages": m, "total_dialogs": total}
     except Exception as ex:
         logger.error(f"Sync failed: {ex}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(ex))

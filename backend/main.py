@@ -144,7 +144,14 @@ async def _get_all_dialogs_raw(client, folder_id: int = 0):
             break
 
         last_msg = result.messages[-1]
-        offset_date = getattr(last_msg, "date", 0)
+        # offset_date MUST be a Unix timestamp integer (not a datetime object)
+        raw_date = getattr(last_msg, "date", None)
+        if raw_date and hasattr(raw_date, "timestamp"):
+            offset_date = int(raw_date.timestamp())
+        elif isinstance(raw_date, int):
+            offset_date = raw_date
+        else:
+            offset_date = 0
         offset_id = getattr(last_msg, "id", 0)
 
         # offset_peer = peer of last dialog
@@ -194,7 +201,7 @@ async def _do_sync(client, limit_per_chat: int = 100, max_dialogs: int = 0):
             synced_messages += nm
 
     logger.info(f"Full sync done: {len(seen_ids)} total chats, {synced_users} new users, {synced_messages} new messages")
-    return synced_users, synced_messages, 0
+    return synced_users, synced_messages, len(seen_ids)
 
 
 async def _sync_telegram_folders(client):
