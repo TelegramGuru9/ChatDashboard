@@ -32,6 +32,21 @@ const statusColors: Record<string, string> = {
   lost: '#ef4444',
 };
 
+function scoreColor(score: number) {
+  if (score >= 70) return '#10b981';
+  if (score >= 40) return '#f59e0b';
+  return '#ef4444';
+}
+
+const C = {
+  slate100: '#f1f5f9',
+  slate400: '#94a3b8',
+  slate500: '#64748b',
+  slate800: '#1e293b',
+  slate900: '#0f172a',
+  blue: '#3b82f6',
+};
+
 export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -61,47 +76,60 @@ export default function LeadsPage() {
   useEffect(() => { fetchLeads(); }, [fetchLeads]);
 
   const filtered = filter === 'all' ? leads : leads.filter(l => l.status === filter);
+  const sorted = [...filtered].sort((a, b) => b.lead_score - a.lead_score);
 
-  const scoreColor = (score: number) => {
-    if (score >= 70) return '#10b981';
-    if (score >= 40) return '#f59e0b';
-    return '#ef4444';
-  };
+  const STAGES = ['awareness', 'interest', 'consideration', 'decision', 'purchase'];
+  const STATUSES = ['all', 'new', 'interested', 'qualified', 'customer', 'lost'];
 
   return (
     <DashboardLayout>
-      <div className="p-6 max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
+      <div style={{ padding: '28px 24px', maxWidth: '1040px', margin: '0 auto', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
+
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '24px' }}>
           <div>
-            <h1 className="text-2xl font-bold text-slate-100">Lead Pipeline</h1>
-            <p className="text-slate-400 text-sm mt-1">{leads.length} total leads</p>
+            <h1 style={{ fontSize: '22px', fontWeight: 700, color: C.slate100, margin: 0 }}>Lead Pipeline</h1>
+            <p style={{ color: C.slate400, fontSize: '13px', margin: '4px 0 0' }}>{leads.length} total leads</p>
           </div>
-          <button onClick={fetchLeads} disabled={loading}
-            className="px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-300 hover:bg-slate-700 text-sm transition-colors">
+          <button onClick={fetchLeads} disabled={loading} style={{
+            padding: '8px 14px', borderRadius: '10px',
+            background: C.slate800, border: '1px solid #334155',
+            color: C.slate400, fontSize: '13px', cursor: 'pointer',
+            opacity: loading ? 0.6 : 1,
+          }}>
             {loading ? '⏳' : '🔄'} Refresh
           </button>
         </div>
 
-        {/* Funnel Summary */}
-        <div className="grid grid-cols-5 gap-2 mb-6">
-          {['awareness', 'interest', 'consideration', 'decision', 'purchase'].map(stage => {
+        {/* Funnel stages */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: '10px', marginBottom: '24px' }}>
+          {STAGES.map(stage => {
             const count = leads.filter(l => l.funnel_stage === stage).length;
             return (
-              <div key={stage} className="bg-slate-900 border border-slate-800 rounded-xl p-3 text-center">
-                <div className="text-xl font-bold text-slate-100">{count}</div>
-                <div className="text-xs capitalize mt-1" style={{ color: stageColors[stage] }}>{stage}</div>
+              <div key={stage} style={{
+                background: C.slate900, border: '1px solid #1e293b',
+                borderRadius: '12px', padding: '14px', textAlign: 'center',
+                borderTop: `3px solid ${stageColors[stage]}`,
+              }}>
+                <div style={{ fontSize: '24px', fontWeight: 700, color: C.slate100 }}>{count}</div>
+                <div style={{ fontSize: '11px', textTransform: 'capitalize', color: stageColors[stage], marginTop: '4px', fontWeight: 600 }}>
+                  {stage}
+                </div>
               </div>
             );
           })}
         </div>
 
-        {/* Status Filter */}
-        <div className="flex gap-2 mb-6 flex-wrap">
-          {['all', 'new', 'interested', 'qualified', 'customer', 'lost'].map(s => (
-            <button key={s} onClick={() => setFilter(s)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                filter === s ? 'bg-blue-600 text-white' : 'bg-slate-800 border border-slate-700 text-slate-400 hover:text-slate-200'
-              }`}>
+        {/* Status filter */}
+        <div style={{ display: 'flex', gap: '6px', marginBottom: '20px', flexWrap: 'wrap' }}>
+          {STATUSES.map(s => (
+            <button key={s} onClick={() => setFilter(s)} style={{
+              padding: '7px 12px', borderRadius: '10px', fontSize: '12px', fontWeight: 500,
+              cursor: 'pointer', border: '1px solid',
+              background: filter === s ? C.blue : C.slate800,
+              borderColor: filter === s ? C.blue : '#334155',
+              color: filter === s ? '#fff' : C.slate400,
+            }}>
               {s.charAt(0).toUpperCase() + s.slice(1)}
               {s !== 'all' && ` (${leads.filter(l => l.status === s).length})`}
             </button>
@@ -109,61 +137,99 @@ export default function LeadsPage() {
         </div>
 
         {error && (
-          <div className="mb-4 p-4 bg-red-950/30 border border-red-900 rounded-xl text-red-300 text-sm">⚠️ {error}</div>
+          <div style={{
+            marginBottom: '16px', padding: '14px 16px',
+            background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)',
+            borderRadius: '12px', color: '#fca5a5', fontSize: '13px',
+          }}>
+            ⚠️ {error}
+          </div>
         )}
 
         {loading && !leads.length ? (
-          <div className="flex items-center justify-center h-48 text-slate-500">⏳ Loading leads…</div>
-        ) : filtered.length === 0 ? (
-          <div className="text-center py-16">
-            <div className="text-4xl mb-3">🎯</div>
-            <div className="text-slate-400">No leads yet</div>
-            <div className="text-slate-600 text-sm mt-1">Leads are created automatically from Telegram conversations</div>
+          <div style={{ textAlign: 'center', padding: '60px', color: C.slate500 }}>⏳ Loading leads…</div>
+        ) : sorted.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '60px' }}>
+            <div style={{ fontSize: '40px', marginBottom: '12px' }}>🎯</div>
+            <div style={{ color: C.slate400, fontSize: '15px' }}>No leads yet</div>
+            <div style={{ color: C.slate500, fontSize: '12px', marginTop: '6px' }}>Leads are created automatically from Telegram conversations</div>
           </div>
         ) : (
-          <div className="space-y-2">
-            {filtered.sort((a, b) => b.lead_score - a.lead_score).map(lead => (
-              <div key={lead.id} className="bg-slate-900 border border-slate-800 rounded-xl p-4 hover:border-slate-700 transition-colors">
-                <div className="flex items-center gap-4">
-                  {/* Score */}
-                  <div className="flex-shrink-0 w-14 h-14 rounded-full flex items-center justify-center text-sm font-bold border-2"
-                    style={{ borderColor: scoreColor(lead.lead_score), color: scoreColor(lead.lead_score) }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {sorted.map(lead => {
+              const sc = scoreColor(lead.lead_score);
+              return (
+                <div key={lead.id} style={{
+                  background: C.slate900, border: '1px solid #1e293b',
+                  borderRadius: '12px', padding: '16px',
+                  display: 'flex', alignItems: 'center', gap: '16px',
+                }}>
+                  {/* Score ring */}
+                  <div style={{
+                    flexShrink: 0, width: '52px', height: '52px', borderRadius: '50%',
+                    border: `2px solid ${sc}`, display: 'flex', alignItems: 'center',
+                    justifyContent: 'center', fontSize: '13px', fontWeight: 700, color: sc,
+                  }}>
                     {Math.round(lead.lead_score)}
                   </div>
 
                   {/* Info */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <span className="text-slate-100 font-medium text-sm">User #{lead.user_id.slice(0, 8)}</span>
-                      <span className="text-xs px-2 py-0.5 rounded-full border"
-                        style={{ color: statusColors[lead.status] || '#64748b', borderColor: statusColors[lead.status] || '#64748b', background: 'transparent' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' }}>
+                      <span style={{ color: C.slate100, fontWeight: 600, fontSize: '14px' }}>
+                        User #{lead.user_id.slice(0, 8)}
+                      </span>
+                      <span style={{
+                        fontSize: '11px', padding: '2px 8px', borderRadius: '20px',
+                        border: `1px solid ${statusColors[lead.status] || '#64748b'}`,
+                        color: statusColors[lead.status] || '#64748b', fontWeight: 600,
+                      }}>
                         {lead.status}
                       </span>
-                      {lead.qualified && <span className="text-xs px-2 py-0.5 rounded-full bg-green-900/40 text-green-400 border border-green-800">✓ Qualified</span>}
-                      {lead.converted && <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-900/40 text-yellow-400 border border-yellow-800">⭐ Converted</span>}
+                      {lead.qualified && (
+                        <span style={{
+                          fontSize: '11px', padding: '2px 8px', borderRadius: '20px',
+                          background: 'rgba(16,185,129,0.12)', color: '#34d399',
+                          border: '1px solid rgba(16,185,129,0.3)',
+                        }}>✓ Qualified</span>
+                      )}
+                      {lead.converted && (
+                        <span style={{
+                          fontSize: '11px', padding: '2px 8px', borderRadius: '20px',
+                          background: 'rgba(245,158,11,0.12)', color: '#fbbf24',
+                          border: '1px solid rgba(245,158,11,0.3)',
+                        }}>⭐ Converted</span>
+                      )}
                     </div>
-                    <div className="flex gap-4 text-xs text-slate-500">
-                      <span>Stage: <span className="capitalize" style={{ color: stageColors[lead.funnel_stage] }}>{lead.funnel_stage}</span></span>
+                    <div style={{ display: 'flex', gap: '14px', fontSize: '12px', color: C.slate500, flexWrap: 'wrap' }}>
+                      <span>Stage: <span style={{ color: stageColors[lead.funnel_stage], textTransform: 'capitalize', fontWeight: 600 }}>{lead.funnel_stage}</span></span>
                       <span>Interactions: {lead.total_interactions}</span>
                       {lead.source && <span>Source: {lead.source}</span>}
                       <span>{new Date(lead.created_at).toLocaleDateString()}</span>
                     </div>
                   </div>
 
-                  {/* Score Bar */}
-                  <div className="hidden md:block w-32">
-                    <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                      <div className="h-full rounded-full transition-all"
-                        style={{ width: `${lead.lead_score}%`, background: scoreColor(lead.lead_score) }} />
+                  {/* Score bar */}
+                  <div style={{ width: '100px', flexShrink: 0 }}>
+                    <div style={{ height: '6px', background: '#1e293b', borderRadius: '4px', overflow: 'hidden' }}>
+                      <div style={{ height: '100%', borderRadius: '4px', background: sc, width: `${lead.lead_score}%` }} />
                     </div>
-                    <div className="text-xs text-slate-500 mt-1 text-right">{Math.round(lead.lead_score)}/100</div>
+                    <div style={{ fontSize: '11px', color: C.slate500, marginTop: '4px', textAlign: 'right' }}>
+                      {Math.round(lead.lead_score)}/100
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
+
+      <style>{`
+        @media (max-width: 640px) {
+          div[style*="gridTemplateColumns: repeat(5"] { grid-template-columns: repeat(3,1fr) !important; }
+        }
+      `}</style>
     </DashboardLayout>
   );
 }

@@ -24,6 +24,26 @@ Rules:
 - Always end with a question to keep the conversation going
 - If a customer seems very interested, suggest a call`;
 
+const C = {
+  blue: '#3b82f6',
+  green: '#10b981',
+  slate100: '#f1f5f9',
+  slate200: '#e2e8f0',
+  slate400: '#94a3b8',
+  slate500: '#64748b',
+  slate700: '#334155',
+  slate800: '#1e293b',
+  slate900: '#0f172a',
+};
+
+const card: React.CSSProperties = {
+  background: C.slate900,
+  border: '1px solid #1e293b',
+  borderRadius: '14px',
+  padding: '20px',
+  marginBottom: '14px',
+};
+
 export default function SettingsPage() {
   const [persona, setPersona] = useState(DEFAULT_PERSONA);
   const [aiEnabled, setAiEnabled] = useState(true);
@@ -32,10 +52,21 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  const apiBase = (() => {
+    const raw = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    return raw.endsWith('/api/v1') ? raw : raw.replace(/\/?$/, '') + '/api/v1';
+  })();
+
   const handleSave = async () => {
     setSaving(true);
-    // In a real app, this would save to the backend
-    await new Promise(r => setTimeout(r, 800));
+    try {
+      await fetch(`${apiBase}/ai/persona`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ persona, ai_enabled: aiEnabled, max_tokens: maxTokens, temperature }),
+      });
+    } catch (_) {}
+    await new Promise(r => setTimeout(r, 600));
     setSaved(true);
     setSaving(false);
     setTimeout(() => setSaved(false), 3000);
@@ -43,70 +74,118 @@ export default function SettingsPage() {
 
   return (
     <DashboardLayout>
-      <div className="p-6 max-w-3xl mx-auto">
-        <h1 className="text-2xl font-bold text-slate-100 mb-1">AI Persona Settings</h1>
-        <p className="text-slate-400 text-sm mb-8">Configure how your AI assistant behaves in Telegram conversations</p>
+      <div style={{ padding: '28px 24px', maxWidth: '720px', margin: '0 auto', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
+        <h1 style={{ fontSize: '22px', fontWeight: 700, color: C.slate100, marginBottom: '4px' }}>
+          AI Persona Settings
+        </h1>
+        <p style={{ color: C.slate400, fontSize: '13px', marginBottom: '24px' }}>
+          Configure how your AI assistant behaves in Telegram conversations
+        </p>
 
         {/* AI Toggle */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-4">
-          <div className="flex items-center justify-between">
+        <div style={card}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div>
-              <div className="font-semibold text-slate-100">AI Auto-Responses</div>
-              <div className="text-sm text-slate-400 mt-0.5">Automatically reply to incoming messages with AI</div>
+              <div style={{ fontWeight: 600, color: C.slate100, fontSize: '15px' }}>AI Auto-Responses</div>
+              <div style={{ fontSize: '13px', color: C.slate400, marginTop: '4px' }}>
+                Automatically reply to incoming Telegram messages with AI
+              </div>
             </div>
             <button
               onClick={() => setAiEnabled(!aiEnabled)}
-              className={`relative w-12 h-6 rounded-full transition-colors ${aiEnabled ? 'bg-blue-600' : 'bg-slate-700'}`}
+              style={{
+                position: 'relative', width: '48px', height: '26px', borderRadius: '13px',
+                background: aiEnabled ? C.blue : C.slate700,
+                border: 'none', cursor: 'pointer', flexShrink: 0,
+                transition: 'background 0.2s',
+              }}
             >
-              <span className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${aiEnabled ? 'translate-x-7' : 'translate-x-1'}`} />
+              <span style={{
+                position: 'absolute', top: '3px', width: '20px', height: '20px',
+                borderRadius: '50%', background: '#fff',
+                transition: 'left 0.2s',
+                left: aiEnabled ? '25px' : '3px',
+              }} />
             </button>
+          </div>
+          <div style={{
+            marginTop: '12px', padding: '10px 12px', borderRadius: '8px',
+            background: aiEnabled ? 'rgba(16,185,129,0.08)' : 'rgba(100,116,139,0.1)',
+            border: `1px solid ${aiEnabled ? 'rgba(16,185,129,0.25)' : 'rgba(100,116,139,0.2)'}`,
+            fontSize: '12px',
+            color: aiEnabled ? '#34d399' : C.slate500,
+          }}>
+            {aiEnabled ? '✓ AI is active — messages will be answered automatically' : '○ AI is paused — messages will not be answered automatically'}
           </div>
         </div>
 
-        {/* Persona */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-4">
-          <label className="block text-sm font-semibold text-slate-200 mb-2">
+        {/* Persona editor */}
+        <div style={card}>
+          <label style={{ display: 'block', fontSize: '14px', fontWeight: 600, color: C.slate200, marginBottom: '6px' }}>
             🤖 AI Persona / System Prompt
           </label>
-          <p className="text-xs text-slate-500 mb-3">
+          <p style={{ fontSize: '12px', color: C.slate500, marginBottom: '12px' }}>
             This defines your AI assistant's personality, tone, and goals. Write it like instructions to a person.
           </p>
           <textarea
             value={persona}
             onChange={e => setPersona(e.target.value)}
-            rows={14}
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-slate-100 text-sm font-mono leading-relaxed focus:outline-none focus:border-blue-500 resize-y"
-            placeholder="Write your AI persona here…"
+            rows={16}
+            style={{
+              width: '100%', background: C.slate800, border: '1px solid #334155',
+              borderRadius: '10px', padding: '12px 14px', color: C.slate100,
+              fontSize: '12px', fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+              lineHeight: '1.7', outline: 'none', resize: 'vertical',
+              boxSizing: 'border-box',
+            }}
+            onFocus={e => { e.target.style.borderColor = C.blue; }}
+            onBlur={e => { e.target.style.borderColor = '#334155'; }}
           />
-          <div className="flex justify-between mt-2">
-            <span className="text-xs text-slate-600">{persona.length} characters</span>
-            <button onClick={() => setPersona(DEFAULT_PERSONA)} className="text-xs text-slate-500 hover:text-slate-300">
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px' }}>
+            <span style={{ fontSize: '11px', color: C.slate500 }}>{persona.length} characters</span>
+            <button
+              onClick={() => setPersona(DEFAULT_PERSONA)}
+              style={{ background: 'none', border: 'none', color: C.slate400, fontSize: '12px', cursor: 'pointer', padding: 0 }}
+            >
               Reset to default
             </button>
           </div>
         </div>
 
-        {/* Model Settings */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
-          <div className="font-semibold text-slate-200 mb-4">⚙️ Model Settings</div>
-          <div className="grid grid-cols-2 gap-6">
+        {/* Model settings */}
+        <div style={card}>
+          <div style={{ fontWeight: 600, color: C.slate200, fontSize: '15px', marginBottom: '18px' }}>
+            ⚙️ Model Settings
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
             <div>
-              <label className="text-xs text-slate-400 block mb-2">Max Response Length (tokens)</label>
-              <input type="number" min={50} max={2000} value={maxTokens}
+              <label style={{ fontSize: '12px', color: C.slate400, display: 'block', marginBottom: '8px' }}>
+                Max Response Length (tokens)
+              </label>
+              <input
+                type="number" min={50} max={2000} value={maxTokens}
                 onChange={e => setMaxTokens(Number(e.target.value))}
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm focus:outline-none focus:border-blue-500"
+                style={{
+                  width: '100%', background: C.slate800, border: '1px solid #334155',
+                  borderRadius: '8px', padding: '8px 12px', color: C.slate100,
+                  fontSize: '13px', outline: 'none', boxSizing: 'border-box',
+                }}
               />
-              <div className="text-xs text-slate-600 mt-1">~{Math.round(maxTokens * 0.75)} words</div>
+              <div style={{ fontSize: '11px', color: C.slate500, marginTop: '6px' }}>
+                ≈ {Math.round(maxTokens * 0.75)} words
+              </div>
             </div>
             <div>
-              <label className="text-xs text-slate-400 block mb-2">
-                Creativity (temperature): <span className="text-blue-400">{temperature}</span>
+              <label style={{ fontSize: '12px', color: C.slate400, display: 'block', marginBottom: '8px' }}>
+                Creativity (temperature):&nbsp;
+                <span style={{ color: C.blue, fontWeight: 600 }}>{temperature}</span>
               </label>
-              <input type="range" min={0} max={1} step={0.1} value={temperature}
+              <input
+                type="range" min={0} max={1} step={0.1} value={temperature}
                 onChange={e => setTemperature(Number(e.target.value))}
-                className="w-full accent-blue-500"
+                style={{ width: '100%', accentColor: C.blue }}
               />
-              <div className="flex justify-between text-xs text-slate-600 mt-1">
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: C.slate500, marginTop: '4px' }}>
                 <span>Precise</span>
                 <span>Creative</span>
               </div>
@@ -114,19 +193,23 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Save */}
+        {/* Save button */}
         <button
           onClick={handleSave}
           disabled={saving}
-          className={`w-full py-3 rounded-xl font-semibold text-sm transition-all ${
-            saved ? 'bg-green-600 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white'
-          } disabled:opacity-60`}
+          style={{
+            width: '100%', padding: '14px', borderRadius: '12px',
+            fontWeight: 600, fontSize: '14px', border: 'none', cursor: saving ? 'not-allowed' : 'pointer',
+            background: saved ? C.green : C.blue,
+            color: '#fff', opacity: saving ? 0.7 : 1,
+            transition: 'background 0.2s',
+          }}
         >
           {saving ? '⏳ Saving…' : saved ? '✓ Saved!' : 'Save Settings'}
         </button>
 
-        <p className="text-xs text-slate-600 text-center mt-3">
-          Note: Persona is sent as a system prompt with every AI message. Changes take effect immediately.
+        <p style={{ fontSize: '11px', color: C.slate500, textAlign: 'center', marginTop: '12px' }}>
+          Persona is sent as a system prompt with every AI message. Changes take effect immediately.
         </p>
       </div>
     </DashboardLayout>

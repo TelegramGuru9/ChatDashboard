@@ -2,13 +2,39 @@
 
 import { useEffect, useState } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
+import Link from 'next/link';
+
+const C = {
+  blue: '#3b82f6',
+  purple: '#8b5cf6',
+  green: '#10b981',
+  amber: '#f59e0b',
+  red: '#ef4444',
+  slate100: '#f1f5f9',
+  slate200: '#e2e8f0',
+  slate400: '#94a3b8',
+  slate500: '#64748b',
+  slate600: '#475569',
+  slate700: '#334155',
+  slate800: '#1e293b',
+  slate900: '#0f172a',
+  bg: '#0d1117',
+};
+
+const card: React.CSSProperties = {
+  background: '#0f172a',
+  border: '1px solid #1e293b',
+  borderRadius: '14px',
+  padding: '20px',
+};
 
 export default function DashboardPage() {
   const [connected, setConnected] = useState<boolean | null>(null);
   const [stats, setStats] = useState({ messages: 0, users: 0, leads: 0 });
 
   useEffect(() => {
-    const base = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/api\/v1$/, '');
+    const raw = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    const base = raw.replace(/\/api\/v1\/?$/, '');
     fetch(`${base}/health`)
       .then(r => r.json())
       .then(d => setConnected(d.status === 'healthy'))
@@ -20,57 +46,101 @@ export default function DashboardPage() {
       fetch(`${api}/users?limit=1`).then(r => r.json()),
       fetch(`${api}/leads?limit=1`).then(r => r.json()),
     ]).then(([m, u, l]) => setStats({
-      messages: m.status === 'fulfilled' ? m.value?.total ?? 0 : 0,
-      users: u.status === 'fulfilled' ? u.value?.total ?? 0 : 0,
-      leads: l.status === 'fulfilled' ? l.value?.total ?? 0 : 0,
+      messages: m.status === 'fulfilled' ? (m.value?.total ?? 0) : 0,
+      users: u.status === 'fulfilled' ? (u.value?.total ?? 0) : 0,
+      leads: l.status === 'fulfilled' ? (l.value?.total ?? 0) : 0,
     }));
   }, []);
 
+  const statusColor = connected ? C.green : connected === false ? C.red : C.slate500;
+  const statusBg = connected ? 'rgba(16,185,129,0.08)' : connected === false ? 'rgba(239,68,68,0.08)' : 'rgba(100,116,139,0.12)';
+
+  const statCards = [
+    { label: 'Messages', value: stats.messages, icon: '💬', accent: C.blue },
+    { label: 'Users', value: stats.users, icon: '👤', accent: C.purple },
+    { label: 'Leads', value: stats.leads, icon: '🎯', accent: C.green },
+    { label: 'AI Active', value: connected ? 'Online' : 'Offline', icon: '🤖', accent: C.amber },
+  ];
+
+  const quickNav = [
+    { href: '/dashboard/inbox', icon: '📨', title: 'Message Inbox', desc: 'View all Telegram conversations' },
+    { href: '/dashboard/leads', icon: '📊', title: 'Lead Pipeline', desc: 'Track and score leads automatically' },
+    { href: '/dashboard/analytics', icon: '📈', title: 'Analytics', desc: 'Visualise conversion and engagement' },
+    { href: '/dashboard/settings', icon: '🤖', title: 'AI Persona', desc: 'Configure your AI assistant personality' },
+  ];
+
   return (
     <DashboardLayout>
-      <div className="p-8">
-        {/* Status */}
-        <div className={`flex items-center gap-2 mb-8 px-4 py-3 rounded-xl text-sm ${connected ? 'bg-green-950/40 border border-green-900/50 text-green-400' : connected === false ? 'bg-red-950/40 border border-red-900/50 text-red-400' : 'bg-slate-800/40 border border-slate-700 text-slate-400'}`}>
-          <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400' : connected === false ? 'bg-red-400' : 'bg-slate-500'}`} />
-          {connected === null ? 'Connecting to backend…' : connected ? 'Backend connected ✓' : 'Backend not reachable — check Railway'}
+      <div style={{ padding: '28px 24px', maxWidth: '960px', margin: '0 auto' }}>
+
+        {/* Status bar */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '10px',
+          padding: '12px 16px', borderRadius: '12px', marginBottom: '28px',
+          background: statusBg, border: `1px solid ${statusColor}33`,
+          color: statusColor, fontSize: '13px', fontWeight: 500,
+        }}>
+          <span style={{
+            width: '8px', height: '8px', borderRadius: '50%',
+            background: statusColor, display: 'inline-block',
+            boxShadow: connected ? `0 0 8px ${C.green}` : undefined,
+          }} />
+          {connected === null
+            ? 'Connecting to backend…'
+            : connected
+            ? '✓ Backend connected — Telegram AI is live'
+            : '⚠ Backend not reachable — check Railway deployment'}
         </div>
 
-        <h1 className="text-2xl font-bold text-slate-100 mb-1">Overview</h1>
-        <p className="text-slate-400 text-sm mb-8">Your AI Telegram CRM at a glance</p>
+        <h1 style={{ fontSize: '24px', fontWeight: 700, color: C.slate100, marginBottom: '4px' }}>
+          Overview
+        </h1>
+        <p style={{ color: C.slate400, fontSize: '13px', marginBottom: '28px' }}>
+          Your AI Telegram CRM at a glance
+        </p>
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-          {[
-            { label: 'Messages', value: stats.messages, icon: '💬', accent: '#3b82f6' },
-            { label: 'Users', value: stats.users, icon: '👤', accent: '#8b5cf6' },
-            { label: 'Leads', value: stats.leads, icon: '🎯', accent: '#10b981' },
-            { label: 'AI Active', value: connected ? 'Yes' : 'No', icon: '🤖', accent: '#f59e0b' },
-          ].map(c => (
-            <div key={c.label} style={{ borderLeft: `3px solid ${c.accent}` }}
-              className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-              <div className="text-2xl mb-2">{c.icon}</div>
-              <div className="text-2xl font-bold text-slate-100">{c.value}</div>
-              <div className="text-xs text-slate-500 mt-1">{c.label}</div>
+        {/* Stats grid */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '14px', marginBottom: '28px' }}>
+          {statCards.map(c => (
+            <div key={c.label} style={{ ...card, borderLeft: `3px solid ${c.accent}` }}>
+              <div style={{ fontSize: '26px', marginBottom: '10px' }}>{c.icon}</div>
+              <div style={{ fontSize: '28px', fontWeight: 700, color: C.slate100 }}>{c.value}</div>
+              <div style={{ fontSize: '11px', color: C.slate500, marginTop: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{c.label}</div>
             </div>
           ))}
         </div>
 
-        {/* Quick Nav */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {[
-            { href: '/dashboard/inbox', icon: '📨', title: 'Message Inbox', desc: 'View all Telegram conversations' },
-            { href: '/dashboard/leads', icon: '📊', title: 'Lead Pipeline', desc: 'Track and score leads automatically' },
-            { href: '/dashboard/settings', icon: '🤖', title: 'AI Persona', desc: 'Configure your AI assistant personality' },
-          ].map(item => (
-            <a key={item.href} href={item.href}
-              className="block no-underline bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-blue-600 transition-colors">
-              <div className="text-3xl mb-3">{item.icon}</div>
-              <div className="font-semibold text-slate-100 mb-1">{item.title}</div>
-              <div className="text-xs text-slate-500">{item.desc}</div>
-            </a>
+        {/* Quick nav */}
+        <h2 style={{ fontSize: '14px', fontWeight: 600, color: C.slate400, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: '14px' }}>
+          Quick Access
+        </h2>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '14px' }}>
+          {quickNav.map(item => (
+            <Link key={item.href} href={item.href} style={{
+              ...card,
+              display: 'block',
+              textDecoration: 'none',
+              color: 'inherit',
+              transition: 'border-color 0.15s',
+              cursor: 'pointer',
+            }}
+              onMouseEnter={e => (e.currentTarget.style.borderColor = C.blue)}
+              onMouseLeave={e => (e.currentTarget.style.borderColor = '#1e293b')}
+            >
+              <div style={{ fontSize: '30px', marginBottom: '10px' }}>{item.icon}</div>
+              <div style={{ fontWeight: 600, color: C.slate100, marginBottom: '4px', fontSize: '15px' }}>{item.title}</div>
+              <div style={{ fontSize: '12px', color: C.slate500 }}>{item.desc}</div>
+            </Link>
           ))}
         </div>
       </div>
+
+      <style>{`
+        @media (max-width: 640px) {
+          div[style*="gridTemplateColumns: repeat(4"] { grid-template-columns: repeat(2,1fr) !important; }
+          div[style*="gridTemplateColumns: repeat(2"] { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
     </DashboardLayout>
   );
 }

@@ -2,127 +2,168 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { useRouter, usePathname } from 'next/navigation';
-import {
-  LayoutGrid,
-  MessageSquare,
-  Users,
-  TrendingUp,
-  Settings,
-  Menu,
-  X,
-  LogOut,
-} from 'lucide-react';
+import { usePathname } from 'next/navigation';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
-  initialStats?: {
-    unreadMessages: number;
-    activeConversations: number;
-    newLeads: number;
-    leadScore: number;
-  };
 }
 
-export default function DashboardLayout({ children, initialStats }: DashboardLayoutProps) {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+const NAV_ITEMS = [
+  { label: 'Overview', href: '/dashboard', icon: '🏠' },
+  { label: 'Inbox', href: '/dashboard/inbox', icon: '💬' },
+  { label: 'Leads', href: '/dashboard/leads', icon: '🎯' },
+  { label: 'Analytics', href: '/dashboard/analytics', icon: '📊' },
+  { label: 'Settings', href: '/dashboard/settings', icon: '⚙️' },
+];
+
+const S = {
+  root: {
+    minHeight: '100vh',
+    background: '#0d1117',
+    color: '#e2e8f0',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    display: 'flex',
+    flexDirection: 'column' as const,
+  },
+  header: {
+    position: 'sticky' as const,
+    top: 0,
+    zIndex: 50,
+    borderBottom: '1px solid #1e293b',
+    background: '#0f172a',
+    height: '56px',
+    display: 'flex',
+    alignItems: 'center',
+    padding: '0 20px',
+    gap: '16px',
+  },
+  logo: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    fontWeight: 700,
+    fontSize: '16px',
+    color: '#e2e8f0',
+    textDecoration: 'none',
+    marginRight: '8px',
+  },
+  logoIcon: {
+    width: '30px',
+    height: '30px',
+    borderRadius: '8px',
+    background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '16px',
+  },
+  nav: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+    flex: 1,
+  },
+  navLink: (active: boolean): React.CSSProperties => ({
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '6px 12px',
+    borderRadius: '8px',
+    fontSize: '13px',
+    fontWeight: 500,
+    textDecoration: 'none',
+    transition: 'all 0.15s',
+    color: active ? '#60a5fa' : '#94a3b8',
+    background: active ? '#1e293b' : 'transparent',
+  }),
+  main: {
+    flex: 1,
+    minHeight: 'calc(100vh - 56px)',
+  },
+};
+
+export default function DashboardLayout({ children }: DashboardLayoutProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const pathname = usePathname();
-  const router = useRouter();
 
-  const menuItems = [
-    { label: 'Overview', href: '/dashboard', icon: LayoutGrid },
-    { label: 'Inbox', href: '/dashboard/inbox', icon: MessageSquare, badge: initialStats?.unreadMessages },
-    { label: 'Leads', href: '/dashboard/leads', icon: Users, badge: initialStats?.newLeads },
-    { label: 'Analytics', href: '/dashboard/analytics', icon: TrendingUp },
-    { label: 'Settings', href: '/dashboard/settings', icon: Settings },
-  ];
-
-  const isActive = (href: string) => pathname === href;
-
-  const handleLogout = () => {
-    localStorage.removeItem('authToken');
-    router.push('/login');
-  };
+  const isActive = (href: string) =>
+    href === '/dashboard' ? pathname === '/dashboard' : pathname.startsWith(href);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="sticky top-0 z-50 border-b border-slate-800 bg-slate-900 backdrop-blur-sm">
-        <div className="flex items-center justify-between h-16 px-4 sm:px-6">
-          <Link href="/dashboard" className="flex items-center gap-2 font-bold text-lg">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-400 to-purple-500" />
-            <span className="hidden sm:inline">AI CRM</span>
-          </Link>
+    <div style={S.root}>
+      <header style={S.header}>
+        <Link href="/dashboard" style={S.logo}>
+          <div style={S.logoIcon}>🤖</div>
+          <span>AI CRM</span>
+        </Link>
 
-          <nav className="hidden md:flex items-center gap-1">
-            {menuItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors relative ${
-                  isActive(item.href)
-                    ? 'bg-slate-800 text-blue-400'
-                    : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/50'
-                }`}
-              >
-                {item.label}
-                {item.badge ? (
-                  <span className="absolute -top-2 -right-2 h-5 w-5 rounded-full bg-red-500 text-white text-xs flex items-center justify-center">
-                    {item.badge}
-                  </span>
-                ) : null}
-              </Link>
-            ))}
-          </nav>
+        {/* Desktop nav */}
+        <nav style={S.nav} className="desktop-nav">
+          {NAV_ITEMS.map((item) => (
+            <Link key={item.href} href={item.href} style={S.navLink(isActive(item.href))}>
+              <span>{item.icon}</span>
+              {item.label}
+            </Link>
+          ))}
+        </nav>
 
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="md:hidden p-2 hover:bg-slate-800 rounded-lg"
-              aria-label="Toggle menu"
-            >
-              {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
-            </button>
-            <button
-              onClick={handleLogout}
-              className="text-red-400 hover:text-red-300 hover:bg-red-950/20 p-2 rounded-lg"
-            >
-              <LogOut size={18} />
-            </button>
-          </div>
-        </div>
-
-        {sidebarOpen && (
-          <nav className="md:hidden px-4 py-3 border-t border-slate-800 flex flex-col gap-2">
-            {menuItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={() => setSidebarOpen(false)}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    isActive(item.href)
-                      ? 'bg-slate-800 text-blue-400'
-                      : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/50'
-                  }`}
-                >
-                  <Icon size={18} />
-                  {item.label}
-                  {item.badge ? (
-                    <span className="ml-auto h-5 w-5 rounded-full bg-red-500 text-white text-xs flex items-center justify-center">
-                      {item.badge}
-                    </span>
-                  ) : null}
-                </Link>
-              );
-            })}
-          </nav>
-        )}
+        {/* Mobile menu toggle */}
+        <button
+          onClick={() => setMenuOpen(!menuOpen)}
+          style={{
+            marginLeft: 'auto',
+            background: 'none',
+            border: 'none',
+            color: '#94a3b8',
+            cursor: 'pointer',
+            fontSize: '20px',
+            padding: '4px 8px',
+            display: 'none',
+          }}
+          className="mobile-menu-btn"
+          aria-label="Menu"
+        >
+          {menuOpen ? '✕' : '☰'}
+        </button>
       </header>
 
-      <main className="min-h-[calc(100vh-4rem)]">
-        {children}
-      </main>
+      {/* Mobile dropdown nav */}
+      {menuOpen && (
+        <div style={{
+          background: '#0f172a',
+          borderBottom: '1px solid #1e293b',
+          padding: '8px 16px 12px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '4px',
+        }}>
+          {NAV_ITEMS.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              onClick={() => setMenuOpen(false)}
+              style={{
+                ...S.navLink(isActive(item.href)),
+                padding: '10px 12px',
+              }}
+            >
+              <span>{item.icon}</span>
+              {item.label}
+            </Link>
+          ))}
+        </div>
+      )}
+
+      <main style={S.main}>{children}</main>
+
+      <style>{`
+        @media (max-width: 640px) {
+          .desktop-nav { display: none !important; }
+          .mobile-menu-btn { display: block !important; }
+        }
+        * { box-sizing: border-box; }
+        a { color: inherit; }
+      `}</style>
     </div>
   );
 }
