@@ -158,6 +158,7 @@ async def get_user_history(
     user_id: UUID,
     limit: int = Query(100, ge=1, le=500),
     days: Optional[int] = Query(None, ge=1, le=365),
+    since: Optional[str] = Query(None, description="ISO timestamp — return only messages after this"),
     session: AsyncSession = Depends(get_db),
 ) -> list:
     try:
@@ -165,6 +166,9 @@ async def get_user_history(
         if days:
             cutoff = datetime.utcnow() - timedelta(days=days)
             query = query.where(Message.created_at >= cutoff)
+        if since:
+            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00")).replace(tzinfo=None)
+            query = query.where(Message.created_at > since_dt)
         query = query.order_by(Message.created_at.asc()).limit(limit)
         result = await session.execute(query)
         messages = result.scalars().all()
@@ -172,6 +176,53 @@ async def get_user_history(
     except Exception as e:
         logger.error(f"Error getting history: {e}")
         raise HTTPException(status_code=500, detail="Failed to get history")
+
+
+@router.post("/send")
+async def send_message(
+    payload: Dict[str, Any] = Body(...),
+    session: AsyncSession = Depends(get_db),
+):
+    """Send a manual message to a user via Telegram and store it in DB."""
+    try:
+        user_id = UUID(str(payload.get("user_id", "")))
+        text = str(payload.get("text", "")).strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="text is required")
+
+        result = await session.execute(select(User).where(User.id == user_id))
+        user = result.scalars().first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        from app.services.telegram.client import telegram_client
+        if not telegram_client.is_connected:
+            raise HTTPException(status_code=503, detail="Telegram not connected")
+
+        tg_msg_id = await telegram_client.send_message(user.user_id, text)
+        if tg_msg_id is None:
+            raise HTTPException(status_code=503, detail="Failed to send via Telegram")
+
+        msg = Message(
+            message_id=tg_msg_id,
+            user_id=user.id,
+            text=text,
+            direction="outgoing",
+            has_media=False,
+            is_ai_generated=False,
+            extra_data={},
+            created_at=datetime.utcnow(),
+        )
+        session.add(msg)
+        user.total_messages = (user.total_messages or 0) + 1
+        await session.commit()
+        await session.refresh(msg)
+        return MessageDetailResponse.model_validate(msg)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error sending message: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ==================== USER ROUTES ====================
