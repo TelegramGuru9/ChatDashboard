@@ -59,7 +59,7 @@ class Settings(BaseSettings):
 
     # ==================== CLAUDE API ====================
     ANTHROPIC_API_KEY: Optional[str] = None
-    CLAUDE_MODEL: str = "claude-opus-4-5"
+    CLAUDE_MODEL: str = "claude-haiku-4-5-20251001"
     CLAUDE_MAX_TOKENS: int = 2048
     CLAUDE_TEMPERATURE: float = 0.7
     CLAUDE_TIMEOUT: int = 30

@@ -184,6 +184,24 @@ export default function InboxPage() {
     finally { setInsightsSaving(false); }
   };
 
+  const toggleChatAI = async (e: React.MouseEvent, userId: string, current: boolean | undefined) => {
+    e.stopPropagation();
+    const next = !current;
+    // Optimistic update
+    setConvos(prev => prev.map(c => c.user_id === userId ? { ...c, ai_enabled: next } : c));
+    if (selected?.user_id === userId) setInsights(prev => prev ? { ...prev, ai_enabled: next } : { ai_enabled: next });
+    try {
+      await fetch(`${api}/users/${userId}/insights`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ai_enabled: next }),
+      });
+    } catch {
+      // Revert on failure
+      setConvos(prev => prev.map(c => c.user_id === userId ? { ...c, ai_enabled: current } : c));
+    }
+  };
+
   const sync = useCallback(async (silent = false) => {
     if (!silent) { setSyncing(true); setSyncStatus('Syncing all chats (main + archived)…'); }
     try {
@@ -433,29 +451,53 @@ export default function InboxPage() {
                   onMouseEnter={e => { if (!on) e.currentTarget.style.background='rgba(255,255,255,0.04)'; }}
                   onMouseLeave={e => { if (!on) e.currentTarget.style.background='transparent'; }}
                 >
-                  <div style={{ width:'38px', height:'38px', borderRadius:'50%', background:ac, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'14px', fontWeight:700, color:'#fff', flexShrink:0 }}>
+                  <div style={{ width:'38px', height:'38px', borderRadius:'50%', background:ac, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'14px', fontWeight:700, color:'#fff', flexShrink:0, position:'relative' }}>
                     {(c.name||'?')[0].toUpperCase()}
+                    {/* AI active indicator dot */}
+                    {c.ai_enabled && (
+                      <div style={{ position:'absolute', bottom:'1px', right:'1px', width:'9px', height:'9px', borderRadius:'50%', background:C.green, border:`1.5px solid ${C.bg}` }} />
+                    )}
                   </div>
                   <div style={{ flex:1, minWidth:0 }}>
                     <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', gap:'4px' }}>
-                      <span style={{ fontWeight:600, fontSize:'13px', color:C.t1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:'130px' }}>{c.name}</span>
+                      <span style={{ fontWeight:600, fontSize:'13px', color:C.t1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:'110px' }}>{c.name}</span>
                       <span style={{ fontSize:'10px', color:C.t3, flexShrink:0 }}>{timeAgo(c.last_message_at)}</span>
                     </div>
                     <div style={{ fontSize:'12px', color:C.t3, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', marginTop:'2px' }}>
                       {c.last_message_direction === 'outgoing' && <span style={{ color:C.blue }}>↗ </span>}
                       {c.last_message || '—'}
                     </div>
-                    <div style={{ display:'flex', gap:'5px', marginTop:'3px', alignItems:'center', flexWrap:'wrap' }}>
-                      <div style={{ width:'28px', height:'3px', borderRadius:'2px', background:C.s3 }}>
-                        <div style={{ height:'100%', background:scoreColor(c.lead_score), width:`${c.lead_score}%` }} />
-                      </div>
-                      <span style={{ fontSize:'10px', color:scoreColor(c.lead_score) }}>{Math.round(c.lead_score)}</span>
-                      {c.ai_enabled && <span style={{ fontSize:'10px', color:C.purple, marginLeft:'2px' }}>AI</span>}
+                    <div style={{ display:'flex', gap:'5px', marginTop:'4px', alignItems:'center' }}>
+                      {/* AI toggle pill */}
+                      <button
+                        onClick={e => toggleChatAI(e, c.user_id, c.ai_enabled)}
+                        title={c.ai_enabled ? 'AI autopilot ON — click to pause' : 'AI autopilot OFF — click to activate'}
+                        style={{
+                          display:'flex', alignItems:'center', gap:'3px',
+                          padding:'2px 7px 2px 5px', borderRadius:'10px', cursor:'pointer',
+                          border: `1px solid ${c.ai_enabled ? 'rgba(48,209,88,0.4)' : 'rgba(84,84,88,0.4)'}`,
+                          background: c.ai_enabled ? 'rgba(48,209,88,0.12)' : 'rgba(84,84,88,0.12)',
+                          flexShrink:0, transition:'all 0.15s',
+                        }}
+                      >
+                        <span style={{ fontSize:'9px' }}>🤖</span>
+                        <span style={{ fontSize:'9px', fontWeight:700, color: c.ai_enabled ? C.green : C.t3 }}>
+                          {c.ai_enabled ? 'ON' : 'OFF'}
+                        </span>
+                      </button>
+                      {/* Lead label */}
                       {c.lead_label && (() => {
                         const lc: Record<string,string> = { HOT:C.orange, BUYER:C.green, TIMEWASTER:C.red, COLD:C.teal, CURIOUS:C.blue, CUSTOM:C.purple };
                         const col = lc[c.lead_label] ?? C.t3;
-                        return <span style={{ fontSize:'9px', padding:'1px 5px', borderRadius:'8px', background:`${col}25`, color:col, fontWeight:600, marginLeft:'2px' }}>{c.lead_label}</span>;
+                        return <span style={{ fontSize:'9px', padding:'2px 6px', borderRadius:'8px', background:`${col}20`, color:col, fontWeight:600 }}>{c.lead_label}</span>;
                       })()}
+                      {/* Score bar */}
+                      <div style={{ display:'flex', alignItems:'center', gap:'3px', marginLeft:'auto' }}>
+                        <div style={{ width:'22px', height:'3px', borderRadius:'2px', background:C.s3 }}>
+                          <div style={{ height:'100%', background:scoreColor(c.lead_score), width:`${c.lead_score}%` }} />
+                        </div>
+                        <span style={{ fontSize:'9px', color:scoreColor(c.lead_score) }}>{Math.round(c.lead_score)}</span>
+                      </div>
                     </div>
                   </div>
                 </div>

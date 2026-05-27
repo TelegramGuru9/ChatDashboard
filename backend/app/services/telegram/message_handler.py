@@ -179,6 +179,10 @@ class MessageProcessor:
     ) -> None:
         """Generate Claude AI response and send it via Telegram."""
         try:
+            if not settings.ANTHROPIC_API_KEY:
+                logger.warning("ANTHROPIC_API_KEY not set — AI autopilot disabled. Add it in Railway variables.")
+                return
+
             from app.services.telegram.client import telegram_client
             from app.db.models import Config
 
@@ -188,43 +192,58 @@ class MessageProcessor:
                 cfg = result.scalars().first()
                 persona_data = cfg.value if cfg else {}
 
-                # Check global AI toggle
-                if not persona_data.get("ai_enabled", True):
-                    logger.debug("AI globally disabled — skipping response")
+                # Check global AI toggle (defaults to ON)
+                if persona_data.get("ai_enabled") is False:
+                    logger.debug("AI globally disabled in persona config — skipping response")
                     return
 
-                system_prompt = persona_data.get("persona") or persona_data.get("system_prompt") or \
-                    "You are a friendly and helpful assistant. Keep replies concise (2-3 sentences)."
-                model = persona_data.get("model", settings.CLAUDE_MODEL)
-                max_tokens = int(persona_data.get("max_tokens", 512))
-                temperature = float(persona_data.get("temperature", 0.7))
+                system_prompt = (
+                    persona_data.get("persona")
+                    or persona_data.get("system_prompt")
+                    or persona_data.get("prompt")
+                    or "You are Nika, a friendly and warm sales assistant. Keep replies concise and engaging (2-3 sentences max)."
+                )
 
-                # Load recent conversation history
+                # Always use a known-valid Claude model
+                VALID_MODELS = {
+                    "claude-haiku-4-5-20251001",
+                    "claude-sonnet-4-6",
+                    "claude-opus-4-6",
+                    "claude-3-5-haiku-20241022",
+                    "claude-3-5-sonnet-20241022",
+                    "claude-3-haiku-20240307",
+                }
+                raw_model = persona_data.get("model", settings.CLAUDE_MODEL)
+                model = raw_model if raw_model in VALID_MODELS else settings.CLAUDE_MODEL
+                max_tokens = int(persona_data.get("max_tokens", 512))
+
+                # Load recent conversation history (last 20 messages)
                 hist_result = await session.execute(
                     select(Message)
                     .where(Message.user_id == user_id)
                     .order_by(Message.created_at.desc())
-                    .limit(30)
+                    .limit(20)
                 )
                 recent = list(reversed(hist_result.scalars().all()))
 
-            # Build Claude message list
+            # Build Claude messages list
             claude_msgs: List[Dict[str, str]] = []
             for m in recent:
                 if not m.text:
                     continue
                 role = "user" if m.direction == "incoming" else "assistant"
-                # Merge consecutive same-role messages
                 if claude_msgs and claude_msgs[-1]["role"] == role:
                     claude_msgs[-1]["content"] += "\n" + m.text
                 else:
                     claude_msgs.append({"role": role, "content": m.text})
 
-            # Ensure last message is from user
+            # Ensure conversation ends with a user message
             if not claude_msgs or claude_msgs[-1]["role"] != "user":
                 claude_msgs.append({"role": "user", "content": incoming_text})
 
-            # Call Claude (sync client wrapped in thread to avoid blocking)
+            logger.info(f"Calling Claude ({model}) for tg_id={telegram_id}, {len(claude_msgs)} msgs in context")
+
+            # Call Claude (sync client in thread)
             import anthropic
             client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 
@@ -240,17 +259,18 @@ class MessageProcessor:
             ai_text = response.content[0].text.strip()
 
             if not ai_text:
+                logger.warning(f"Claude returned empty response for {telegram_id}")
                 return
 
-            logger.info(f"AI response for {telegram_id}: {ai_text[:80]}…")
+            logger.info(f"✓ AI response for tg_id={telegram_id}: {ai_text[:100]}")
 
             # Send via Telegram
             tg_msg_id = await telegram_client.send_message(telegram_id, ai_text)
             if tg_msg_id is None:
-                logger.error(f"Failed to deliver AI message to {telegram_id}")
+                logger.error(f"Telegram send failed for tg_id={telegram_id}")
                 return
 
-            # Store in DB
+            # Store outgoing AI message in DB
             async with db_manager.get_session() as session:
                 ai_msg = Message(
                     message_id=tg_msg_id,
@@ -265,7 +285,7 @@ class MessageProcessor:
                 session.add(ai_msg)
                 await session.commit()
 
-            # Broadcast AI reply via SSE
+            # Broadcast AI reply via SSE so inbox updates instantly
             try:
                 import main as _main
                 _main._broadcast_new_message(str(user_id), {
@@ -279,9 +299,10 @@ class MessageProcessor:
                 pass
 
             self._stats["ai_responses"] += 1
+            logger.info(f"AI stats: {self._stats}")
 
         except Exception as e:
-            logger.error(f"Error generating AI response for {telegram_id}: {e}", exc_info=True)
+            logger.error(f"AI response failed for tg_id={telegram_id}: {e}", exc_info=True)
 
     # ── Background embedding queue ──
 
