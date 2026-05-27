@@ -196,8 +196,8 @@ class MessageProcessor:
                 created_at=telegram_message.date or datetime.now(timezone.utc),
             )
             
-            # Extract metadata
-            message.metadata = await self._extract_metadata(text)
+            # Extract metadata (column python attr is extra_data)
+            message.extra_data = await self._extract_metadata(text)
             
             session.add(message)
             await session.flush()

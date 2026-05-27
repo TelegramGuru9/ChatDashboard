@@ -466,6 +466,29 @@ class Analytics(Base):
     )
 
 
+class Config(Base):
+    """
+    Key/value config store for AI persona, packages, media triggers, etc.
+
+    key examples: "persona", "packages", "media_triggers", "auto_reply_rules"
+    value: arbitrary JSON
+    """
+
+    __tablename__ = "config"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key = Column(String(100), unique=True, nullable=False, index=True)
+    value = Column(JSONB, default={}, nullable=False)
+    description = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=get_utc_now, nullable=False)
+    updated_at = Column(DateTime, default=get_utc_now, onupdate=get_utc_now, nullable=True)
+
+    __table_args__ = (
+        Index("idx_config_key", "key"),
+    )
+
+
 __all__ = [
     "User",
     "Message",
@@ -473,5 +496,6 @@ __all__ = [
     "Conversation",
     "Lead",
     "Analytics",
+    "Config",
     "Base",
 ]

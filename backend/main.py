@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
 
@@ -9,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.db.database import db_manager
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ==================== LIFESPAN ====================
@@ -25,12 +27,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Database init failed: {e}")
 
-    # Telegram — non-fatal, requires manual auth first
+    # Telegram — wire message_processor BEFORE connecting
     try:
         from app.services.telegram.client import telegram_client
+        from app.services.telegram.message_handler import message_processor
+
+        # Wire the event handler so new incoming messages get stored + processed
+        telegram_client.on("message_new", message_processor.process_incoming_message)
+        logger.info("Message processor wired to Telegram client")
+
         connected = await telegram_client.connect()
         if connected:
-            logger.info("Telegram connected")
+            logger.info("Telegram connected — listening for messages")
+            # Start background processor (embedding queue)
+            asyncio.create_task(message_processor.start_processor())
         else:
             logger.warning("Telegram not connected — run auth first")
     except Exception as e:
@@ -63,12 +73,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — allow all for now
-_cors_origins = (
-    [o.strip() for o in settings.CORS_ORIGINS.split(",")]
-    if "," in settings.CORS_ORIGINS
-    else [settings.CORS_ORIGINS]
-)
+# CORS
+_cors_raw = settings.CORS_ORIGINS or "*"
+_cors_origins = [o.strip() for o in _cors_raw.split(",")] if "," in _cors_raw else [_cors_raw]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
@@ -78,16 +85,17 @@ app.add_middleware(
 )
 
 
-
 # ==================== HEALTH ====================
 
 @app.get("/health")
 async def health_check():
+    from app.services.telegram.client import telegram_client
     return {
         "status": "healthy",
         "app": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "environment": settings.ENVIRONMENT,
+        "telegram_connected": telegram_client.is_connected,
         "timestamp": str(datetime.utcnow()),
     }
 

@@ -3,201 +3,290 @@
 import { useEffect, useState, useCallback } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 
+const p = {
+  bg:'#000',s1:'#1c1c1e',s2:'#2c2c2e',s3:'#3a3a3c',
+  sep:'rgba(84,84,88,0.5)',
+  label:'#fff',label2:'rgba(235,235,245,0.6)',label3:'rgba(235,235,245,0.3)',
+  blue:'#0a84ff',green:'#30d158',red:'#ff453a',orange:'#ff9f0a',purple:'#bf5af2',
+};
+
+interface Conversation {
+  user_id: string;
+  telegram_id: number;
+  name: string;
+  username?: string;
+  lead_score: number;
+  total_messages: number;
+  last_message?: string;
+  last_message_direction: string;
+  last_message_at?: string;
+  ai_enabled: boolean;
+}
+
 interface Message {
   id: string;
   text: string | null;
   direction: 'incoming' | 'outgoing';
   is_ai_generated: boolean;
   created_at: string;
-  user_id: string;
 }
 
-const ios = {
-  bg: '#000', surface: '#1c1c1e', surface2: '#2c2c2e',
-  border: 'rgba(255,255,255,0.08)', accent: '#0a84ff',
-  green: '#30d158', red: '#ff453a', amber: '#ffd60a', purple: '#bf5af2',
-  text: '#fff', text2: 'rgba(255,255,255,0.55)', text3: 'rgba(255,255,255,0.3)',
-};
+function timeAgo(iso?: string) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const s = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (s < 60) return 'now';
+  if (s < 3600) return `${Math.floor(s/60)}m`;
+  if (s < 86400) return `${Math.floor(s/3600)}h`;
+  return `${Math.floor(s/86400)}d`;
+}
 
-type Filter = 'all' | 'incoming' | 'outgoing' | 'ai';
+function scoreColor(s: number) { return s >= 70 ? p.green : s >= 40 ? p.orange : p.label3; }
 
 export default function InboxPage() {
+  const [convos, setConvos] = useState<Conversation[]>([]);
+  const [selected, setSelected] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loadingConvos, setLoadingConvos] = useState(true);
+  const [loadingMsgs, setLoadingMsgs] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState('');
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<Filter>('all');
-  const [backendUrl, setBackendUrl] = useState('');
 
-  const getApiBase = () => {
+  const apiBase = (() => {
     const raw = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
     return raw.replace(/\/api\/v1\/?$/, '') + '/api/v1';
+  })();
+
+  const loadConversations = useCallback(async () => {
+    try {
+      setLoadingConvos(true);
+      setError('');
+      const res = await fetch(`${apiBase}/messages/conversations?limit=200`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setConvos(data.items || []);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoadingConvos(false);
+    }
+  }, [apiBase]);
+
+  const loadMessages = useCallback(async (userId: string) => {
+    try {
+      setLoadingMsgs(true);
+      const res = await fetch(`${apiBase}/messages/user/${userId}/history?limit=200`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setMessages(Array.isArray(data) ? data : data.items || []);
+    } catch (e: any) {
+      setMessages([]);
+    } finally {
+      setLoadingMsgs(false);
+    }
+  }, [apiBase]);
+
+  const sync = async () => {
+    setSyncing(true);
+    setSyncResult('');
+    try {
+      const res = await fetch(`${apiBase}/telegram/sync?limit_per_chat=100&max_dialogs=300`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        setSyncResult(`✓ Synced ${data.synced_messages} messages from ${data.synced_users} new users`);
+        await loadConversations();
+      } else {
+        setSyncResult(`⚠ ${data.detail || 'Sync failed'}`);
+      }
+    } catch (e: any) {
+      setSyncResult(`⚠ ${e.message}`);
+    } finally {
+      setSyncing(false);
+    }
   };
 
-  const fetchMessages = useCallback(async () => {
-    const apiBase = getApiBase();
-    try {
-      setLoading(true);
-      setError('');
-      const res = await fetch(`${apiBase}/messages?limit=200`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-      const data = await res.json();
-      setMessages(data.items || []);
-      setBackendUrl(apiBase);
-    } catch (e: any) {
-      setError(e.message || 'Failed to fetch');
-      setBackendUrl(apiBase);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  useEffect(() => { loadConversations(); }, [loadConversations]);
 
-  useEffect(() => { fetchMessages(); }, [fetchMessages]);
+  useEffect(() => {
+    if (selected) loadMessages(selected.user_id);
+  }, [selected, loadMessages]);
 
-  const filtered = messages.filter(m => {
-    if (filter === 'incoming' && m.direction !== 'incoming') return false;
-    if (filter === 'outgoing' && m.direction !== 'outgoing') return false;
-    if (filter === 'ai' && !m.is_ai_generated) return false;
-    if (search && !m.text?.toLowerCase().includes(search.toLowerCase())) return false;
-    return true;
-  });
-
-  const tabs: { key: Filter; label: string; count?: number }[] = [
-    { key: 'all', label: 'All', count: messages.length },
-    { key: 'incoming', label: '← In', count: messages.filter(m => m.direction === 'incoming').length },
-    { key: 'outgoing', label: '→ Out', count: messages.filter(m => m.direction === 'outgoing').length },
-    { key: 'ai', label: '🤖 AI', count: messages.filter(m => m.is_ai_generated).length },
-  ];
+  const filtered = convos.filter(c =>
+    !search ||
+    c.name.toLowerCase().includes(search.toLowerCase()) ||
+    c.username?.toLowerCase().includes(search.toLowerCase()) ||
+    c.last_message?.toLowerCase().includes(search.toLowerCase())
+  );
 
   return (
     <DashboardLayout>
-      <div style={{ padding: '24px 20px', maxWidth: '860px', color: ios.text }}>
+      <div style={{ display: 'flex', height: 'calc(100vh - 0px)', overflow: 'hidden' }}>
 
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '20px' }}>
-          <div>
-            <h1 style={{ fontSize: '24px', fontWeight: 700 }}>Message Inbox</h1>
-            <p style={{ color: ios.text2, fontSize: '13px', marginTop: '4px' }}>{messages.length} total messages</p>
-          </div>
-          <button onClick={fetchMessages} disabled={loading} style={{
-            padding: '9px 16px', borderRadius: '12px',
-            background: ios.surface, border: `1px solid ${ios.border}`,
-            color: ios.text2, fontSize: '13px', cursor: 'pointer',
-            display: 'flex', alignItems: 'center', gap: '6px',
-            opacity: loading ? 0.5 : 1,
-          }}>
-            {loading ? '⏳' : '🔄'} Refresh
-          </button>
-        </div>
-
-        {/* Search */}
-        <div style={{ position: 'relative', marginBottom: '14px' }}>
-          <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: ios.text3, fontSize: '14px' }}>🔍</span>
-          <input
-            placeholder="Search messages…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            style={{
-              width: '100%', padding: '10px 12px 10px 34px',
-              background: ios.surface2, border: `1px solid ${ios.border}`,
-              borderRadius: '12px', color: ios.text, fontSize: '14px',
-            }}
-          />
-        </div>
-
-        {/* Filter tabs */}
-        <div style={{ display: 'flex', gap: '6px', marginBottom: '20px', flexWrap: 'wrap' }}>
-          {tabs.map(t => (
-            <button key={t.key} onClick={() => setFilter(t.key)} style={{
-              padding: '7px 14px', borderRadius: '20px', fontSize: '13px',
-              fontWeight: 500, cursor: 'pointer', border: '1px solid',
-              background: filter === t.key ? ios.accent : ios.surface,
-              borderColor: filter === t.key ? ios.accent : ios.border,
-              color: filter === t.key ? '#fff' : ios.text2,
-              display: 'flex', alignItems: 'center', gap: '5px',
-            }}>
-              {t.label}
-              <span style={{
-                fontSize: '11px', padding: '1px 5px', borderRadius: '8px',
-                background: filter === t.key ? 'rgba(255,255,255,0.2)' : ios.surface2,
-              }}>{t.count}</span>
-            </button>
-          ))}
-        </div>
-
-        {/* Error */}
-        {error && (
-          <div style={{
-            marginBottom: '16px', padding: '14px 16px', borderRadius: '14px',
-            background: 'rgba(255,69,58,0.1)', border: '1px solid rgba(255,69,58,0.3)',
-            color: '#ff6b6b', fontSize: '13px',
-          }}>
-            <div style={{ fontWeight: 600, marginBottom: '4px' }}>⚠️ Cannot reach backend</div>
-            <div style={{ color: ios.text2, fontSize: '12px' }}>
-              Tried: <code style={{ color: ios.amber }}>{backendUrl}/messages</code>
-              <br />Make sure <strong>CORS_ORIGINS</strong> in Railway includes <code>https://nika-white1.vercel.app</code>
-            </div>
-          </div>
-        )}
-
-        {/* Messages */}
-        {loading && !messages.length ? (
-          <div style={{ textAlign: 'center', padding: '80px 0', color: ios.text3 }}>
-            <div style={{ fontSize: '32px', marginBottom: '12px' }}>⏳</div>
-            Loading messages…
-          </div>
-        ) : filtered.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '80px 0' }}>
-            <div style={{ fontSize: '44px', marginBottom: '14px' }}>💬</div>
-            <div style={{ fontSize: '16px', fontWeight: 600, marginBottom: '6px' }}>
-              {messages.length === 0 ? 'No messages yet' : 'No messages match your filter'}
-            </div>
-            <div style={{ fontSize: '13px', color: ios.text3, maxWidth: '280px', margin: '0 auto' }}>
-              {messages.length === 0
-                ? 'Send a message to your Telegram account (Nika White) to see it appear here'
-                : 'Try adjusting your search or filter'}
-            </div>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {filtered.map(msg => (
-              <div key={msg.id} style={{
-                background: ios.surface, borderRadius: '14px', padding: '14px 16px',
-                border: `1px solid ${ios.border}`,
-                borderLeft: `3px solid ${msg.direction === 'incoming' ? ios.accent : ios.green}`,
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
-                  <span style={{
-                    fontSize: '11px', fontWeight: 600, padding: '2px 8px',
-                    borderRadius: '20px',
-                    background: msg.direction === 'incoming' ? 'rgba(10,132,255,0.15)' : 'rgba(48,209,88,0.15)',
-                    color: msg.direction === 'incoming' ? ios.accent : ios.green,
-                    border: `1px solid ${msg.direction === 'incoming' ? 'rgba(10,132,255,0.3)' : 'rgba(48,209,88,0.3)'}`,
-                  }}>
-                    {msg.direction === 'incoming' ? '← Incoming' : '→ Outgoing'}
-                  </span>
-                  {msg.is_ai_generated && (
-                    <span style={{
-                      fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '20px',
-                      background: 'rgba(191,90,242,0.15)', color: ios.purple,
-                      border: '1px solid rgba(191,90,242,0.3)',
-                    }}>🤖 AI Generated</span>
-                  )}
-                  <span style={{ marginLeft: 'auto', fontSize: '11px', color: ios.text3 }}>
-                    {new Date(msg.created_at).toLocaleString()}
-                  </span>
-                </div>
-                <p style={{ fontSize: '14px', color: ios.text, lineHeight: 1.6, wordBreak: 'break-word' }}>
-                  {msg.text || <em style={{ color: ios.text3 }}>[media or non-text message]</em>}
-                </p>
-                <div style={{ fontSize: '11px', color: ios.text3, marginTop: '6px' }}>
-                  User #{msg.user_id?.slice(0, 8)}
-                </div>
+        {/* ── Left: conversation list ── */}
+        <div style={{
+          width: selected ? '320px' : '100%',
+          maxWidth: '420px',
+          borderRight: `1px solid rgba(84,84,88,0.5)`,
+          display: 'flex', flexDirection: 'column',
+          background: p.bg, flexShrink: 0,
+          minWidth: selected ? '260px' : undefined,
+        }} className="convo-panel">
+          {/* Header */}
+          <div style={{ padding: '16px 14px 10px', borderBottom: `1px solid rgba(84,84,88,0.4)` }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+              <h2 style={{ fontSize: '20px', fontWeight: 700, margin: 0 }}>Chats</h2>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button onClick={loadConversations} disabled={loadingConvos} style={{ background: 'none', border: 'none', color: p.blue, cursor: 'pointer', fontSize: '18px', opacity: loadingConvos ? 0.4 : 1 }} title="Refresh">↺</button>
+                <button onClick={sync} disabled={syncing} style={{
+                  padding: '6px 12px', borderRadius: '8px', border: 'none', cursor: syncing ? 'not-allowed' : 'pointer',
+                  background: p.blue, color: '#fff', fontSize: '12px', fontWeight: 600, opacity: syncing ? 0.6 : 1,
+                  display: 'flex', alignItems: 'center', gap: '5px',
+                }}>
+                  {syncing ? '⏳ Syncing…' : '⬇ Sync'}
+                </button>
               </div>
-            ))}
+            </div>
+
+            {/* Sync result */}
+            {syncResult && (
+              <div style={{ fontSize: '12px', color: syncResult.startsWith('✓') ? p.green : p.orange, marginBottom: '8px', padding: '6px 8px', borderRadius: '8px', background: 'rgba(255,255,255,0.04)' }}>
+                {syncResult}
+              </div>
+            )}
+
+            {/* Error */}
+            {error && (
+              <div style={{ fontSize: '12px', color: p.red, marginBottom: '8px', padding: '6px 8px', borderRadius: '8px', background: 'rgba(255,69,58,0.08)' }}>
+                {error} — check CORS_ORIGINS in Railway
+              </div>
+            )}
+
+            {/* Search */}
+            <input
+              placeholder="Search chats…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={{ width: '100%', background: p.s2, border: 'none', borderRadius: '10px', padding: '8px 12px', color: p.label, fontSize: '14px' }}
+            />
+          </div>
+
+          {/* Conversations */}
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            {loadingConvos && convos.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '40px', color: p.label3, fontSize: '13px' }}>Loading chats…</div>
+            ) : filtered.length === 0 ? (
+              <div style={{ padding: '32px 16px', textAlign: 'center', color: p.label3 }}>
+                <div style={{ fontSize: '32px', marginBottom: '10px' }}>✉</div>
+                <div style={{ fontSize: '15px', fontWeight: 600, color: p.label2 }}>No chats yet</div>
+                <div style={{ fontSize: '12px', marginTop: '6px' }}>Tap <strong style={{ color: p.blue }}>⬇ Sync</strong> to import your existing Telegram conversations</div>
+              </div>
+            ) : filtered.map(c => {
+              const on = selected?.user_id === c.user_id;
+              return (
+                <div key={c.user_id}
+                  onClick={() => setSelected(c)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '12px',
+                    padding: '12px 14px', cursor: 'pointer',
+                    background: on ? 'rgba(10,132,255,0.12)' : 'transparent',
+                    borderBottom: `1px solid rgba(84,84,88,0.2)`,
+                    transition: 'background 0.1s',
+                  }}
+                  onMouseEnter={e => { if (!on) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
+                  onMouseLeave={e => { if (!on) e.currentTarget.style.background = 'transparent'; }}
+                >
+                  {/* Avatar */}
+                  <div style={{
+                    width: '42px', height: '42px', borderRadius: '50%', flexShrink: 0,
+                    background: `hsl(${(c.telegram_id || 0) % 360}, 45%, 35%)`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '16px', fontWeight: 700, color: '#fff',
+                  }}>
+                    {(c.name || '?')[0].toUpperCase()}
+                  </div>
+
+                  {/* Info */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '6px' }}>
+                      <span style={{ fontWeight: 600, fontSize: '14px', color: p.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '160px' }}>
+                        {c.name}
+                      </span>
+                      <span style={{ fontSize: '11px', color: p.label3, flexShrink: 0 }}>{timeAgo(c.last_message_at)}</span>
+                    </div>
+                    <div style={{ fontSize: '12px', color: p.label3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' }}>
+                      {c.last_message_direction === 'outgoing' && <span style={{ color: p.blue }}>↗ </span>}
+                      {c.last_message || 'No messages'}
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', marginTop: '4px', alignItems: 'center' }}>
+                      <div style={{ width: '36px', height: '3px', borderRadius: '2px', background: p.s2, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', background: scoreColor(c.lead_score), width: `${c.lead_score}%` }} />
+                      </div>
+                      <span style={{ fontSize: '10px', color: scoreColor(c.lead_score) }}>{Math.round(c.lead_score)}</span>
+                      <span style={{ fontSize: '10px', color: p.label3 }}>{c.total_messages} msgs</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ── Right: message thread ── */}
+        {selected && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: p.bg }}>
+            {/* Thread header */}
+            <div style={{ padding: '14px 18px', borderBottom: `1px solid rgba(84,84,88,0.4)`, display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <button onClick={() => setSelected(null)} style={{ background: 'none', border: 'none', color: p.blue, cursor: 'pointer', fontSize: '20px', padding: 0, lineHeight: 1 }} className="back-btn">←</button>
+              <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: `hsl(${(selected.telegram_id || 0) % 360}, 45%, 35%)`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: '#fff', fontSize: '14px', flexShrink: 0 }}>
+                {(selected.name || '?')[0].toUpperCase()}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: '15px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selected.name}</div>
+                <div style={{ fontSize: '11px', color: p.label3 }}>{selected.username ? `@${selected.username}` : `ID ${selected.telegram_id}`} · {selected.total_messages} messages · Score {Math.round(selected.lead_score)}</div>
+              </div>
+            </div>
+
+            {/* Messages */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {loadingMsgs ? (
+                <div style={{ textAlign: 'center', padding: '40px', color: p.label3 }}>Loading messages…</div>
+              ) : messages.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '40px', color: p.label3 }}>No messages in this chat</div>
+              ) : messages.map(msg => {
+                const out = msg.direction === 'outgoing';
+                return (
+                  <div key={msg.id} style={{ display: 'flex', justifyContent: out ? 'flex-end' : 'flex-start' }}>
+                    <div style={{
+                      maxWidth: '70%', padding: '9px 13px',
+                      borderRadius: out ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
+                      background: out ? (msg.is_ai_generated ? p.purple : p.blue) : p.s2,
+                      color: p.label, fontSize: '14px', lineHeight: '1.5',
+                    }}>
+                      {msg.text || <em style={{ color: p.label3, fontSize: '12px' }}>[media]</em>}
+                      <div style={{ fontSize: '10px', color: out ? 'rgba(255,255,255,0.55)' : p.label3, marginTop: '4px', textAlign: out ? 'right' : 'left', display: 'flex', gap: '5px', justifyContent: out ? 'flex-end' : 'flex-start', alignItems: 'center' }}>
+                        {msg.is_ai_generated && <span style={{ background: 'rgba(255,255,255,0.2)', padding: '1px 5px', borderRadius: '6px', fontSize: '10px' }}>AI</span>}
+                        {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
+
+      <style>{`
+        @media(max-width:640px){
+          .convo-panel { max-width:100% !important; }
+          .back-btn { display:flex !important; }
+        }
+        @media(min-width:641px){
+          .back-btn { display:none !important; }
+        }
+      `}</style>
     </DashboardLayout>
   );
 }
