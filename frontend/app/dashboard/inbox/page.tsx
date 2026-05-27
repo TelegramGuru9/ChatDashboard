@@ -102,6 +102,10 @@ export default function InboxPage() {
   const [draft, setDraft]             = useState('');
   const [sending, setSending]         = useState(false);
   const [sendError, setSendError]     = useState('');
+  const [broadcastOpen, setBroadcastOpen] = useState(false);
+  const [broadcastMsg, setBroadcastMsg]   = useState('hey wie gehts dir so 😊');
+  const [broadcasting, setBroadcasting]   = useState(false);
+  const [broadcastResult, setBroadcastResult] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef       = useRef<HTMLTextAreaElement>(null);
   const pollRef        = useRef<NodeJS.Timeout | null>(null);
@@ -200,6 +204,27 @@ export default function InboxPage() {
       // Revert on failure
       setConvos(prev => prev.map(c => c.user_id === userId ? { ...c, ai_enabled: current } : c));
     }
+  };
+
+  const sendBroadcast = async () => {
+    if (!broadcastMsg.trim() || broadcasting) return;
+    setBroadcasting(true); setBroadcastResult('');
+    try {
+      const folder = activeFolder !== 'All' ? activeFolder : undefined;
+      const res = await fetch(`${api}/telegram/broadcast`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: broadcastMsg.trim(), limit: 500, ...(folder ? { folder } : {}) }),
+      });
+      const d = await res.json();
+      if (res.ok) {
+        setBroadcastResult(`✓ Sent to ${d.sent} chats${d.failed > 0 ? `, ${d.failed} failed` : ''}`);
+        loadConvos(activeFolder !== 'All' ? activeFolder : undefined);
+      } else {
+        setBroadcastResult(`⚠ ${d.detail || 'Failed'}`);
+      }
+    } catch (e: any) { setBroadcastResult(`⚠ ${e.message}`); }
+    finally { setBroadcasting(false); }
   };
 
   const sync = useCallback(async (silent = false) => {
@@ -505,16 +530,23 @@ export default function InboxPage() {
             })}
           </div>
 
-          {convos.length > 0 && (
-            <div style={{ padding:'8px 14px', borderTop:`1px solid ${C.sep}`, fontSize:'11px', color:C.t3, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-              <span>{convos.length} chats</span>
+          <div style={{ padding:'8px 14px', borderTop:`1px solid ${C.sep}`, fontSize:'11px', color:C.t3, display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+            <span>{convos.length} chats</span>
+            <div style={{ display:'flex', gap:'8px', alignItems:'center' }}>
               {tgConnected && (
                 <button onClick={() => sync()} disabled={syncing} style={{ background:'none', border:'none', color:C.blue, cursor:'pointer', fontSize:'11px', opacity:syncing?0.5:1 }}>
-                  {syncing ? 'Syncing…' : '⬇ Sync more'}
+                  {syncing ? 'Syncing…' : '⬇ Sync'}
                 </button>
               )}
+              {tgConnected && convos.length > 0 && (
+                <button onClick={() => { setBroadcastOpen(true); setBroadcastResult(''); }} style={{
+                  padding:'4px 10px', borderRadius:'8px', background:'rgba(191,90,242,0.12)',
+                  border:'1px solid rgba(191,90,242,0.3)', color:C.purple,
+                  fontSize:'11px', fontWeight:600, cursor:'pointer',
+                }}>📢 Broadcast</button>
+              )}
             </div>
-          )}
+          </div>
         </div>
 
         {/* ── Thread ── */}
@@ -793,6 +825,46 @@ export default function InboxPage() {
           </div>
         )}
       </div>
+
+      {/* ── Broadcast Modal ── */}
+      {broadcastOpen && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.8)', zIndex:2000, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}
+          onClick={e => { if (e.target === e.currentTarget) setBroadcastOpen(false); }}>
+          <div style={{ background:C.s1, borderRadius:'20px', padding:'24px', width:'100%', maxWidth:'460px', border:`1px solid ${C.sep}` }}>
+            <h3 style={{ margin:'0 0 6px', fontSize:'17px', fontWeight:700 }}>📢 Broadcast Message</h3>
+            <p style={{ fontSize:'13px', color:C.t3, margin:'0 0 18px' }}>
+              Sends to {activeFolder !== 'All' ? `"${activeFolder}" folder` : 'all chats'} ({convos.length} contacts).
+              Nika will auto-reply to everyone who responds.
+            </p>
+
+            <textarea
+              value={broadcastMsg}
+              onChange={e => setBroadcastMsg(e.target.value)}
+              rows={4}
+              placeholder="Your message…"
+              style={{ width:'100%', boxSizing:'border-box', background:C.s2, border:`1px solid ${C.sep}`, borderRadius:'12px', padding:'12px', color:C.t1, fontSize:'14px', outline:'none', resize:'vertical', fontFamily:'inherit', lineHeight:1.5 }}
+            />
+
+            {broadcastResult && (
+              <div style={{ marginTop:'10px', padding:'8px 12px', borderRadius:'8px', fontSize:'13px',
+                background: broadcastResult.startsWith('✓') ? 'rgba(48,209,88,0.1)' : 'rgba(255,69,58,0.1)',
+                color: broadcastResult.startsWith('✓') ? C.green : C.red }}>
+                {broadcastResult}
+              </div>
+            )}
+
+            <div style={{ display:'flex', gap:'10px', marginTop:'16px' }}>
+              <button onClick={() => setBroadcastOpen(false)} style={{ flex:1, padding:'11px', borderRadius:'12px', background:C.s3, border:'none', color:C.t2, fontSize:'14px', cursor:'pointer' }}>Cancel</button>
+              <button onClick={sendBroadcast} disabled={broadcasting || !broadcastMsg.trim()} style={{
+                flex:2, padding:'11px', borderRadius:'12px', background:C.purple, border:'none', color:'#fff',
+                fontSize:'14px', fontWeight:600, cursor:'pointer', opacity:(broadcasting||!broadcastMsg.trim())?0.5:1,
+              }}>
+                {broadcasting ? `Sending… (${convos.length} chats, ~${Math.ceil(convos.length*0.6/60)}min)` : `📢 Send to ${activeFolder !== 'All' ? activeFolder : 'All'} (${convos.length})`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         @media(max-width:768px) {

@@ -543,6 +543,79 @@ async def sync_telegram_chats(
         raise HTTPException(status_code=500, detail=str(ex))
 
 
+@telegram_router.post("/broadcast")
+async def broadcast_message(
+    payload: Dict[str, Any] = Body(...),
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    Send a message to ALL (or up to limit) non-bot users.
+    Useful for outreach blasts. Includes 0.6s delay per message to avoid flood ban.
+    Body: { "message": "...", "limit": 50, "folder": null }
+    """
+    from app.services.telegram.client import telegram_client
+    from app.db.models import Message as MsgModel
+    import asyncio as aio
+
+    if not telegram_client.is_connected:
+        raise HTTPException(status_code=503, detail="Telegram not connected")
+
+    text = str(payload.get("message", "")).strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="message is required")
+
+    limit = min(int(payload.get("limit", 200)), 2000)
+    folder = payload.get("folder")
+
+    try:
+        from sqlalchemy.sql import text as sql_text
+        folder_clause = ""
+        params: dict = {"limit": limit}
+        if folder:
+            folder_clause = "AND metadata->'tg_folders' @> :folder_json::jsonb"
+            import json
+            params["folder_json"] = json.dumps([folder])
+
+        rows = await session.execute(sql_text(f"""
+            SELECT id, user_id FROM users
+            WHERE (is_bot = false OR is_bot IS NULL) {folder_clause}
+            ORDER BY last_message_at DESC NULLS LAST
+            LIMIT :limit
+        """), params)
+        users_list = rows.fetchall()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"DB error: {e}")
+
+    sent = 0
+    failed = 0
+    for row in users_list:
+        try:
+            tg_msg_id = await telegram_client.send_message(row.user_id, text)
+            if tg_msg_id:
+                msg = MsgModel(
+                    message_id=tg_msg_id,
+                    user_id=row.id,
+                    text=text,
+                    direction="outgoing",
+                    has_media=False,
+                    is_ai_generated=False,
+                    extra_data={"broadcast": True},
+                    created_at=datetime.utcnow(),
+                )
+                session.add(msg)
+                sent += 1
+            else:
+                failed += 1
+        except Exception as e:
+            logger.warning(f"Broadcast failed for user {row.user_id}: {e}")
+            failed += 1
+        await aio.sleep(0.6)   # Telegram flood guard
+
+    await session.commit()
+    logger.info(f"Broadcast done: {sent} sent, {failed} failed, text='{text[:60]}'")
+    return {"status": "ok", "sent": sent, "failed": failed, "total": len(users_list)}
+
+
 @telegram_router.post("/sync-folders")
 async def sync_folders():
     """Fetch Telegram custom folders (Käufer, Warm, etc.) and tag users in DB."""
