@@ -217,14 +217,32 @@ export default function InboxPage() {
         body: JSON.stringify({ message: broadcastMsg.trim(), limit: 500, ...(folder ? { folder } : {}) }),
       });
       const d = await res.json();
-      if (res.ok) {
-        setBroadcastResult(`✓ Sent to ${d.sent} chats${d.failed > 0 ? `, ${d.failed} failed` : ''}`);
-        loadConvos(activeFolder !== 'All' ? activeFolder : undefined);
+      if (!res.ok) { setBroadcastResult(`⚠ ${d.detail || 'Failed'}`); setBroadcasting(false); return; }
+
+      // New async response: { status: "started", job_id, total, eta_seconds }
+      if (d.job_id) {
+        setBroadcastResult(`📤 Sending… 0/${d.total} sent`);
+        const pollInterval = setInterval(async () => {
+          try {
+            const sr = await fetch(`${api}/telegram/broadcast/status?job_id=${d.job_id}`);
+            const s = await sr.json();
+            if (!s) return;
+            setBroadcastResult(`📤 Sending… ${s.sent ?? 0}/${s.total ?? d.total} sent${s.failed > 0 ? `, ${s.failed} failed` : ''}`);
+            if (s.status === 'done') {
+              clearInterval(pollInterval);
+              setBroadcasting(false);
+              setBroadcastResult(`✓ Sent to ${s.sent} chats${s.failed > 0 ? `, ${s.failed} failed` : ''}`);
+              loadConvos(activeFolder !== 'All' ? activeFolder : undefined);
+            }
+          } catch { /* keep polling */ }
+        }, 2000);
       } else {
-        setBroadcastResult(`⚠ ${d.detail || 'Failed'}`);
+        // Legacy sync response fallback
+        setBroadcastResult(`✓ Sent to ${d.sent} chats${d.failed > 0 ? `, ${d.failed} failed` : ''}`);
+        setBroadcasting(false);
+        loadConvos(activeFolder !== 'All' ? activeFolder : undefined);
       }
-    } catch (e: any) { setBroadcastResult(`⚠ ${e.message}`); }
-    finally { setBroadcasting(false); }
+    } catch (e: any) { setBroadcastResult(`⚠ ${e.message}`); setBroadcasting(false); }
   };
 
   const sync = useCallback(async (silent = false) => {
@@ -859,7 +877,7 @@ export default function InboxPage() {
                 flex:2, padding:'11px', borderRadius:'12px', background:C.purple, border:'none', color:'#fff',
                 fontSize:'14px', fontWeight:600, cursor:'pointer', opacity:(broadcasting||!broadcastMsg.trim())?0.5:1,
               }}>
-                {broadcasting ? `Sending… (${convos.length} chats, ~${Math.ceil(convos.length*0.6/60)}min)` : `📢 Send to ${activeFolder !== 'All' ? activeFolder : 'All'} (${convos.length})`}
+                {broadcasting ? `📤 Sending… please wait` : `📢 Send to ${activeFolder !== 'All' ? activeFolder : 'All'} (${convos.length})`}
               </button>
             </div>
           </div>
