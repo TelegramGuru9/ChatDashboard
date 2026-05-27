@@ -9,6 +9,11 @@ const C = {
   blue:'#0a84ff', green:'#30d158', red:'#ff453a', orange:'#ff9f0a', purple:'#bf5af2',
 };
 
+interface PackageTranslation {
+  welcome_message?: string;
+  description?: string;
+}
+
 interface Package {
   id: string;
   name: string;
@@ -22,15 +27,24 @@ interface Package {
   welcome_message: string;
   send_after_messages: number;
   active: boolean;
+  translations?: Record<string, PackageTranslation>;
 }
 
 const BLANK: Package = {
   id: '', name: '', tagline: '', price: '', currency: 'USD', period: 'one-time',
   description: '', features: '', keywords: '', welcome_message: '',
   send_after_messages: 0, active: true,
+  translations: { de: {}, en: {}, uk: {}, ru: {} },
 };
 
 const PERIODS = ['one-time', 'monthly', 'yearly'];
+
+const LANGS = [
+  { code: 'de', flag: '🇩🇪', label: 'German' },
+  { code: 'en', flag: '🇬🇧', label: 'English' },
+  { code: 'uk', flag: '🇺🇦', label: 'Ukrainian' },
+  { code: 'ru', flag: '🇷🇺', label: 'Russian' },
+];
 
 const getApi = () => {
   const raw = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -44,6 +58,7 @@ export default function PackagesPage() {
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
   const [importError, setImportError] = useState('');
+  const [transLang, setTransLang] = useState('de');
 
   const load = useCallback(async () => {
     const api = getApi();
@@ -257,6 +272,53 @@ export default function PackagesPage() {
                 placeholder={"50 exclusive photos\nInstant delivery\nLifetime access"} rows={3}
                 style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', resize:'vertical' }} />
             </label>
+
+            {/* ── Translations ── */}
+            <div style={{ marginBottom:'20px' }}>
+              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'8px', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.06em' }}>
+                🌍 Translations
+              </div>
+              <div style={{ fontSize:'11px', color: C.t3, marginBottom:'10px' }}>
+                Nika sends the translated pitch message when a user writes in that language.
+                Leave blank to fall back to the default above.
+              </div>
+              {/* Language selector tabs */}
+              <div style={{ display:'flex', gap:'6px', marginBottom:'12px', flexWrap:'wrap' }}>
+                {LANGS.map(l => (
+                  <button key={l.code} onClick={() => setTransLang(l.code)} style={{
+                    padding:'5px 12px', borderRadius:'20px', border:'1px solid', cursor:'pointer', fontSize:'12px', fontWeight:600,
+                    background: transLang === l.code ? 'rgba(10,132,255,0.15)' : 'transparent',
+                    borderColor: transLang === l.code ? C.blue : C.sep,
+                    color: transLang === l.code ? C.blue : C.t3,
+                  }}>{l.flag} {l.label}</button>
+                ))}
+              </div>
+              {/* Translation fields for selected language */}
+              {(() => {
+                const t = editing.translations?.[transLang] || {};
+                const setT = (patch: Partial<PackageTranslation>) => setEditing({
+                  ...editing,
+                  translations: { ...(editing.translations || {}), [transLang]: { ...t, ...patch } },
+                });
+                const lbl = LANGS.find(l => l.code === transLang);
+                return (
+                  <div style={{ display:'flex', flexDirection:'column', gap:'10px' }}>
+                    <label>
+                      <div style={{ fontSize:'11px', color: C.t3, marginBottom:'4px' }}>Pitch message in {lbl?.flag} {lbl?.label}</div>
+                      <textarea value={t.welcome_message || ''} onChange={e => setT({ welcome_message: e.target.value })}
+                        placeholder={`Pitch message in ${lbl?.label} (leave blank to use default)`} rows={3}
+                        style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', resize:'vertical' }} />
+                    </label>
+                    <label>
+                      <div style={{ fontSize:'11px', color: C.t3, marginBottom:'4px' }}>Description in {lbl?.flag} {lbl?.label}</div>
+                      <input value={t.description || ''} onChange={e => setT({ description: e.target.value })}
+                        placeholder={`Short description in ${lbl?.label} (optional)`}
+                        style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none' }} />
+                    </label>
+                  </div>
+                );
+              })()}
+            </div>
 
             <div style={{ display:'flex', gap:'10px' }}>
               <button onClick={() => setEditing(null)} style={{ flex:1, padding:'11px', borderRadius:'12px', background: C.s3, border:'none', color: C.t2, fontSize:'14px', cursor:'pointer' }}>Cancel</button>

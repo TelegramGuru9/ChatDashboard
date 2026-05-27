@@ -87,6 +87,13 @@ const MODELS = [
   { value: 'claude-opus-4-6', label: 'Claude Opus 4.6 (Most capable)' },
 ];
 
+const LANGUAGES = [
+  { code: 'de', flag: '🇩🇪', label: 'German' },
+  { code: 'en', flag: '🇬🇧', label: 'English' },
+  { code: 'uk', flag: '🇺🇦', label: 'Ukrainian' },
+  { code: 'ru', flag: '🇷🇺', label: 'Russian' },
+];
+
 const getApi = () => {
   const raw = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   return raw.replace(/\/api\/v1\/?$/, '') + '/api/v1';
@@ -98,12 +105,13 @@ export default function SettingsPage() {
   const [maxTokens, setMaxTokens] = useState(512);
   const [temperature, setTemperature] = useState(0.75);
   const [model, setModel] = useState('claude-haiku-4-5-20251001');
+  const [enabledLanguages, setEnabledLanguages] = useState<string[]>(['de', 'en', 'uk', 'ru']);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [jsonError, setJsonError] = useState('');
   const [jsonSuccess, setJsonSuccess] = useState('');
-  const [tab, setTab] = useState<'persona'|'model'|'advanced'>('persona');
+  const [tab, setTab] = useState<'persona'|'model'|'languages'|'advanced'>('persona');
   const jsonRef = useRef<HTMLInputElement>(null);
 
   const api = getApi();
@@ -117,6 +125,7 @@ export default function SettingsPage() {
         if (typeof d.max_tokens === 'number') setMaxTokens(d.max_tokens);
         if (typeof d.temperature === 'number') setTemperature(d.temperature);
         if (typeof d.model === 'string') setModel(d.model);
+        if (Array.isArray(d.enabled_languages) && d.enabled_languages.length) setEnabledLanguages(d.enabled_languages);
       }
     }).catch(() => {}).finally(() => setLoading(false));
   }, [api]);
@@ -127,7 +136,7 @@ export default function SettingsPage() {
       await fetch(`${api}/ai/persona`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ persona, ai_enabled: aiEnabled, max_tokens: maxTokens, temperature, model }),
+        body: JSON.stringify({ persona, ai_enabled: aiEnabled, max_tokens: maxTokens, temperature, model, enabled_languages: enabledLanguages }),
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
@@ -179,10 +188,17 @@ export default function SettingsPage() {
   });
 
   const TABS = [
-    { key: 'persona' as const, label: '🤖 Persona' },
-    { key: 'model'   as const, label: '⚙ Model' },
-    { key: 'advanced' as const, label: '🔧 Advanced' },
+    { key: 'persona'   as const, label: '🤖 Persona' },
+    { key: 'languages' as const, label: '🌍 Languages' },
+    { key: 'model'     as const, label: '⚙ Model' },
+    { key: 'advanced'  as const, label: '🔧 Advanced' },
   ];
+
+  const toggleLang = (code: string) => {
+    setEnabledLanguages(prev =>
+      prev.includes(code) ? prev.filter(l => l !== code) : [...prev, code]
+    );
+  };
 
   return (
     <DashboardLayout>
@@ -240,6 +256,58 @@ export default function SettingsPage() {
               rows={22}
               style={{ ...inp(), resize: 'vertical', lineHeight: '1.55', fontFamily: '"SF Mono", "Fira Code", monospace', fontSize: '12px' }}
             />
+          </div>
+        )}
+
+        {tab === 'languages' && (
+          <div style={{ background: C.s1, borderRadius: '16px', padding: '18px', border: `1px solid ${C.sep}` }}>
+            <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Reply Languages</div>
+            <div style={{ fontSize: '12px', color: C.t3, marginBottom: '18px' }}>
+              Nika detects the language of each incoming message and automatically replies in the same language.
+              Enable the languages you want to support.
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {LANGUAGES.map(lang => {
+                const active = enabledLanguages.includes(lang.code);
+                return (
+                  <div key={lang.code} onClick={() => toggleLang(lang.code)} style={{
+                    display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 16px',
+                    borderRadius: '12px', cursor: 'pointer', transition: 'all 0.15s',
+                    background: active ? 'rgba(10,132,255,0.08)' : C.s2,
+                    border: `1px solid ${active ? 'rgba(10,132,255,0.35)' : C.sep}`,
+                  }}>
+                    <span style={{ fontSize: '26px', lineHeight: 1 }}>{lang.flag}</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: '14px', color: active ? C.t1 : C.t2 }}>{lang.label}</div>
+                      <div style={{ fontSize: '11px', color: C.t3, marginTop: '2px' }}>
+                        {lang.code === 'de' && 'Nika antwortet auf Deutsch wenn jemand Deutsch schreibt'}
+                        {lang.code === 'en' && 'Nika replies in English when someone writes in English'}
+                        {lang.code === 'uk' && 'Ніка відповідає українською, коли хтось пише по-українськи'}
+                        {lang.code === 'ru' && 'Ника отвечает по-русски, когда кто-то пишет по-русски'}
+                      </div>
+                    </div>
+                    {/* Toggle switch */}
+                    <div style={{
+                      width: '42px', height: '24px', borderRadius: '12px', flexShrink: 0,
+                      background: active ? C.blue : C.s3,
+                      position: 'relative', transition: 'background 0.2s',
+                    }}>
+                      <div style={{
+                        position: 'absolute', top: '3px', left: active ? '21px' : '3px',
+                        width: '18px', height: '18px', borderRadius: '50%', background: '#fff',
+                        transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+                      }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ marginTop: '16px', padding: '12px 14px', borderRadius: '10px', background: C.s2, fontSize: '12px', color: C.t3, lineHeight: 1.6 }}>
+              💡 <strong style={{ color: C.t2 }}>Auto-detect is always on.</strong> Nika reads the language of each message and replies in that language — no manual switching needed.
+              If a user writes in a language not enabled here, Nika defaults to English.
+            </div>
           </div>
         )}
 

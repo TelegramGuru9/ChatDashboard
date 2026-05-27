@@ -559,14 +559,29 @@ async def sync_folders():
 
 @telegram_router.get("/folders")
 async def get_folders():
-    """Return cached list of Telegram folder names."""
+    """Return Telegram folder names — cached config first, user metadata fallback."""
     from sqlalchemy import select
+    from sqlalchemy.sql import text as sql_text
     from app.db.models import Config
     try:
         async with db_manager.get_session() as session:
+            # 1. Prefer the cached config list (set after sync-folders)
             res = await session.execute(select(Config).where(Config.key == "tg_folders"))
             cfg = res.scalars().first()
-            return {"folders": cfg.value if cfg else []}
+            if cfg and cfg.value:
+                return {"folders": cfg.value}
+
+            # 2. Fallback: derive unique folder names from user metadata
+            result = await session.execute(sql_text("""
+                SELECT DISTINCT jsonb_array_elements_text(metadata->'tg_folders') AS folder
+                FROM users
+                WHERE metadata->'tg_folders' IS NOT NULL
+                  AND metadata->'tg_folders' != 'null'::jsonb
+                  AND jsonb_array_length(metadata->'tg_folders') > 0
+                ORDER BY folder
+            """))
+            folders = [row.folder for row in result.fetchall()]
+            return {"folders": folders}
     except Exception:
         return {"folders": []}
 

@@ -197,12 +197,28 @@ class MessageProcessor:
                     logger.debug("AI globally disabled in persona config — skipping response")
                     return
 
-                system_prompt = (
+                base_prompt = (
                     persona_data.get("persona")
                     or persona_data.get("system_prompt")
                     or persona_data.get("prompt")
                     or "You are Nika, a friendly and warm sales assistant. Keep replies concise and engaging (2-3 sentences max)."
                 )
+
+                # ── Language detection ──────────────────────────────────────
+                enabled_langs = persona_data.get("enabled_languages") or ["en", "de", "uk", "ru"]
+                LANG_NAMES = {
+                    "en": "English", "de": "German",
+                    "uk": "Ukrainian", "ru": "Russian",
+                }
+                lang_list = ", ".join(LANG_NAMES.get(c, c) for c in enabled_langs)
+                lang_rule = (
+                    f"\n\nLANGUAGE RULE (non-negotiable): Detect the language of the "
+                    f"user's latest message and reply ONLY in that same language. "
+                    f"Supported languages: {lang_list}. "
+                    f"If the user writes in a language not on this list, default to English. "
+                    f"Never mix languages in a single reply."
+                )
+                system_prompt = base_prompt + lang_rule
 
                 # Always use a known-valid Claude model
                 VALID_MODELS = {
