@@ -263,117 +263,44 @@ telegram_router = APIRouter(prefix="/telegram", tags=["Telegram"])
 
 @telegram_router.post("/sync")
 async def sync_telegram_chats(
-    limit_per_chat: int = Query(50, ge=1, le=200),
-    max_dialogs: int = Query(200, ge=1, le=500),
+    limit_per_chat: int = Query(100, ge=1, le=500),
+    max_dialogs: int = Query(300, ge=1, le=1000),
 ):
     """
     Pull existing Telegram chat history into the database.
-    This is safe to call multiple times — it skips already-stored messages.
-    Returns a summary of what was synced.
+    Safe to call multiple times — skips already-stored messages.
     """
     from app.services.telegram.client import telegram_client
 
     if not telegram_client.is_connected:
-        raise HTTPException(status_code=503, detail="Telegram not connected")
-
-    synced_users = 0
-    synced_messages = 0
-    errors = 0
+        raise HTTPException(
+            status_code=503,
+            detail="Telegram session is not connected. Re-run authentication (see /api/v1/telegram/auth-instructions)."
+        )
 
     try:
-        async for dialog in telegram_client.client.iter_dialogs(limit=max_dialogs):
-            # Only private chats (not groups or channels)
-            if not dialog.is_user:
-                continue
+        import main as app_main
+        u, m, e = await app_main._do_sync(telegram_client.client, limit_per_chat, max_dialogs)
+        return {"status": "ok", "synced_users": u, "synced_messages": m, "errors": e}
+    except Exception as ex:
+        logger.error(f"Sync failed: {ex}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(ex))
 
-            entity = dialog.entity
-            telegram_user_id = entity.id
 
-            try:
-                async with db_manager.get_session() as session:
-                    # Get or create user
-                    result = await session.execute(
-                        select(User).where(User.user_id == telegram_user_id)
-                    )
-                    user = result.scalars().first()
-
-                    if not user:
-                        user = User(
-                            user_id=telegram_user_id,
-                            first_name=getattr(entity, "first_name", None) or "Unknown",
-                            last_name=getattr(entity, "last_name", None),
-                            username=getattr(entity, "username", None),
-                            is_bot=getattr(entity, "bot", False),
-                        )
-                        session.add(user)
-                        await session.flush()
-                        synced_users += 1
-
-                    # Pull message history
-                    async for tg_msg in telegram_client.client.iter_messages(entity, limit=limit_per_chat):
-                        if not tg_msg.message and not tg_msg.media:
-                            continue  # skip empty system messages
-
-                        # Check duplicate
-                        dup = await session.execute(
-                            select(Message).where(
-                                and_(
-                                    Message.user_id == user.id,
-                                    Message.message_id == tg_msg.id,
-                                )
-                            )
-                        )
-                        if dup.scalars().first():
-                            continue  # already stored
-
-                        direction = "outgoing" if tg_msg.out else "incoming"
-                        has_media = tg_msg.media is not None
-                        media_type = None
-                        if has_media:
-                            mt = type(tg_msg.media).__name__
-                            if "Photo" in mt: media_type = "photo"
-                            elif "Document" in mt: media_type = "document"
-                            elif "Video" in mt: media_type = "video"
-                            elif "Audio" in mt: media_type = "audio"
-                            else: media_type = mt.lower()
-
-                        msg = Message(
-                            message_id=tg_msg.id,
-                            user_id=user.id,
-                            text=tg_msg.message or None,
-                            direction=direction,
-                            has_media=has_media,
-                            media_type=media_type,
-                            is_ai_generated=False,
-                            extra_data={},
-                            created_at=tg_msg.date.replace(tzinfo=None) if tg_msg.date else datetime.utcnow(),
-                        )
-                        session.add(msg)
-                        synced_messages += 1
-
-                    # Update user message count
-                    msg_count = await session.execute(
-                        select(func.count(Message.id)).where(Message.user_id == user.id)
-                    )
-                    user.total_messages = msg_count.scalar() or 0
-
-                    await session.commit()
-
-            except Exception as e:
-                logger.error(f"Error syncing dialog {telegram_user_id}: {e}")
-                errors += 1
-                continue
-
-        return {
-            "status": "ok",
-            "synced_users": synced_users,
-            "synced_messages": synced_messages,
-            "errors": errors,
-        }
-
+@telegram_router.post("/reconnect")
+async def reconnect_telegram():
+    """Attempt to reconnect the Telegram session (useful after temporary drops)."""
+    from app.services.telegram.client import telegram_client
+    try:
+        if telegram_client.client:
+            await telegram_client.client.connect()
+            me = await telegram_client.client.get_me()
+            if me:
+                telegram_client._is_connected = True
+                return {"status": "reconnected", "account": f"{me.first_name} (@{me.username})"}
+        return {"status": "failed", "detail": "No client instance"}
     except Exception as e:
-        logger.error(f"Sync failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+        return {"status": "failed", "detail": str(e)}
 
 
 @telegram_router.get("/status")
