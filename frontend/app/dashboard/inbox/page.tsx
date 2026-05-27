@@ -366,7 +366,7 @@ export default function InboxPage() {
           <div style={{ padding:'14px 14px 10px', borderBottom:`1px solid ${C.sepL}` }}>
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'10px' }}>
               <h2 style={{ fontSize:'20px', fontWeight:700, margin:0, color:C.t1 }}>Inbox</h2>
-              <button onClick={loadConvos} disabled={loadingConvos} style={{ background:'none', border:'none', color:C.blue, cursor:'pointer', fontSize:'18px', opacity:loadingConvos?0.4:1, padding:'2px 6px', borderRadius:'6px' }}>↺</button>
+              <button onClick={() => loadConvos()} disabled={loadingConvos} style={{ background:'none', border:'none', color:C.blue, cursor:'pointer', fontSize:'18px', opacity:loadingConvos?0.4:1, padding:'2px 6px', borderRadius:'6px' }}>↺</button>
             </div>
             {statusBanner()}
             {syncStatus && (
