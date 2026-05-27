@@ -10,9 +10,9 @@ const C = {
   blue:'#0a84ff', green:'#30d158', red:'#ff453a', orange:'#ff9f0a', purple:'#bf5af2', teal:'#5ac8fa',
 };
 
-function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
+function Card({ children, style, onMouseEnter, onMouseLeave }: { children: React.ReactNode; style?: React.CSSProperties; onMouseEnter?: (e: React.MouseEvent<HTMLDivElement>) => void; onMouseLeave?: (e: React.MouseEvent<HTMLDivElement>) => void }) {
   return (
-    <div style={{ background: C.s1, borderRadius: '16px', border: `1px solid ${C.sep}`, ...style }}>
+    <div style={{ background: C.s1, borderRadius: '16px', border: `1px solid ${C.sep}`, ...style }} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
       {children}
     </div>
   );
