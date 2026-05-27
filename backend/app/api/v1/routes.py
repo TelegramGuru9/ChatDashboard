@@ -289,17 +289,18 @@ async def sync_telegram_chats(
 
 @telegram_router.post("/reconnect")
 async def reconnect_telegram():
-    """Attempt to reconnect the Telegram session (useful after temporary drops)."""
+    """Attempt to reconnect the Telegram session — re-runs full connect() from scratch."""
     from app.services.telegram.client import telegram_client
     try:
-        if telegram_client.client:
-            await telegram_client.client.connect()
+        # Always run the full connect() so it works even when client is None
+        success = await telegram_client.connect()
+        if success:
             me = await telegram_client.client.get_me()
-            if me:
-                telegram_client._is_connected = True
-                return {"status": "reconnected", "account": f"{me.first_name} (@{me.username})"}
-        return {"status": "failed", "detail": "No client instance"}
+            name = f"{me.first_name or ''} {me.last_name or ''}".strip()
+            return {"status": "reconnected", "account": f"{name} (@{me.username})"}
+        return {"status": "failed", "detail": "connect() returned False — check Railway logs for the error"}
     except Exception as e:
+        logger.error(f"Reconnect error: {e}", exc_info=True)
         return {"status": "failed", "detail": str(e)}
 
 

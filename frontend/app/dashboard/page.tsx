@@ -13,6 +13,7 @@ const p = {
 
 export default function DashboardPage() {
   const [connected, setConnected] = useState<boolean | null>(null);
+  const [tgConnected, setTgConnected] = useState<boolean | null>(null);
   const [tgAccount, setTgAccount] = useState<string>('');
   const [stats, setStats] = useState({ messages: 0, users: 0, leads: 0 });
 
@@ -24,8 +25,9 @@ export default function DashboardPage() {
     }).catch(() => setConnected(false));
 
     fetch(`${base}/api/v1/telegram/status`).then(r => r.json()).then(d => {
+      setTgConnected(!!d.connected);
       if (d.account?.name) setTgAccount(d.account.name);
-    }).catch(() => {});
+    }).catch(() => setTgConnected(false));
 
     const api = base + '/api/v1';
     Promise.allSettled([
@@ -69,7 +71,9 @@ export default function DashboardPage() {
         }}>
           <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: connected ? p.green : connected === false ? p.red : p.label3, flexShrink: 0 }} />
           {connected === null ? 'Connecting…' : connected
-            ? `Backend connected · ${tgAccount ? `Telegram: ${tgAccount}` : 'Telegram active'}`
+            ? tgConnected === false
+              ? 'Backend connected · ⚠ Telegram not connected — go to Inbox to fix'
+              : `Backend connected · ${tgAccount ? `Telegram: ${tgAccount}` : 'Telegram active'}`
             : 'Backend offline — check Railway'}
         </div>
 
