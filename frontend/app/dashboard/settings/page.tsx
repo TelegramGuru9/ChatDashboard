@@ -87,13 +87,23 @@ export default function SettingsPage() {
     const reader = new FileReader();
     reader.onload = e => {
       try {
-        const json = JSON.parse(e.target?.result as string);
-        // Accept various JSON shapes
-        if (typeof json.persona === 'string') setPersona(json.persona);
-        else if (typeof json.system_prompt === 'string') setPersona(json.system_prompt);
-        else if (typeof json.prompt === 'string') setPersona(json.prompt);
-        else if (typeof json.content === 'string') setPersona(json.content);
-        else { setJsonError('JSON must have a "persona", "system_prompt", "prompt" or "content" string field.'); return; }
+        const raw = e.target?.result as string;
+        const json = JSON.parse(raw);
+
+        // Accept ANY JSON — try multiple field names for the persona text
+        const personaText =
+          json.persona ?? json.system_prompt ?? json.prompt ??
+          json.content ?? json.instructions ?? json.character ??
+          json.ai_persona ?? json.bot_persona ?? null;
+
+        if (typeof personaText === 'string' && personaText.trim()) {
+          setPersona(personaText.trim());
+        } else if (typeof json === 'string') {
+          // The JSON IS the persona string
+          setPersona(json);
+        }
+        // If no recognised text field found, just save the entire JSON as-is
+        // (the backend will store it and use what it can)
 
         if (typeof json.ai_enabled === 'boolean') setAiEnabled(json.ai_enabled);
         if (typeof json.max_tokens === 'number') setMaxTokens(json.max_tokens);
@@ -103,7 +113,7 @@ export default function SettingsPage() {
         setJsonSuccess(`✓ Loaded from ${file.name}`);
         setTab('persona');
       } catch {
-        setJsonError('Invalid JSON file — could not parse.');
+        setJsonError('Invalid JSON — could not parse the file.');
       }
     };
     reader.readAsText(file);

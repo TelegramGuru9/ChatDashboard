@@ -314,8 +314,8 @@ telegram_router = APIRouter(prefix="/telegram", tags=["Telegram"])
 
 @telegram_router.post("/sync")
 async def sync_telegram_chats(
-    limit_per_chat: int = Query(100, ge=1, le=500),
-    max_dialogs: int = Query(300, ge=1, le=1000),
+    limit_per_chat: int = Query(150, ge=1, le=1000),
+    max_dialogs: int = Query(10000, ge=1, le=100000),
 ):
     """
     Pull existing Telegram chat history into the database.
@@ -381,13 +381,26 @@ ai_router = APIRouter(prefix="/ai", tags=["AI"])
 
 @ai_router.post("/persona")
 async def save_persona(payload: Dict[str, Any] = Body(...)):
-    """Save AI persona config (stored in config table)."""
+    """
+    Save AI persona config. Accepts ANY JSON shape — will try to normalise
+    common field names (persona / system_prompt / prompt / content) but also
+    stores the raw payload so nothing is ever lost.
+    """
     try:
+        # Normalise: accept any string field as the persona prompt
+        if "persona" not in payload:
+            for alt in ("system_prompt", "prompt", "content", "instructions", "character"):
+                if isinstance(payload.get(alt), str):
+                    payload["persona"] = payload[alt]
+                    break
+
         async with db_manager.get_session() as session:
             result = await session.execute(select(Config).where(Config.key == "persona"))
             cfg = result.scalars().first()
             if cfg:
-                cfg.value = payload
+                # Deep-merge so existing keys are preserved
+                merged = {**(cfg.value or {}), **payload}
+                cfg.value = merged
                 cfg.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
             else:
                 cfg = Config(key="persona", value=payload, description="AI persona and model settings")

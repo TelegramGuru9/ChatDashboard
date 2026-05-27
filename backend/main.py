@@ -95,12 +95,12 @@ async def _do_sync(client, limit_per_chat: int = 100, max_dialogs: int = 300):
 
 
 async def _startup_sync():
-    """Run after startup — wait for Telegram to fully settle, then sync."""
+    """Run after startup — wait for Telegram to fully settle, then sync ALL dialogs."""
     await asyncio.sleep(12)
     from app.services.telegram.client import telegram_client
     if telegram_client.is_connected:
-        logger.info("Auto-syncing existing Telegram chats on startup…")
-        await _do_sync(telegram_client.client)
+        logger.info("Auto-syncing ALL existing Telegram chats on startup…")
+        await _do_sync(telegram_client.client, limit_per_chat=150, max_dialogs=10000)
     else:
         logger.warning("Startup sync skipped — Telegram not connected")
 
