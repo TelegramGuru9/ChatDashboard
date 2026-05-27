@@ -3,287 +3,205 @@
 import { useEffect, useState, useCallback } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 
-interface StatsData {
-  totalMessages: number;
-  incomingMessages: number;
-  outgoingMessages: number;
-  aiMessages: number;
-  totalLeads: number;
-  qualifiedLeads: number;
-  convertedLeads: number;
-  avgLeadScore: number;
+const ios = {
+  surface: '#1c1c1e', surface2: '#2c2c2e',
+  border: 'rgba(255,255,255,0.08)', accent: '#0a84ff',
+  green: '#30d158', red: '#ff453a', amber: '#ffd60a', purple: '#bf5af2',
+  cyan: '#32ade6',
+  text: '#fff', text2: 'rgba(255,255,255,0.55)', text3: 'rgba(255,255,255,0.3)',
+};
+
+const STAGE_C: Record<string, string> = {
+  awareness: '#64748b', interest: '#0a84ff', consideration: '#bf5af2', decision: '#ffd60a', purchase: '#30d158',
+};
+const STATUS_C: Record<string, string> = {
+  new: '#64748b', interested: '#0a84ff', qualified: '#30d158', customer: '#ffd60a', lost: '#ff453a',
+};
+
+interface Stats {
+  totalMessages: number; incoming: number; outgoing: number; aiMessages: number;
+  totalLeads: number; qualifiedLeads: number; convertedLeads: number; avgScore: number;
   totalUsers: number;
-  stageBreakdown: Record<string, number>;
-  statusBreakdown: Record<string, number>;
+  stageBreak: Record<string, number>; statusBreak: Record<string, number>;
 }
 
-const C = {
-  blue: '#3b82f6',
-  purple: '#8b5cf6',
-  green: '#10b981',
-  amber: '#f59e0b',
-  red: '#ef4444',
-  cyan: '#06b6d4',
-  slate100: '#f1f5f9',
-  slate400: '#94a3b8',
-  slate500: '#64748b',
-  slate800: '#1e293b',
-  slate900: '#0f172a',
-};
-
-const STAGE_COLORS: Record<string, string> = {
-  awareness: '#64748b',
-  interest: '#3b82f6',
-  consideration: '#8b5cf6',
-  decision: '#f59e0b',
-  purchase: '#10b981',
-};
-
-const STATUS_COLORS: Record<string, string> = {
-  new: '#64748b',
-  interested: '#3b82f6',
-  qualified: '#10b981',
-  customer: '#f59e0b',
-  lost: '#ef4444',
-};
-
-function StatCard({ label, value, icon, accent, sub }: {
-  label: string; value: string | number; icon: string; accent: string; sub?: string;
-}) {
+function KPI({ label, value, icon, color, sub }: { label: string; value: string | number; icon: string; color: string; sub?: string }) {
   return (
-    <div style={{
-      background: C.slate900, border: '1px solid #1e293b',
-      borderRadius: '14px', padding: '18px',
-      borderTop: `3px solid ${accent}`,
-    }}>
+    <div style={{ background: ios.surface, borderRadius: '16px', padding: '18px', border: `1px solid ${ios.border}`, borderTop: `3px solid ${color}` }}>
       <div style={{ fontSize: '22px', marginBottom: '8px' }}>{icon}</div>
-      <div style={{ fontSize: '26px', fontWeight: 700, color: C.slate100 }}>{value}</div>
-      <div style={{ fontSize: '11px', color: C.slate500, marginTop: '4px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{label}</div>
-      {sub && <div style={{ fontSize: '11px', color: accent, marginTop: '4px' }}>{sub}</div>}
+      <div style={{ fontSize: '26px', fontWeight: 700, color, lineHeight: 1 }}>{value}</div>
+      <div style={{ fontSize: '11px', color: ios.text3, marginTop: '6px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{label}</div>
+      {sub && <div style={{ fontSize: '11px', color: ios.text2, marginTop: '4px' }}>{sub}</div>}
     </div>
   );
 }
 
-function BarChart({ data, colors, title }: {
-  data: Record<string, number>; colors: Record<string, string>; title: string;
-}) {
+function Bar({ data, colors, title }: { data: Record<string, number>; colors: Record<string, string>; title: string }) {
   const max = Math.max(...Object.values(data), 1);
   return (
-    <div style={{
-      background: C.slate900, border: '1px solid #1e293b',
-      borderRadius: '14px', padding: '20px',
-    }}>
-      <div style={{ fontWeight: 600, color: C.slate100, marginBottom: '16px', fontSize: '14px' }}>{title}</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        {Object.entries(data).map(([key, val]) => (
-          <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div style={{ width: '90px', fontSize: '12px', color: colors[key] || C.slate400, textTransform: 'capitalize', flexShrink: 0, fontWeight: 600 }}>
-              {key}
+    <div style={{ background: ios.surface, borderRadius: '16px', padding: '20px', border: `1px solid ${ios.border}` }}>
+      <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '16px' }}>{title}</div>
+      {Object.entries(data).length === 0 ? (
+        <div style={{ color: ios.text3, fontSize: '13px', textAlign: 'center', padding: '20px 0' }}>No data yet</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {Object.entries(data).map(([k, v]) => (
+            <div key={k} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ width: '100px', fontSize: '12px', color: colors[k] || ios.text2, textTransform: 'capitalize', fontWeight: 600, flexShrink: 0 }}>{k}</div>
+              <div style={{ flex: 1, height: '10px', background: ios.surface2, borderRadius: '5px', overflow: 'hidden' }}>
+                <div style={{ height: '100%', borderRadius: '5px', background: colors[k] || ios.text2, width: `${(v / max) * 100}%`, transition: 'width 0.7s ease' }} />
+              </div>
+              <div style={{ width: '24px', fontSize: '12px', color: ios.text2, textAlign: 'right', flexShrink: 0 }}>{v}</div>
             </div>
-            <div style={{ flex: 1, height: '10px', background: '#1e293b', borderRadius: '5px', overflow: 'hidden' }}>
-              <div style={{
-                height: '100%', borderRadius: '5px',
-                background: colors[key] || C.slate500,
-                width: `${(val / max) * 100}%`,
-                transition: 'width 0.6s ease',
-              }} />
-            </div>
-            <div style={{ width: '28px', fontSize: '12px', color: C.slate400, textAlign: 'right', flexShrink: 0 }}>{val}</div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
-  );
-}
-
-function DonutSegment({ pct, color, offset }: { pct: number; color: string; offset: number }) {
-  const circ = 2 * Math.PI * 40;
-  return (
-    <circle
-      cx="50" cy="50" r="40"
-      fill="none"
-      stroke={color}
-      strokeWidth="12"
-      strokeDasharray={`${pct / 100 * circ} ${circ}`}
-      strokeDashoffset={-offset / 100 * circ}
-      strokeLinecap="butt"
-      style={{ transition: 'all 0.6s ease' }}
-    />
   );
 }
 
 export default function AnalyticsPage() {
-  const [data, setData] = useState<StatsData | null>(null);
+  const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const apiBase = (() => {
     const raw = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-    return raw.endsWith('/api/v1') ? raw : raw.replace(/\/?$/, '') + '/api/v1';
+    return raw.replace(/\/api\/v1\/?$/, '') + '/api/v1';
   })();
 
-  const fetchData = useCallback(async () => {
+  const load = useCallback(async () => {
     try {
-      setLoading(true);
-      setError('');
-      const [msgRes, leadRes, userRes] = await Promise.all([
+      setLoading(true); setError('');
+      const [mR, lR, uR] = await Promise.all([
         fetch(`${apiBase}/messages?limit=1000`).then(r => r.json()),
         fetch(`${apiBase}/leads?limit=1000`).then(r => r.json()),
         fetch(`${apiBase}/users?limit=1000`).then(r => r.json()),
       ]);
-
-      const messages = msgRes.items || [];
-      const leads = leadRes.items || [];
-
-      const stageBreakdown: Record<string, number> = {};
-      const statusBreakdown: Record<string, number> = {};
-      let totalScore = 0;
-      let qualified = 0;
-      let converted = 0;
-
+      const msgs = mR.items || [];
+      const leads = lR.items || [];
+      const stageBreak: Record<string, number> = {};
+      const statusBreak: Record<string, number> = {};
+      let totalScore = 0, qualified = 0, converted = 0;
       for (const l of leads) {
-        stageBreakdown[l.funnel_stage] = (stageBreakdown[l.funnel_stage] || 0) + 1;
-        statusBreakdown[l.status] = (statusBreakdown[l.status] || 0) + 1;
+        if (l.funnel_stage) stageBreak[l.funnel_stage] = (stageBreak[l.funnel_stage] || 0) + 1;
+        if (l.status) statusBreak[l.status] = (statusBreak[l.status] || 0) + 1;
         totalScore += l.lead_score || 0;
         if (l.qualified) qualified++;
         if (l.converted) converted++;
       }
-
-      setData({
-        totalMessages: msgRes.total || messages.length,
-        incomingMessages: messages.filter((m: any) => m.direction === 'incoming').length,
-        outgoingMessages: messages.filter((m: any) => m.direction === 'outgoing').length,
-        aiMessages: messages.filter((m: any) => m.is_ai_generated).length,
-        totalLeads: leadRes.total || leads.length,
-        qualifiedLeads: qualified,
-        convertedLeads: converted,
-        avgLeadScore: leads.length ? Math.round(totalScore / leads.length) : 0,
-        totalUsers: userRes.total || 0,
-        stageBreakdown,
-        statusBreakdown,
+      setStats({
+        totalMessages: mR.total || msgs.length,
+        incoming: msgs.filter((m: any) => m.direction === 'incoming').length,
+        outgoing: msgs.filter((m: any) => m.direction === 'outgoing').length,
+        aiMessages: msgs.filter((m: any) => m.is_ai_generated).length,
+        totalLeads: lR.total || leads.length,
+        qualifiedLeads: qualified, convertedLeads: converted,
+        avgScore: leads.length ? Math.round(totalScore / leads.length) : 0,
+        totalUsers: uR.total || 0,
+        stageBreak, statusBreak,
       });
-    } catch (e: any) {
-      setError(e.message || 'Failed to load analytics');
-    } finally {
-      setLoading(false);
-    }
+    } catch (e: any) { setError(e.message || 'Failed'); } finally { setLoading(false); }
   }, [apiBase]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { load(); }, [load]);
 
-  const aiPct = data && data.totalMessages > 0 ? Math.round((data.aiMessages / data.totalMessages) * 100) : 0;
-  const qualPct = data && data.totalLeads > 0 ? Math.round((data.qualifiedLeads / data.totalLeads) * 100) : 0;
-  const convPct = data && data.totalLeads > 0 ? Math.round((data.convertedLeads / data.totalLeads) * 100) : 0;
+  const S = stats;
+  const aiPct = S && S.totalMessages > 0 ? Math.round((S.aiMessages / S.totalMessages) * 100) : 0;
+  const qualPct = S && S.totalLeads > 0 ? Math.round((S.qualifiedLeads / S.totalLeads) * 100) : 0;
+  const convPct = S && S.totalLeads > 0 ? Math.round((S.convertedLeads / S.totalLeads) * 100) : 0;
+
+  const Ring = ({ pct, color, size = 80 }: { pct: number; color: string; size?: number }) => {
+    const r = (size / 2) - 8; const circ = 2 * Math.PI * r;
+    return (
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={ios.surface2} strokeWidth="7" />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth="7"
+          strokeDasharray={`${pct / 100 * circ} ${circ}`} strokeDashoffset={circ / 4}
+          strokeLinecap="round" style={{ transition: 'stroke-dasharray 0.8s ease' }} />
+        <text x={size / 2} y={size / 2 + 5} textAnchor="middle" fill={color} fontSize="13" fontWeight="700">{pct}%</text>
+      </svg>
+    );
+  };
 
   return (
     <DashboardLayout>
-      <div style={{ padding: '28px 24px', maxWidth: '1040px', margin: '0 auto', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
-
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '24px' }}>
+      <div style={{ padding: '24px 20px', maxWidth: '980px', color: ios.text }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '20px' }}>
           <div>
-            <h1 style={{ fontSize: '22px', fontWeight: 700, color: C.slate100, margin: 0 }}>Analytics</h1>
-            <p style={{ color: C.slate400, fontSize: '13px', margin: '4px 0 0' }}>Conversion and engagement overview</p>
+            <h1 style={{ fontSize: '24px', fontWeight: 700 }}>Analytics</h1>
+            <p style={{ color: ios.text2, fontSize: '13px', marginTop: '4px' }}>Conversion and engagement overview</p>
           </div>
-          <button onClick={fetchData} disabled={loading} style={{
-            padding: '8px 14px', borderRadius: '10px',
-            background: C.slate800, border: '1px solid #334155',
-            color: C.slate400, fontSize: '13px', cursor: 'pointer',
-            opacity: loading ? 0.6 : 1,
-          }}>
+          <button onClick={load} disabled={loading} style={{ padding: '9px 16px', borderRadius: '12px', background: ios.surface, border: `1px solid ${ios.border}`, color: ios.text2, fontSize: '13px', cursor: 'pointer', opacity: loading ? 0.5 : 1 }}>
             {loading ? '⏳' : '🔄'} Refresh
           </button>
         </div>
 
-        {error && (
-          <div style={{
-            marginBottom: '16px', padding: '14px 16px',
-            background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)',
-            borderRadius: '12px', color: '#fca5a5', fontSize: '13px',
-          }}>
-            ⚠️ {error}
-          </div>
-        )}
+        {error && <div style={{ padding: '14px', borderRadius: '12px', background: 'rgba(255,69,58,0.1)', border: '1px solid rgba(255,69,58,0.3)', color: '#ff6b6b', fontSize: '13px', marginBottom: '14px' }}>⚠️ {error}</div>}
 
-        {loading && !data ? (
-          <div style={{ textAlign: 'center', padding: '80px', color: C.slate500 }}>⏳ Loading analytics…</div>
-        ) : data ? (
+        {loading && !stats ? (
+          <div style={{ textAlign: 'center', padding: '80px', color: ios.text3 }}>⏳ Loading analytics…</div>
+        ) : S ? (
           <>
-            {/* KPI grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '12px', marginBottom: '20px' }} className="kpi-grid">
-              <StatCard label="Total Messages" value={data.totalMessages} icon="💬" accent={C.blue} />
-              <StatCard label="Total Leads" value={data.totalLeads} icon="🎯" accent={C.green} />
-              <StatCard label="Total Users" value={data.totalUsers} icon="👤" accent={C.purple} />
-              <StatCard label="Avg Lead Score" value={`${data.avgLeadScore}/100`} icon="⭐" accent={C.amber} />
+            {/* KPI row */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '12px', marginBottom: '16px' }} className="g4">
+              <KPI label="Messages" value={S.totalMessages} icon="💬" color={ios.accent} />
+              <KPI label="Leads" value={S.totalLeads} icon="🎯" color={ios.green} />
+              <KPI label="Users" value={S.totalUsers} icon="👤" color={ios.purple} />
+              <KPI label="Avg Score" value={`${S.avgScore}/100`} icon="⭐" color={ios.amber} />
             </div>
 
-            {/* Conversion KPIs */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '12px', marginBottom: '20px' }} className="conv-grid">
-              <StatCard label="Qualified Leads" value={data.qualifiedLeads} icon="✓" accent={C.green} sub={`${qualPct}% qualification rate`} />
-              <StatCard label="Converted" value={data.convertedLeads} icon="⭐" accent={C.amber} sub={`${convPct}% conversion rate`} />
-              <StatCard label="AI-Generated Replies" value={data.aiMessages} icon="🤖" accent={C.purple} sub={`${aiPct}% of all messages`} />
+            {/* Conversion rings */}
+            <div style={{ background: ios.surface, borderRadius: '16px', padding: '20px', border: `1px solid ${ios.border}`, marginBottom: '16px' }}>
+              <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '18px' }}>📊 Conversion Metrics</div>
+              <div style={{ display: 'flex', gap: '20px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'space-around' }}>
+                {[
+                  { label: 'AI Response Rate', pct: aiPct, color: ios.purple, sub: `${S.aiMessages} of ${S.totalMessages} messages` },
+                  { label: 'Qualification Rate', pct: qualPct, color: ios.green, sub: `${S.qualifiedLeads} of ${S.totalLeads} leads` },
+                  { label: 'Conversion Rate', pct: convPct, color: ios.amber, sub: `${S.convertedLeads} converted` },
+                ].map(item => (
+                  <div key={item.label} style={{ textAlign: 'center' }}>
+                    <Ring pct={item.pct} color={item.color} size={90} />
+                    <div style={{ fontWeight: 600, fontSize: '13px', marginTop: '8px' }}>{item.label}</div>
+                    <div style={{ fontSize: '11px', color: ios.text3, marginTop: '2px' }}>{item.sub}</div>
+                  </div>
+                ))}
+              </div>
             </div>
 
-            {/* Charts row */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '20px' }} className="chart-grid">
-              <BarChart data={data.stageBreakdown} colors={STAGE_COLORS} title="📊 Leads by Funnel Stage" />
-              <BarChart data={data.statusBreakdown} colors={STATUS_COLORS} title="🏷️ Leads by Status" />
+            {/* Bar charts */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }} className="g2">
+              <Bar data={S.stageBreak} colors={STAGE_C} title="📈 Leads by Funnel Stage" />
+              <Bar data={S.statusBreak} colors={STATUS_C} title="🏷️ Leads by Status" />
             </div>
 
             {/* Message breakdown */}
-            <div style={{
-              background: C.slate900, border: '1px solid #1e293b',
-              borderRadius: '14px', padding: '20px',
-            }}>
-              <div style={{ fontWeight: 600, color: C.slate100, marginBottom: '16px', fontSize: '14px' }}>
-                💬 Message Breakdown
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '32px', flexWrap: 'wrap' }}>
-                {/* Donut SVG */}
-                <svg width="120" height="120" viewBox="0 0 100 100">
-                  <circle cx="50" cy="50" r="40" fill="none" stroke="#1e293b" strokeWidth="12" />
-                  {data.totalMessages > 0 && (() => {
-                    const inPct = (data.incomingMessages / data.totalMessages) * 100;
-                    const outPct = (data.outgoingMessages / data.totalMessages) * 100;
-                    return (
-                      <>
-                        <DonutSegment pct={inPct} color={C.blue} offset={0} />
-                        <DonutSegment pct={outPct} color={C.green} offset={inPct} />
-                      </>
-                    );
-                  })()}
-                </svg>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {[
-                    { label: 'Incoming', value: data.incomingMessages, color: C.blue },
-                    { label: 'Outgoing', value: data.outgoingMessages, color: C.green },
-                    { label: 'AI Generated', value: data.aiMessages, color: C.purple },
-                  ].map(item => (
-                    <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: item.color, flexShrink: 0 }} />
-                      <span style={{ fontSize: '13px', color: C.slate400, width: '100px' }}>{item.label}</span>
-                      <span style={{ fontSize: '13px', color: C.slate100, fontWeight: 600 }}>{item.value}</span>
-                      <span style={{ fontSize: '11px', color: C.slate500 }}>
-                        ({data.totalMessages > 0 ? Math.round((item.value / data.totalMessages) * 100) : 0}%)
-                      </span>
+            <div style={{ background: ios.surface, borderRadius: '16px', padding: '20px', border: `1px solid ${ios.border}` }}>
+              <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '14px' }}>💬 Message Breakdown</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {[
+                  { label: 'Incoming (from users)', value: S.incoming, color: ios.accent, total: S.totalMessages },
+                  { label: 'Outgoing (AI + manual)', value: S.outgoing, color: ios.green, total: S.totalMessages },
+                  { label: 'AI Generated', value: S.aiMessages, color: ios.purple, total: S.totalMessages },
+                ].map(item => (
+                  <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ width: '190px', fontSize: '13px', color: ios.text2, flexShrink: 0 }}>{item.label}</div>
+                    <div style={{ flex: 1, height: '10px', background: ios.surface2, borderRadius: '5px', overflow: 'hidden' }}>
+                      <div style={{ height: '100%', borderRadius: '5px', background: item.color, width: item.total ? `${(item.value / item.total) * 100}%` : '0%', transition: 'width 0.7s ease' }} />
                     </div>
-                  ))}
-                </div>
+                    <div style={{ width: '60px', fontSize: '12px', color: ios.text2, textAlign: 'right', flexShrink: 0 }}>
+                      {item.value} <span style={{ color: ios.text3, fontSize: '11px' }}>({item.total ? Math.round((item.value / item.total) * 100) : 0}%)</span>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </>
         ) : null}
       </div>
-
       <style>{`
-        @media (max-width: 768px) {
-          .kpi-grid { grid-template-columns: repeat(2,1fr) !important; }
-          .conv-grid { grid-template-columns: 1fr !important; }
-          .chart-grid { grid-template-columns: 1fr !important; }
-        }
-        @media (max-width: 480px) {
-          .kpi-grid { grid-template-columns: 1fr !important; }
-        }
+        @media(max-width:700px){ .g4{grid-template-columns:repeat(2,1fr)!important} .g2{grid-template-columns:1fr!important} }
+        @media(max-width:400px){ .g4{grid-template-columns:1fr!important} }
       `}</style>
     </DashboardLayout>
   );

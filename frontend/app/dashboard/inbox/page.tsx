@@ -12,31 +12,12 @@ interface Message {
   user_id: string;
 }
 
-const C = {
-  blue: '#3b82f6',
-  green: '#10b981',
-  purple: '#8b5cf6',
-  red: '#ef4444',
-  slate100: '#f1f5f9',
-  slate200: '#e2e8f0',
-  slate400: '#94a3b8',
-  slate500: '#64748b',
-  slate700: '#334155',
-  slate800: '#1e293b',
-  slate900: '#0f172a',
+const ios = {
+  bg: '#000', surface: '#1c1c1e', surface2: '#2c2c2e',
+  border: 'rgba(255,255,255,0.08)', accent: '#0a84ff',
+  green: '#30d158', red: '#ff453a', amber: '#ffd60a', purple: '#bf5af2',
+  text: '#fff', text2: 'rgba(255,255,255,0.55)', text3: 'rgba(255,255,255,0.3)',
 };
-
-function Badge({ color, bg, border, children }: { color: string; bg: string; border: string; children: React.ReactNode }) {
-  return (
-    <span style={{
-      fontSize: '11px', fontWeight: 600, padding: '2px 8px',
-      borderRadius: '20px', background: bg, color, border: `1px solid ${border}`,
-      display: 'inline-flex', alignItems: 'center', gap: '4px',
-    }}>
-      {children}
-    </span>
-  );
-}
 
 type Filter = 'all' | 'incoming' | 'outgoing' | 'ai';
 
@@ -46,26 +27,30 @@ export default function InboxPage() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
+  const [backendUrl, setBackendUrl] = useState('');
 
-  const apiBase = (() => {
+  const getApiBase = () => {
     const raw = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-    return raw.endsWith('/api/v1') ? raw : raw.replace(/\/?$/, '') + '/api/v1';
-  })();
+    return raw.replace(/\/api\/v1\/?$/, '') + '/api/v1';
+  };
 
   const fetchMessages = useCallback(async () => {
+    const apiBase = getApiBase();
     try {
       setLoading(true);
       setError('');
-      const res = await fetch(`${apiBase}/messages?limit=100`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const res = await fetch(`${apiBase}/messages?limit=200`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       const data = await res.json();
       setMessages(data.items || []);
+      setBackendUrl(apiBase);
     } catch (e: any) {
-      setError(e.message || 'Failed to fetch messages');
+      setError(e.message || 'Failed to fetch');
+      setBackendUrl(apiBase);
     } finally {
       setLoading(false);
     }
-  }, [apiBase]);
+  }, []);
 
   useEffect(() => { fetchMessages(); }, [fetchMessages]);
 
@@ -77,118 +62,137 @@ export default function InboxPage() {
     return true;
   });
 
-  const filterBtns: { key: Filter; label: string }[] = [
-    { key: 'all', label: 'All' },
-    { key: 'incoming', label: '← Incoming' },
-    { key: 'outgoing', label: '→ Outgoing' },
-    { key: 'ai', label: '🤖 AI Only' },
+  const tabs: { key: Filter; label: string; count?: number }[] = [
+    { key: 'all', label: 'All', count: messages.length },
+    { key: 'incoming', label: '← In', count: messages.filter(m => m.direction === 'incoming').length },
+    { key: 'outgoing', label: '→ Out', count: messages.filter(m => m.direction === 'outgoing').length },
+    { key: 'ai', label: '🤖 AI', count: messages.filter(m => m.is_ai_generated).length },
   ];
 
   return (
     <DashboardLayout>
-      <div style={{ padding: '28px 24px', maxWidth: '900px', margin: '0 auto', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
+      <div style={{ padding: '24px 20px', maxWidth: '860px', color: ios.text }}>
 
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '24px' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '20px' }}>
           <div>
-            <h1 style={{ fontSize: '22px', fontWeight: 700, color: '#f1f5f9', margin: 0 }}>Message Inbox</h1>
-            <p style={{ color: C.slate400, fontSize: '13px', margin: '4px 0 0' }}>
-              {messages.length} total messages
-            </p>
+            <h1 style={{ fontSize: '24px', fontWeight: 700 }}>Message Inbox</h1>
+            <p style={{ color: ios.text2, fontSize: '13px', marginTop: '4px' }}>{messages.length} total messages</p>
           </div>
-          <button
-            onClick={fetchMessages}
-            disabled={loading}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '6px',
-              padding: '8px 14px', borderRadius: '10px',
-              background: C.slate800, border: '1px solid #334155',
-              color: C.slate400, fontSize: '13px', cursor: 'pointer',
-              opacity: loading ? 0.6 : 1,
-            }}
-          >
+          <button onClick={fetchMessages} disabled={loading} style={{
+            padding: '9px 16px', borderRadius: '12px',
+            background: ios.surface, border: `1px solid ${ios.border}`,
+            color: ios.text2, fontSize: '13px', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', gap: '6px',
+            opacity: loading ? 0.5 : 1,
+          }}>
             {loading ? '⏳' : '🔄'} Refresh
           </button>
         </div>
 
-        {/* Search + Filter */}
-        <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', flexWrap: 'wrap' }}>
+        {/* Search */}
+        <div style={{ position: 'relative', marginBottom: '14px' }}>
+          <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: ios.text3, fontSize: '14px' }}>🔍</span>
           <input
             placeholder="Search messages…"
             value={search}
             onChange={e => setSearch(e.target.value)}
             style={{
-              flex: 1, minWidth: '200px',
-              background: C.slate800, border: '1px solid #334155',
-              borderRadius: '10px', padding: '9px 14px',
-              color: '#e2e8f0', fontSize: '13px', outline: 'none',
+              width: '100%', padding: '10px 12px 10px 34px',
+              background: ios.surface2, border: `1px solid ${ios.border}`,
+              borderRadius: '12px', color: ios.text, fontSize: '14px',
             }}
           />
-          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-            {filterBtns.map(f => (
-              <button
-                key={f.key}
-                onClick={() => setFilter(f.key)}
-                style={{
-                  padding: '8px 12px', borderRadius: '10px', fontSize: '12px',
-                  fontWeight: 500, cursor: 'pointer', border: '1px solid',
-                  background: filter === f.key ? C.blue : C.slate800,
-                  borderColor: filter === f.key ? C.blue : '#334155',
-                  color: filter === f.key ? '#fff' : C.slate400,
-                }}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
+        </div>
+
+        {/* Filter tabs */}
+        <div style={{ display: 'flex', gap: '6px', marginBottom: '20px', flexWrap: 'wrap' }}>
+          {tabs.map(t => (
+            <button key={t.key} onClick={() => setFilter(t.key)} style={{
+              padding: '7px 14px', borderRadius: '20px', fontSize: '13px',
+              fontWeight: 500, cursor: 'pointer', border: '1px solid',
+              background: filter === t.key ? ios.accent : ios.surface,
+              borderColor: filter === t.key ? ios.accent : ios.border,
+              color: filter === t.key ? '#fff' : ios.text2,
+              display: 'flex', alignItems: 'center', gap: '5px',
+            }}>
+              {t.label}
+              <span style={{
+                fontSize: '11px', padding: '1px 5px', borderRadius: '8px',
+                background: filter === t.key ? 'rgba(255,255,255,0.2)' : ios.surface2,
+              }}>{t.count}</span>
+            </button>
+          ))}
         </div>
 
         {/* Error */}
         {error && (
           <div style={{
-            marginBottom: '16px', padding: '14px 16px',
-            background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)',
-            borderRadius: '12px', color: '#fca5a5', fontSize: '13px',
+            marginBottom: '16px', padding: '14px 16px', borderRadius: '14px',
+            background: 'rgba(255,69,58,0.1)', border: '1px solid rgba(255,69,58,0.3)',
+            color: '#ff6b6b', fontSize: '13px',
           }}>
-            ⚠️ {error} — make sure the backend is running and CORS is configured.
+            <div style={{ fontWeight: 600, marginBottom: '4px' }}>⚠️ Cannot reach backend</div>
+            <div style={{ color: ios.text2, fontSize: '12px' }}>
+              Tried: <code style={{ color: ios.amber }}>{backendUrl}/messages</code>
+              <br />Make sure <strong>CORS_ORIGINS</strong> in Railway includes <code>https://nika-white1.vercel.app</code>
+            </div>
           </div>
         )}
 
-        {/* Messages list */}
+        {/* Messages */}
         {loading && !messages.length ? (
-          <div style={{ textAlign: 'center', padding: '60px', color: C.slate500 }}>⏳ Loading messages…</div>
+          <div style={{ textAlign: 'center', padding: '80px 0', color: ios.text3 }}>
+            <div style={{ fontSize: '32px', marginBottom: '12px' }}>⏳</div>
+            Loading messages…
+          </div>
         ) : filtered.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '60px' }}>
-            <div style={{ fontSize: '40px', marginBottom: '12px' }}>💬</div>
-            <div style={{ color: C.slate400, fontSize: '15px' }}>No messages found</div>
-            <div style={{ color: C.slate500, fontSize: '12px', marginTop: '6px' }}>
-              Messages appear here once your Telegram bot receives them
+          <div style={{ textAlign: 'center', padding: '80px 0' }}>
+            <div style={{ fontSize: '44px', marginBottom: '14px' }}>💬</div>
+            <div style={{ fontSize: '16px', fontWeight: 600, marginBottom: '6px' }}>
+              {messages.length === 0 ? 'No messages yet' : 'No messages match your filter'}
+            </div>
+            <div style={{ fontSize: '13px', color: ios.text3, maxWidth: '280px', margin: '0 auto' }}>
+              {messages.length === 0
+                ? 'Send a message to your Telegram account (Nika White) to see it appear here'
+                : 'Try adjusting your search or filter'}
             </div>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {filtered.map(msg => (
               <div key={msg.id} style={{
-                background: C.slate900, border: '1px solid #1e293b',
-                borderRadius: '12px', padding: '14px 16px',
-                borderLeft: `3px solid ${msg.direction === 'incoming' ? C.blue : C.green}`,
+                background: ios.surface, borderRadius: '14px', padding: '14px 16px',
+                border: `1px solid ${ios.border}`,
+                borderLeft: `3px solid ${msg.direction === 'incoming' ? ios.accent : ios.green}`,
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
-                  {msg.direction === 'incoming' ? (
-                    <Badge color="#93c5fd" bg="rgba(59,130,246,0.15)" border="rgba(59,130,246,0.3)">← In</Badge>
-                  ) : (
-                    <Badge color="#6ee7b7" bg="rgba(16,185,129,0.15)" border="rgba(16,185,129,0.3)">→ Out</Badge>
-                  )}
+                  <span style={{
+                    fontSize: '11px', fontWeight: 600, padding: '2px 8px',
+                    borderRadius: '20px',
+                    background: msg.direction === 'incoming' ? 'rgba(10,132,255,0.15)' : 'rgba(48,209,88,0.15)',
+                    color: msg.direction === 'incoming' ? ios.accent : ios.green,
+                    border: `1px solid ${msg.direction === 'incoming' ? 'rgba(10,132,255,0.3)' : 'rgba(48,209,88,0.3)'}`,
+                  }}>
+                    {msg.direction === 'incoming' ? '← Incoming' : '→ Outgoing'}
+                  </span>
                   {msg.is_ai_generated && (
-                    <Badge color="#c4b5fd" bg="rgba(139,92,246,0.15)" border="rgba(139,92,246,0.3)">🤖 AI</Badge>
+                    <span style={{
+                      fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '20px',
+                      background: 'rgba(191,90,242,0.15)', color: ios.purple,
+                      border: '1px solid rgba(191,90,242,0.3)',
+                    }}>🤖 AI Generated</span>
                   )}
-                  <span style={{ marginLeft: 'auto', fontSize: '11px', color: C.slate500 }}>
+                  <span style={{ marginLeft: 'auto', fontSize: '11px', color: ios.text3 }}>
                     {new Date(msg.created_at).toLocaleString()}
                   </span>
                 </div>
-                <p style={{ margin: 0, color: '#e2e8f0', fontSize: '13px', lineHeight: '1.6' }}>
-                  {msg.text || <span style={{ color: C.slate500, fontStyle: 'italic' }}>[media message]</span>}
+                <p style={{ fontSize: '14px', color: ios.text, lineHeight: 1.6, wordBreak: 'break-word' }}>
+                  {msg.text || <em style={{ color: ios.text3 }}>[media or non-text message]</em>}
                 </p>
+                <div style={{ fontSize: '11px', color: ios.text3, marginTop: '6px' }}>
+                  User #{msg.user_id?.slice(0, 8)}
+                </div>
               </div>
             ))}
           </div>
