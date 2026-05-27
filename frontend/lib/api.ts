@@ -1,6 +1,7 @@
 import { UserResponse, MessageResponse, LeadResponse } from '@/types/api';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+const _rawUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE_URL = _rawUrl.endsWith('/api/v1') ? _rawUrl : `${_rawUrl}/api/v1`;
 const API_TIMEOUT = parseInt(process.env.NEXT_PUBLIC_API_TIMEOUT || '30000');
 
 // ==================== HTTP CLIENT ====================
