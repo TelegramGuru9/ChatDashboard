@@ -81,42 +81,26 @@ async def list_messages(
 async def list_conversations(
     skip: int = Query(0, ge=0),
     limit: int = Query(500, ge=1, le=2000),
+    folder: Optional[str] = Query(None, description="Filter by Telegram folder name"),
     session: AsyncSession = Depends(get_db),
 ):
     """
     Return one row per user — latest message + user info.
     Uses LEFT JOIN so users with NO messages still appear.
+    Optional ?folder=Käufer filters by Telegram custom folder.
     """
     try:
-        from sqlalchemy import outerjoin, case, literal
-
-        # Subquery: latest message timestamp per user
-        subq = (
-            select(
-                Message.user_id,
-                func.max(Message.created_at).label("latest_at"),
-            )
-            .group_by(Message.user_id)
-            .subquery()
-        )
-
-        # Latest message row per user
-        msg_subq = (
-            select(Message)
-            .where(
-                and_(
-                    Message.created_at == subq.c.latest_at,
-                    Message.user_id == subq.c.user_id,
-                )
-            )
-            .correlate(subq)
-            .limit(1)
-            .subquery()
-        )
-
-        # Use raw query for LEFT JOIN to handle users with no messages
         from sqlalchemy.sql import text as sql_text
-        raw = await session.execute(sql_text("""
+
+        folder_clause = ""
+        params: dict = {"limit": limit, "skip": skip}
+        if folder:
+            # JSONB array contains check: metadata->'tg_folders' @> '["FolderName"]'
+            folder_clause = "AND u.metadata->'tg_folders' @> :folder_json::jsonb"
+            import json
+            params["folder_json"] = json.dumps([folder])
+
+        raw = await session.execute(sql_text(f"""
             SELECT
                 u.id            AS user_id,
                 u.user_id       AS telegram_id,
@@ -126,6 +110,7 @@ async def list_conversations(
                 u.lead_score,
                 u.total_messages,
                 u.ai_enabled,
+                u.metadata      AS extra_data,
                 u.created_at    AS user_created_at,
                 m.text          AS last_message,
                 m.direction     AS last_direction,
@@ -138,16 +123,18 @@ async def list_conversations(
                 FROM messages
                 ORDER BY user_id, created_at DESC
             ) m ON m.user_id = u.id
-            WHERE u.is_bot = false OR u.is_bot IS NULL
+            WHERE (u.is_bot = false OR u.is_bot IS NULL)
+            {folder_clause}
             ORDER BY COALESCE(m.created_at, u.created_at) DESC
             LIMIT :limit OFFSET :skip
-        """), {"limit": limit, "skip": skip})
+        """), params)
 
         rows = raw.fetchall()
 
         items = []
         for row in rows:
             name = f"{row.first_name or ''} {row.last_name or ''}".strip() or f"User {row.telegram_id}"
+            ed = row.extra_data or {}
             items.append({
                 "user_id": str(row.user_id),
                 "telegram_id": row.telegram_id,
@@ -159,14 +146,20 @@ async def list_conversations(
                 "last_message_direction": row.last_direction or "incoming",
                 "last_message_at": row.last_message_at.isoformat() if row.last_message_at else None,
                 "ai_enabled": row.ai_enabled,
+                "tg_folders": ed.get("tg_folders", []) if isinstance(ed, dict) else [],
+                "lead_label": ed.get("lead_label") if isinstance(ed, dict) else None,
             })
 
-        # Total count of non-bot users
-        count_res = await session.execute(
-            select(func.count(User.id)).where(
-                (User.is_bot == False) | (User.is_bot == None)
-            )
-        )
+        # Total count
+        count_params: dict = {}
+        count_clause = ""
+        if folder:
+            count_clause = "AND u.metadata->'tg_folders' @> :folder_json::jsonb"
+            count_params["folder_json"] = params["folder_json"]
+        count_res = await session.execute(sql_text(f"""
+            SELECT COUNT(*) FROM users u
+            WHERE (u.is_bot = false OR u.is_bot IS NULL) {count_clause}
+        """), count_params)
         total = count_res.scalar() or 0
 
         return {"items": items, "total": total}
@@ -516,10 +509,11 @@ telegram_router = APIRouter(prefix="/telegram", tags=["Telegram"])
 @telegram_router.post("/sync")
 async def sync_telegram_chats(
     limit_per_chat: int = Query(150, ge=1, le=1000),
-    max_dialogs: int = Query(10000, ge=1, le=100000),
+    max_dialogs: int = Query(0, ge=0, le=100000),
 ):
     """
-    Pull existing Telegram chat history into the database.
+    Pull ALL Telegram chat history into the database — main AND archived folders.
+    max_dialogs=0 means unlimited (recommended).
     Safe to call multiple times — skips already-stored messages.
     """
     from app.services.telegram.client import telegram_client
@@ -527,16 +521,46 @@ async def sync_telegram_chats(
     if not telegram_client.is_connected:
         raise HTTPException(
             status_code=503,
-            detail="Telegram session is not connected. Re-run authentication (see /api/v1/telegram/auth-instructions)."
+            detail="Telegram not connected."
         )
 
     try:
         import main as app_main
         u, m, e = await app_main._do_sync(telegram_client.client, limit_per_chat, max_dialogs)
+        # Also sync folders in background
+        asyncio.create_task(app_main._sync_telegram_folders(telegram_client.client))
         return {"status": "ok", "synced_users": u, "synced_messages": m, "errors": e}
     except Exception as ex:
         logger.error(f"Sync failed: {ex}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(ex))
+
+
+@telegram_router.post("/sync-folders")
+async def sync_folders():
+    """Fetch Telegram custom folders (Käufer, Warm, etc.) and tag users in DB."""
+    from app.services.telegram.client import telegram_client
+    if not telegram_client.is_connected:
+        raise HTTPException(status_code=503, detail="Telegram not connected.")
+    try:
+        import main as app_main
+        folders = await app_main._sync_telegram_folders(telegram_client.client)
+        return {"status": "ok", "folders": folders}
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=str(ex))
+
+
+@telegram_router.get("/folders")
+async def get_folders():
+    """Return cached list of Telegram folder names."""
+    from sqlalchemy import select
+    from app.db.models import Config
+    try:
+        async with db_manager.get_session() as session:
+            res = await session.execute(select(Config).where(Config.key == "tg_folders"))
+            cfg = res.scalars().first()
+            return {"folders": cfg.value if cfg else []}
+    except Exception:
+        return {"folders": []}
 
 
 @telegram_router.post("/reconnect")

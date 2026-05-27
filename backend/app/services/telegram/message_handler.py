@@ -36,7 +36,8 @@ class MessageProcessor:
             telegram_message: TelegramMessage = event_data["message"]
             sender_id: int = event_data["sender_id"]
 
-            if telegram_message.from_id is None:
+            # In private (1-on-1) chats, from_id is None — use sender_id instead
+            if not sender_id:
                 return False
 
             text = telegram_message.message or ""

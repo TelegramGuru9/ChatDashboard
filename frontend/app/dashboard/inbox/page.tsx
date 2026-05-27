@@ -21,6 +21,8 @@ interface Conversation {
   last_message_direction: string;
   last_message_at?: string;
   ai_enabled?: boolean;
+  tg_folders?: string[];
+  lead_label?: string;
 }
 
 interface Message {
@@ -42,6 +44,8 @@ interface Insights {
   handoff_status?: string;
   human_notes?: string;
   ai_enabled?: boolean;
+  tg_folders?: string[];
+  lead_label?: string;
   message_count?: number;
   incoming_count?: number;
   outgoing_count?: number;
@@ -88,6 +92,8 @@ export default function InboxPage() {
   const [insightsSaving, setInsightsSaving]   = useState(false);
   const [insightsTab, setInsightsTab] = useState<'insights'|'memory'>('insights');
   const [panelOpen, setPanelOpen]     = useState(true);
+  const [folders, setFolders]         = useState<string[]>([]);
+  const [activeFolder, setActiveFolder] = useState<string>('All');
   const [loadingConvos, setLoadingConvos] = useState(true);
   const [loadingMsgs, setLoadingMsgs]    = useState(false);
   const [syncing, setSyncing]         = useState(false);
@@ -113,10 +119,18 @@ export default function InboxPage() {
     } catch { setTgConnected(false); return false; }
   }, [api]);
 
-  const loadConvos = useCallback(async () => {
+  const loadFolders = useCallback(async () => {
+    try {
+      const d = await fetch(`${api}/telegram/folders`).then(r => r.json());
+      if (Array.isArray(d.folders) && d.folders.length > 0) setFolders(d.folders);
+    } catch { /* silent */ }
+  }, [api]);
+
+  const loadConvos = useCallback(async (folder?: string) => {
     try {
       setLoadingConvos(true);
-      const data = await fetch(`${api}/messages/conversations?limit=500`).then(r => r.json());
+      const folderParam = (folder && folder !== 'All') ? `&folder=${encodeURIComponent(folder)}` : '';
+      const data = await fetch(`${api}/messages/conversations?limit=500${folderParam}`).then(r => r.json());
       setConvos(data.items || []);
       return (data.items || []).length as number;
     } catch { setConvos([]); return 0; }
@@ -172,19 +186,22 @@ export default function InboxPage() {
   };
 
   const sync = useCallback(async (silent = false) => {
-    if (!silent) { setSyncing(true); setSyncStatus('Syncing all chats…'); }
+    if (!silent) { setSyncing(true); setSyncStatus('Syncing all chats (main + archived)…'); }
     try {
-      const res = await fetch(`${api}/telegram/sync?limit_per_chat=150&max_dialogs=500`, { method:'POST' });
+      // limit=0 → unlimited, syncs main + archived folders
+      const res = await fetch(`${api}/telegram/sync?limit_per_chat=150&max_dialogs=0`, { method:'POST' });
       const d = await res.json();
       if (res.ok) {
         if (!silent) setSyncStatus(`✓ Synced ${d.synced_messages} messages from ${d.synced_users} new chats`);
-        await loadConvos();
+        // Also fetch folder tags in background
+        fetch(`${api}/telegram/sync-folders`, { method:'POST' }).then(() => loadFolders()).catch(() => {});
+        await loadConvos(activeFolder !== 'All' ? activeFolder : undefined);
       } else {
         if (!silent) setSyncStatus(`⚠ ${d.detail || 'Sync failed'}`);
       }
     } catch (e: any) { if (!silent) setSyncStatus(`⚠ ${e.message}`); }
     finally { if (!silent) setSyncing(false); }
-  }, [api, loadConvos]);
+  }, [api, loadConvos, loadFolders, activeFolder]);
 
   const reconnect = async () => {
     setReconnecting(true); setSyncStatus('Attempting reconnect…');
@@ -237,6 +254,7 @@ export default function InboxPage() {
   useEffect(() => {
     (async () => {
       const connected = await checkStatus();
+      loadFolders();
       const count = await loadConvos();
       if (connected && count === 0) await sync(true);
     })();
@@ -258,12 +276,14 @@ export default function InboxPage() {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [selected, loadMessages]);
 
-  const filtered = convos.filter(c =>
-    !search ||
-    c.name.toLowerCase().includes(search.toLowerCase()) ||
-    (c.username||'').toLowerCase().includes(search.toLowerCase()) ||
-    (c.last_message||'').toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = convos.filter(c => {
+    const matchesSearch = !search ||
+      c.name.toLowerCase().includes(search.toLowerCase()) ||
+      (c.username||'').toLowerCase().includes(search.toLowerCase()) ||
+      (c.last_message||'').toLowerCase().includes(search.toLowerCase());
+    const matchesFolder = activeFolder === 'All' || (c.tg_folders || []).includes(activeFolder);
+    return matchesSearch && matchesFolder;
+  });
 
   // ── Memory analysis: group messages by day and annotate ──
   const memoryGroups = (() => {
@@ -329,6 +349,20 @@ export default function InboxPage() {
             )}
             <input placeholder="Search chats…" value={search} onChange={e => setSearch(e.target.value)}
               style={{ width:'100%', boxSizing:'border-box', background:C.s2, border:'none', borderRadius:'10px', padding:'8px 12px', color:C.t1, fontSize:'14px', outline:'none' }} />
+
+            {/* Telegram folder tabs */}
+            {folders.length > 0 && (
+              <div style={{ display:'flex', gap:'5px', marginTop:'10px', flexWrap:'wrap' }}>
+                {['All', ...folders].map(f => (
+                  <button key={f} onClick={() => { setActiveFolder(f); loadConvos(f !== 'All' ? f : undefined); }} style={{
+                    padding:'4px 11px', borderRadius:'16px', fontSize:'11px', fontWeight:600, cursor:'pointer', border:'1px solid',
+                    background: activeFolder === f ? C.blue : 'transparent',
+                    borderColor: activeFolder === f ? C.blue : C.sep,
+                    color: activeFolder === f ? '#fff' : C.t3, transition:'all 0.15s',
+                  }}>{f}</button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div style={{ flex:1, overflowY:'auto' }}>
@@ -372,12 +406,17 @@ export default function InboxPage() {
                       {c.last_message_direction === 'outgoing' && <span style={{ color:C.blue }}>↗ </span>}
                       {c.last_message || '—'}
                     </div>
-                    <div style={{ display:'flex', gap:'5px', marginTop:'3px', alignItems:'center' }}>
+                    <div style={{ display:'flex', gap:'5px', marginTop:'3px', alignItems:'center', flexWrap:'wrap' }}>
                       <div style={{ width:'28px', height:'3px', borderRadius:'2px', background:C.s3 }}>
                         <div style={{ height:'100%', background:scoreColor(c.lead_score), width:`${c.lead_score}%` }} />
                       </div>
                       <span style={{ fontSize:'10px', color:scoreColor(c.lead_score) }}>{Math.round(c.lead_score)}</span>
                       {c.ai_enabled && <span style={{ fontSize:'10px', color:C.purple, marginLeft:'2px' }}>AI</span>}
+                      {c.lead_label && (() => {
+                        const lc: Record<string,string> = { HOT:C.orange, BUYER:C.green, TIMEWASTER:C.red, COLD:C.teal, CURIOUS:C.blue, CUSTOM:C.purple };
+                        const col = lc[c.lead_label] ?? C.t3;
+                        return <span style={{ fontSize:'9px', padding:'1px 5px', borderRadius:'8px', background:`${col}25`, color:col, fontWeight:600, marginLeft:'2px' }}>{c.lead_label}</span>;
+                      })()}
                     </div>
                   </div>
                 </div>
