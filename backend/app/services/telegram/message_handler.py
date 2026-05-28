@@ -8,6 +8,7 @@ import asyncio
 import re
 import random
 import hashlib
+import base64
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from uuid import UUID
@@ -316,6 +317,78 @@ class MessageProcessor:
             logger.error(f"Error storing message: {e}")
             return None
 
+    async def _send_free_teaser(self, user_id: UUID, telegram_id: int) -> bool:
+        """
+        Pick a random 'Free' media item and send it via Telegram as a teaser.
+        Respects the no_repeat setting — tracks sent_media in user extra_data.
+        Returns True if a teaser was sent.
+        """
+        try:
+            async with db_manager.get_session() as session:
+                # Load media library
+                media_res = await session.execute(select(Config).where(Config.key == "media_library"))
+                media_cfg = media_res.scalars().first()
+                all_items = media_cfg.value if media_cfg and isinstance(media_cfg.value, list) else []
+
+                # Load settings
+                set_res = await session.execute(select(Config).where(Config.key == "media_settings"))
+                set_cfg = set_res.scalars().first()
+                media_settings = set_cfg.value if set_cfg and isinstance(set_cfg.value, dict) else {}
+                no_repeat = media_settings.get("no_repeat", True)
+
+                # Filter Free items that have a dataUrl
+                free_items = [i for i in all_items if i.get("tag") == "Free" and i.get("dataUrl")]
+                if not free_items:
+                    return False
+
+                # Respect no-repeat
+                if no_repeat:
+                    user_res = await session.execute(select(User).where(User.id == user_id))
+                    user = user_res.scalars().first()
+                    sent_ids = (user.extra_data or {}).get("sent_media", []) if user else []
+                    unsent = [i for i in free_items if i["id"] not in sent_ids]
+                    candidates = unsent if unsent else free_items  # reset cycle if all sent
+                else:
+                    candidates = free_items
+
+            chosen = random.choice(candidates)
+            data_url: str = chosen["dataUrl"]
+            if "," in data_url:
+                _header, b64 = data_url.split(",", 1)
+            else:
+                b64 = data_url
+
+            file_bytes = base64.b64decode(b64)
+            file_name  = chosen.get("name", "preview.jpg")
+
+            from app.services.telegram.client import telegram_client
+            await telegram_client.client.send_file(
+                telegram_id,
+                file=file_bytes,
+                attributes=[],
+                force_document=False,
+            )
+            logger.info(f"[teaser] sent '{file_name}' to tg_id={telegram_id}")
+
+            # Track sent_media on user
+            if no_repeat:
+                async with db_manager.get_session() as session:
+                    user_res = await session.execute(select(User).where(User.id == user_id))
+                    user = user_res.scalars().first()
+                    if user:
+                        extra = dict(user.extra_data or {})
+                        sent = list(extra.get("sent_media", []))
+                        if chosen["id"] not in sent:
+                            sent.append(chosen["id"])
+                        extra["sent_media"] = sent
+                        user.extra_data = extra
+                        await session.commit()
+            return True
+
+        except Exception as e:
+            logger.warning(f"[teaser] failed to send free teaser: {e}")
+            return False
+
     async def _generate_and_send_ai_response(
         self,
         user_id: UUID,
@@ -327,6 +400,18 @@ class MessageProcessor:
             if not settings.ANTHROPIC_API_KEY:
                 logger.warning("ANTHROPIC_API_KEY not set — AI autopilot disabled.")
                 return
+
+            # ── Global autopilot switch ─────────────────────────────────────
+            try:
+                async with db_manager.get_session() as session:
+                    g_res = await session.execute(select(Config).where(Config.key == "autopilot_global"))
+                    g_cfg = g_res.scalars().first()
+                    if g_cfg and isinstance(g_cfg.value, dict):
+                        if g_cfg.value.get("enabled") is False:
+                            logger.debug("Global autopilot disabled — skipping AI response")
+                            return
+            except Exception:
+                pass  # If we can't read the config, proceed anyway
 
             from app.services.telegram.client import telegram_client
 
@@ -369,6 +454,13 @@ class MessageProcessor:
                                 logger.info(f"[auto-reply] tagged user {user_id} as WARM")
 
                         await session.commit()
+
+                    # Send a free teaser BEFORE the package menu (if any exist)
+                    if rule_action == "send_package_menu":
+                        teaser_sent = await self._send_free_teaser(user_id, telegram_id)
+                        if teaser_sent:
+                            # Small pause between teaser and package list
+                            await asyncio.sleep(1.5)
                     try:
                         import main as _main
                         _main._broadcast_new_message(str(user_id), {

@@ -886,6 +886,26 @@ async def enable_ai_for_all(session: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@ai_router.post("/disable-all")
+async def disable_ai_for_all(session: AsyncSession = Depends(get_db)):
+    """Set ai_enabled=False for every non-bot user."""
+    try:
+        from sqlalchemy import update as sa_update
+        result = await session.execute(
+            sa_update(User)
+            .where((User.is_bot == False) | (User.is_bot == None))
+            .values(ai_enabled=False)
+            .returning(User.id)
+        )
+        count = len(result.fetchall())
+        await session.commit()
+        logger.info(f"Disabled AI for {count} users")
+        return {"status": "ok", "disabled_count": count}
+    except Exception as e:
+        logger.error(f"Error disabling AI for all: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @ai_router.get("/status")
 async def ai_status():
     """
