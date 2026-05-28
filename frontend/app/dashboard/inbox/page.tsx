@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 
@@ -90,7 +90,7 @@ const apiBase = () => {
   return raw.replace(/\/api\/v1\/?$/, '') + '/api/v1';
 };
 
-export default function InboxPage() {
+function InboxContent() {
   const searchParams = useSearchParams();
   const autoSelectUserId = searchParams?.get('user') ?? null;
   const [tgConnected, setTgConnected] = useState<boolean | null>(null);
@@ -976,5 +976,13 @@ export default function InboxPage() {
         .filter-scroll::-webkit-scrollbar-thumb { background:rgba(84,84,88,0.3); border-radius:2px; }
       `}</style>
     </DashboardLayout>
+  );
+}
+
+export default function InboxPage() {
+  return (
+    <Suspense fallback={null}>
+      <InboxContent />
+    </Suspense>
   );
 }
