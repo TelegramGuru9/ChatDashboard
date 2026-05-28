@@ -6,12 +6,29 @@ import DashboardLayout from '@/components/dashboard/DashboardLayout';
 const C = {
   bg:'#0a0a0a', s1:'#111113', s2:'#1c1c1e', s3:'#2c2c2e', s4:'#3a3a3c',
   sep:'rgba(255,255,255,0.07)', t1:'#fff', t2:'rgba(235,235,245,0.65)', t3:'rgba(235,235,245,0.35)',
-  blue:'#0a84ff', green:'#30d158', red:'#ff453a', orange:'#ff9f0a', purple:'#bf5af2',
+  blue:'#0a84ff', green:'#30d158', red:'#ff453a', orange:'#ff9f0a', purple:'#bf5af2', teal:'#5ac8fa',
 };
 
-interface PackageTranslation {
-  welcome_message?: string;
-  description?: string;
+// Matches MediaItem from media page
+interface MediaItem {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  dataUrl?: string;
+  tag: string;
+  description: string;
+  price: string;
+  payment_link: string;
+  message_to_user: string;
+  addedAt: string;
+}
+
+interface PackageFile {
+  media_id: string;
+  name: string;
+  type: string;
+  duration?: string; // e.g. "2:34"
 }
 
 interface Package {
@@ -20,31 +37,35 @@ interface Package {
   tagline: string;
   price: string;
   currency: string;
-  period: string;
+  payment_link: string;
+  banner_image_id: string;   // media item ID to use as banner
+  media_files: PackageFile[]; // included files
   description: string;
-  features: string;
+  package_text: string;       // full pitch text for the bot
   keywords: string;
-  welcome_message: string;
   send_after_messages: number;
   active: boolean;
-  translations?: Record<string, PackageTranslation>;
 }
 
 const BLANK: Package = {
-  id: '', name: '', tagline: '', price: '', currency: 'USD', period: 'one-time',
-  description: '', features: '', keywords: '', welcome_message: '',
+  id: '', name: '', tagline: '', price: '', currency: '€',
+  payment_link: '', banner_image_id: '',
+  media_files: [], description: '', package_text: '', keywords: '',
   send_after_messages: 0, active: true,
-  translations: { de: {}, en: {}, uk: {}, ru: {} },
 };
 
-const PERIODS = ['one-time', 'monthly', 'yearly'];
-
-const LANGS = [
-  { code: 'de', flag: '🇩🇪', label: 'German' },
-  { code: 'en', flag: '🇬🇧', label: 'English' },
-  { code: 'uk', flag: '🇺🇦', label: 'Ukrainian' },
-  { code: 'ru', flag: '🇷🇺', label: 'Russian' },
-];
+function fmt(bytes: number) {
+  if (bytes > 1e6) return `${(bytes / 1e6).toFixed(1)} MB`;
+  if (bytes > 1e3) return `${(bytes / 1e3).toFixed(0)} KB`;
+  return `${bytes} B`;
+}
+function iconFor(type: string) {
+  if (type.startsWith('image')) return '🖼️';
+  if (type.startsWith('video')) return '🎬';
+  if (type.includes('pdf'))    return '📄';
+  if (type.startsWith('audio')) return '🎵';
+  return '📎';
+}
 
 const getApi = () => {
   const raw = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -52,45 +73,60 @@ const getApi = () => {
 };
 
 export default function PackagesPage() {
-  const [packages, setPackages] = useState<Package[]>([]);
-  const [editing, setEditing] = useState<Package | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [importError, setImportError] = useState('');
-  const [transLang, setTransLang] = useState('de');
+  const [packages,    setPackages]    = useState<Package[]>([]);
+  const [mediaLib,    setMediaLib]    = useState<MediaItem[]>([]);
+  const [editing,     setEditing]     = useState<Package | null>(null);
+  const [saving,      setSaving]      = useState(false);
+  const [status,      setStatus]      = useState('');
+  const [loading,     setLoading]     = useState(true);
+  const [mediaPicker, setMediaPicker] = useState<'banner'|'files'|null>(null);
 
+  const api = getApi();
+  const toast = (msg: string) => { setStatus(msg); setTimeout(() => setStatus(''), 2800); };
+
+  // ── Load ──────────────────────────────────────────────────────────────────
   const load = useCallback(async () => {
-    const api = getApi();
     try {
-      const res = await fetch(`${api}/config/packages`);
-      const d = await res.json();
-      const val = d.value;
-      setPackages(Array.isArray(val) ? val : (Array.isArray(val?.packages) ? val.packages : []));
+      const [pkgRes, libRes] = await Promise.all([
+        fetch(`${api}/config/packages`),
+        fetch(`${api}/config/media_library`),
+      ]);
+      const pkgData  = await pkgRes.json();
+      const libData  = await libRes.json();
+      const val = pkgData.value;
+      // Migrate old package format to new format
+      const rawPkgs: Package[] = (Array.isArray(val) ? val : (Array.isArray(val?.packages) ? val.packages : [])).map((p: any) => ({
+        ...BLANK, ...p,
+        media_files: p.media_files || [],
+        banner_image_id: p.banner_image_id || '',
+        payment_link: p.payment_link || '',
+        package_text: p.package_text || p.welcome_message || '',
+        currency: p.currency || '€',
+      }));
+      setPackages(rawPkgs);
+      setMediaLib(Array.isArray(libData.value) ? libData.value : []);
     } catch { setPackages([]); }
     finally { setLoading(false); }
-  }, []);
+  }, [api]);
 
   const persist = async (updated: Package[]) => {
-    const api = getApi();
     setSaving(true);
     try {
-      await fetch(`${api}/config/packages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const res = await fetch(`${api}/config/packages`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify(updated),
       });
+      if (!res.ok) throw new Error(`${res.status}`);
       setPackages(updated);
-      setStatus('✓ Saved');
-      setTimeout(() => setStatus(''), 2500);
-    } catch { setStatus('⚠ Save failed'); }
+      toast('✓ Gespeichert');
+    } catch { toast('⚠ Fehler beim Speichern'); }
     finally { setSaving(false); }
   };
 
   useEffect(() => { load(); }, [load]);
 
-  const openNew = () => setEditing({ ...BLANK, id: `pkg-${Date.now()}` });
-  const openEdit = (p: Package) => setEditing({ ...p });
+  const openNew  = () => setEditing({ ...BLANK, id:`pkg-${Date.now()}` });
+  const openEdit = (p: Package) => setEditing({ ...BLANK, ...p });
 
   const confirmEdit = () => {
     if (!editing || !editing.name.trim()) return;
@@ -102,234 +138,387 @@ export default function PackagesPage() {
   };
 
   const deletePackage = (id: string) => {
-    if (!confirm('Delete this package?')) return;
+    if (!confirm('Paket löschen?')) return;
     persist(packages.filter(p => p.id !== id));
   };
 
-  const toggleActive = (id: string) => {
-    persist(packages.map(p => p.id === id ? { ...p, active: !p.active } : p));
+  const toggleActive = (id: string) => persist(packages.map(p => p.id === id ? { ...p, active: !p.active } : p));
+
+  // ── Media picker helpers ──────────────────────────────────────────────────
+  const bannerItem   = editing ? mediaLib.find(m => m.id === editing.banner_image_id) : null;
+  const pickableMeds = mediaLib.filter(m => m.type.startsWith('image') || m.type.startsWith('video'));
+
+  const addFileToPackage = (item: MediaItem) => {
+    if (!editing) return;
+    if (editing.media_files.some(f => f.media_id === item.id)) return; // already added
+    const pf: PackageFile = { media_id: item.id, name: item.name, type: item.type };
+    setEditing({ ...editing, media_files: [...editing.media_files, pf] });
   };
 
-  const handleJsonImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0]; if (!f) return;
-    setImportError('');
-    const reader = new FileReader();
-    reader.onload = ev => {
-      try {
-        const json = JSON.parse(ev.target?.result as string);
-        const incoming: Package[] = Array.isArray(json) ? json : (Array.isArray(json.packages) ? json.packages : []);
-        if (!incoming.length) { setImportError('No packages found in JSON'); return; }
-        const map = new Map(packages.map(p => [p.id, p]));
-        incoming.forEach(pkg => {
-          const existing = packages.find(p => p.id === pkg.id || p.name === pkg.name);
-          if (existing) {
-            map.set(existing.id, { ...existing, ...pkg, id: existing.id });
-          } else {
-            const newId = pkg.id || `pkg-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-            map.set(newId, { ...BLANK, ...pkg, id: newId });
-          }
-        });
-        persist(Array.from(map.values()));
-      } catch { setImportError('Invalid JSON file'); }
-    };
-    reader.readAsText(f);
-    e.target.value = '';
+  const removeFile = (mediaId: string) => {
+    if (!editing) return;
+    setEditing({ ...editing, media_files: editing.media_files.filter(f => f.media_id !== mediaId) });
   };
 
-  const exportJson = () => {
-    const blob = new Blob([JSON.stringify(packages, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = 'packages.json'; a.click();
-    URL.revokeObjectURL(url);
+  // Generate package pitch text automatically from package data
+  const generatePitchText = (pkg: Package) => {
+    const lines: string[] = [];
+    lines.push(`📦 *${pkg.name}*${pkg.tagline ? ` — ${pkg.tagline}` : ''}`);
+    if (pkg.description) lines.push(`\n${pkg.description}`);
+    if (pkg.media_files.length > 0) {
+      lines.push('\n📂 *Inhalt:*');
+      pkg.media_files.forEach(f => {
+        const typeLabel = f.type.startsWith('video') ? '🎬 Video' : f.type.startsWith('image') ? '🖼️ Bild' : '📄 Datei';
+        lines.push(`• ${typeLabel}: ${f.name}${f.duration ? ` (${f.duration})` : ''}`);
+      });
+    }
+    if (pkg.price) lines.push(`\n💰 Preis: *${pkg.price} ${pkg.currency}*`);
+    if (pkg.payment_link) lines.push(`\n🔗 Kaufen: ${pkg.payment_link}`);
+    return lines.join('\n');
   };
 
   return (
     <DashboardLayout>
-      <div style={{ padding:'28px 24px', maxWidth:'920px', color: C.t1 }}>
+      <div style={{ padding:'28px 24px', maxWidth:'960px', color: C.t1 }}>
+        {/* Header */}
         <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom:'24px', flexWrap:'wrap', gap:'12px' }}>
           <div>
-            <h1 style={{ fontSize:'26px', fontWeight:700, margin:0, letterSpacing:'-0.03em' }}>Packages</h1>
-            <p style={{ color: C.t2, fontSize:'14px', margin:'4px 0 0' }}>Creator offers the AI auto-pitches via Telegram</p>
+            <h1 style={{ fontSize:'26px', fontWeight:700, margin:0, letterSpacing:'-0.03em' }}>Pakete</h1>
+            <p style={{ color: C.t2, fontSize:'14px', margin:'4px 0 0' }}>Angebote die der Bot automatisch pitcht — inkl. Vorschau, Dateien & Kauflink</p>
           </div>
-          <div style={{ display:'flex', gap:'8px', flexWrap:'wrap' }}>
-            <label style={{ padding:'9px 14px', borderRadius:'11px', background: C.s2, border:`1px solid ${C.sep}`, color: C.t2, fontSize:'13px', fontWeight:600, cursor:'pointer' }}>
-              ⬆ Import JSON
-              <input type="file" accept=".json" style={{ display:'none' }} onChange={handleJsonImport} />
-            </label>
-            <button onClick={exportJson} style={{ padding:'9px 14px', borderRadius:'11px', background: C.s2, border:`1px solid ${C.sep}`, color: C.t2, fontSize:'13px', fontWeight:600, cursor:'pointer' }}>⬇ Export</button>
-            <button onClick={openNew} style={{ padding:'9px 18px', borderRadius:'11px', background: C.blue, border:'none', color:'#fff', fontSize:'13px', fontWeight:600, cursor:'pointer' }}>+ New Package</button>
-          </div>
+          <button onClick={openNew} style={{ padding:'10px 18px', borderRadius:'12px', background: C.blue, border:'none', color:'#fff', fontSize:'13px', fontWeight:600, cursor:'pointer' }}>
+            + Neues Paket
+          </button>
         </div>
 
-        {importError && <div style={{ padding:'8px 14px', borderRadius:'10px', marginBottom:'14px', background:'rgba(255,69,58,0.1)', color: C.red, fontSize:'13px', border:'1px solid rgba(255,69,58,0.2)' }}>⚠ {importError}</div>}
-        {status && <div style={{ padding:'8px 14px', borderRadius:'10px', marginBottom:'14px', background:'rgba(48,209,88,0.08)', color: C.green, fontSize:'13px', border:'1px solid rgba(48,209,88,0.2)' }}>{status}</div>}
+        {status && (
+          <div style={{ padding:'8px 14px', borderRadius:'10px', marginBottom:'14px', fontSize:'13px',
+            background: status.startsWith('✓') ? 'rgba(48,209,88,0.1)' : 'rgba(255,69,58,0.1)',
+            color: status.startsWith('✓') ? C.green : C.red,
+            border:`1px solid ${status.startsWith('✓') ? 'rgba(48,209,88,0.2)' : 'rgba(255,69,58,0.2)'}`,
+          }}>{status}</div>
+        )}
 
         {loading ? (
-          <div style={{ textAlign:'center', padding:'80px', color: C.t3 }}>Loading…</div>
+          <div style={{ textAlign:'center', padding:'80px', color: C.t3 }}>Laden…</div>
         ) : packages.length === 0 ? (
-          <div style={{ textAlign:'center', padding:'80px', color: C.t3 }}>
+          <div style={{ textAlign:'center', padding:'80px' }}>
             <div style={{ fontSize:'48px', marginBottom:'14px' }}>📦</div>
-            <div style={{ fontSize:'15px', fontWeight:600, color: C.t2, marginBottom:'8px' }}>No packages yet</div>
-            <div style={{ fontSize:'13px', marginBottom:'20px' }}>Create your first package — the AI will pitch it automatically based on keywords or message count.</div>
-            <button onClick={openNew} style={{ padding:'11px 24px', borderRadius:'12px', background: C.blue, border:'none', color:'#fff', fontSize:'14px', fontWeight:600, cursor:'pointer' }}>+ Create Package</button>
+            <div style={{ fontSize:'15px', fontWeight:600, color: C.t2, marginBottom:'8px' }}>Noch keine Pakete</div>
+            <div style={{ fontSize:'13px', color: C.t3, marginBottom:'20px' }}>
+              Erstelle dein erstes Paket — der Bot pitcht es automatisch sobald ein Lead in die Monetization-Phase wechselt.
+            </div>
+            <button onClick={openNew} style={{ padding:'11px 24px', borderRadius:'12px', background: C.blue, border:'none', color:'#fff', fontSize:'14px', fontWeight:600, cursor:'pointer' }}>
+              + Paket erstellen
+            </button>
           </div>
         ) : (
-          <div style={{ display:'flex', flexDirection:'column', gap:'12px' }}>
-            {packages.map(pkg => (
-              <div key={pkg.id} style={{ background: C.s1, borderRadius:'16px', border:`1px solid ${pkg.active ? C.sep : 'rgba(255,255,255,0.04)'}`, padding:'18px 20px', display:'flex', gap:'16px', alignItems:'flex-start', opacity: pkg.active ? 1 : 0.55 }}>
-                <div style={{ flexShrink:0, textAlign:'center', background: C.s2, borderRadius:'12px', padding:'10px 14px', minWidth:'80px' }}>
-                  <div style={{ fontSize:'18px', fontWeight:700, color: C.green }}>{pkg.currency} {pkg.price || '—'}</div>
-                  <div style={{ fontSize:'10px', color: C.t3, textTransform:'capitalize', marginTop:'2px' }}>{pkg.period}</div>
-                </div>
-                <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:'10px', marginBottom:'5px', flexWrap:'wrap' }}>
-                    <span style={{ fontWeight:700, fontSize:'15px' }}>{pkg.name}</span>
-                    {pkg.tagline && <span style={{ fontSize:'12px', color: C.t3 }}>{pkg.tagline}</span>}
-                    <span style={{ fontSize:'10px', padding:'2px 8px', borderRadius:'20px', background: pkg.active ? 'rgba(48,209,88,0.12)' : 'rgba(255,255,255,0.06)', color: pkg.active ? C.green : C.t3, border:`1px solid ${pkg.active ? 'rgba(48,209,88,0.25)' : C.sep}` }}>
-                      {pkg.active ? 'Active' : 'Paused'}
-                    </span>
+          <div style={{ display:'flex', flexDirection:'column', gap:'14px' }}>
+            {packages.map(pkg => {
+              const banner = mediaLib.find(m => m.id === pkg.banner_image_id);
+              return (
+                <div key={pkg.id} style={{
+                  background: C.s1, borderRadius:'18px', border:`1px solid ${pkg.active ? C.sep : 'rgba(255,255,255,0.04)'}`,
+                  overflow:'hidden', opacity: pkg.active ? 1 : 0.55,
+                }}>
+                  <div style={{ display:'flex', gap:0 }}>
+                    {/* Banner preview */}
+                    <div style={{ width:'140px', flexShrink:0, background: C.s2, minHeight:'120px', display:'flex', alignItems:'center', justifyContent:'center', position:'relative' }}>
+                      {banner?.dataUrl && banner.type.startsWith('image') ? (
+                        <img src={banner.dataUrl} alt="banner" style={{ width:'100%', height:'100%', objectFit:'cover', position:'absolute', inset:0 }} />
+                      ) : banner?.dataUrl && banner.type.startsWith('video') ? (
+                        <video src={banner.dataUrl} muted style={{ width:'100%', height:'100%', objectFit:'cover', position:'absolute', inset:0 }} />
+                      ) : (
+                        <span style={{ fontSize:'36px' }}>📦</span>
+                      )}
+                    </div>
+
+                    {/* Content */}
+                    <div style={{ flex:1, padding:'16px 18px' }}>
+                      <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:'10px' }}>
+                        <div>
+                          <div style={{ display:'flex', alignItems:'center', gap:'8px', flexWrap:'wrap', marginBottom:'4px' }}>
+                            <span style={{ fontWeight:700, fontSize:'16px' }}>{pkg.name}</span>
+                            {pkg.tagline && <span style={{ fontSize:'12px', color: C.t3 }}>{pkg.tagline}</span>}
+                            <span style={{ fontSize:'10px', padding:'2px 8px', borderRadius:'20px',
+                              background: pkg.active ? 'rgba(48,209,88,0.12)' : 'rgba(255,255,255,0.06)',
+                              color: pkg.active ? C.green : C.t3, border:`1px solid ${pkg.active ? 'rgba(48,209,88,0.25)' : C.sep}`,
+                            }}>
+                              {pkg.active ? 'Aktiv' : 'Pausiert'}
+                            </span>
+                          </div>
+                          {pkg.description && <div style={{ fontSize:'13px', color: C.t2, marginBottom:'8px' }}>{pkg.description}</div>}
+                          {/* File list */}
+                          {pkg.media_files.length > 0 && (
+                            <div style={{ display:'flex', gap:'5px', flexWrap:'wrap', marginBottom:'8px' }}>
+                              {pkg.media_files.map(f => (
+                                <span key={f.media_id} style={{ fontSize:'10px', padding:'2px 7px', borderRadius:'6px', background: C.s3, color: C.t2 }}>
+                                  {iconFor(f.type)} {f.name}{f.duration ? ` · ${f.duration}` : ''}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          <div style={{ display:'flex', gap:'14px', fontSize:'12px', color: C.t3, flexWrap:'wrap' }}>
+                            {pkg.price && <span style={{ color: C.orange, fontWeight:700 }}>💰 {pkg.price} {pkg.currency}</span>}
+                            {pkg.keywords && <span>🔑 {pkg.keywords}</span>}
+                            {pkg.payment_link && <span style={{ color: C.blue }}>🔗 Kauflink</span>}
+                            {pkg.media_files.length > 0 && <span>📂 {pkg.media_files.length} Datei{pkg.media_files.length!==1?'en':''}</span>}
+                          </div>
+                        </div>
+                        <div style={{ display:'flex', gap:'6px', flexShrink:0 }}>
+                          <button onClick={() => toggleActive(pkg.id)} style={{ padding:'6px 10px', borderRadius:'9px', background: C.s3, border:'none', color: C.t2, fontSize:'11px', cursor:'pointer' }}>
+                            {pkg.active ? 'Pause' : 'Aktivieren'}
+                          </button>
+                          <button onClick={() => openEdit(pkg)} style={{ padding:'6px 10px', borderRadius:'9px', background: C.s3, border:'none', color: C.t2, fontSize:'11px', cursor:'pointer' }}>Bearbeiten</button>
+                          <button onClick={() => deletePackage(pkg.id)} style={{ padding:'6px 9px', borderRadius:'9px', background:'rgba(255,69,58,0.1)', border:'1px solid rgba(255,69,58,0.2)', color: C.red, fontSize:'11px', cursor:'pointer' }}>🗑</button>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  {pkg.description && <div style={{ fontSize:'13px', color: C.t2, marginBottom:'8px' }}>{pkg.description}</div>}
-                  <div style={{ display:'flex', gap:'16px', fontSize:'12px', color: C.t3, flexWrap:'wrap' }}>
-                    {pkg.keywords && <span>🔑 <span style={{ color: C.blue }}>{pkg.keywords}</span></span>}
-                    {pkg.send_after_messages > 0 && <span>⏱ Pitch after {pkg.send_after_messages} msgs</span>}
-                    {pkg.welcome_message && <span>💬 Has pitch message</span>}
-                  </div>
                 </div>
-                <div style={{ display:'flex', gap:'6px', flexShrink:0, flexWrap:'wrap' }}>
-                  <button onClick={() => toggleActive(pkg.id)} style={{ padding:'6px 12px', borderRadius:'9px', background: C.s3, border:'none', color: C.t2, fontSize:'12px', cursor:'pointer' }}>
-                    {pkg.active ? 'Pause' : 'Enable'}
-                  </button>
-                  <button onClick={() => openEdit(pkg)} style={{ padding:'6px 12px', borderRadius:'9px', background: C.s3, border:'none', color: C.t2, fontSize:'12px', cursor:'pointer' }}>Edit</button>
-                  <button onClick={() => deletePackage(pkg.id)} style={{ padding:'6px 10px', borderRadius:'9px', background:'rgba(255,69,58,0.1)', border:'1px solid rgba(255,69,58,0.2)', color: C.red, fontSize:'12px', cursor:'pointer' }}>🗑</button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
 
+      {/* ── Edit Modal ─────────────────────────────────────────────────────────── */}
       {editing && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', zIndex:1000, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px', overflowY:'auto' }}
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.8)', zIndex:1000, display:'flex', alignItems:'center', justifyContent:'center', padding:'16px', overflowY:'auto' }}
           onClick={e => { if (e.target === e.currentTarget) setEditing(null); }}>
-          <div style={{ background: C.s1, borderRadius:'20px', padding:'24px', width:'100%', maxWidth:'520px', border:`1px solid ${C.sep}` }}>
+          <div style={{ background: C.s1, borderRadius:'20px', padding:'24px', width:'100%', maxWidth:'560px', border:`1px solid ${C.sep}`, maxHeight:'92vh', overflowY:'auto' }}>
             <h3 style={{ margin:'0 0 20px', fontSize:'17px', fontWeight:700 }}>
-              {packages.some(p => p.id === editing.id) ? 'Edit Package' : 'New Package'}
+              {packages.some(p => p.id === editing.id) ? 'Paket bearbeiten' : 'Neues Paket'}
             </h3>
 
-            {(['name','tagline','description'] as const).map(field => (
-              <label key={field} style={{ display:'block', marginBottom:'13px' }}>
-                <div style={{ fontSize:'12px', color: C.t3, marginBottom:'5px', textTransform:'capitalize' }}>{field}</div>
-                <input value={(editing as any)[field]} onChange={e => setEditing({...editing, [field]: e.target.value})}
-                  placeholder={field==='name' ? 'e.g. Premium Pack' : field==='tagline' ? 'Short subtitle' : 'Describe what they get'}
-                  style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none' }} />
-              </label>
-            ))}
+            {/* Banner image */}
+            <div style={{ marginBottom:'16px' }}>
+              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'6px' }}>Vorschau-Banner (wird mit dem Paket gesendet)</div>
+              <div style={{ display:'flex', gap:'10px', alignItems:'center' }}>
+                {/* Banner preview */}
+                <div style={{ width:'80px', height:'60px', borderRadius:'10px', background: C.s2, overflow:'hidden', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center' }}>
+                  {bannerItem?.dataUrl && bannerItem.type.startsWith('image') ? (
+                    <img src={bannerItem.dataUrl} alt="banner" style={{ width:'100%', height:'100%', objectFit:'cover' }} />
+                  ) : bannerItem?.dataUrl && bannerItem.type.startsWith('video') ? (
+                    <video src={bannerItem.dataUrl} muted style={{ width:'100%', height:'100%', objectFit:'cover' }} />
+                  ) : (
+                    <span style={{ fontSize:'24px' }}>📦</span>
+                  )}
+                </div>
+                <div style={{ flex:1 }}>
+                  <button onClick={() => setMediaPicker('banner')} style={{ width:'100%', padding:'8px 12px', borderRadius:'10px', background: C.s2, border:`1px solid ${C.sep}`, color: C.blue, fontSize:'12px', fontWeight:600, cursor:'pointer', marginBottom:'4px' }}>
+                    🖼️ Bild aus Media Library wählen
+                  </button>
+                  {editing.banner_image_id && (
+                    <button onClick={() => setEditing({ ...editing, banner_image_id: '' })} style={{ width:'100%', padding:'5px', borderRadius:'8px', background:'none', border:'none', color: C.t3, fontSize:'11px', cursor:'pointer' }}>
+                      ✕ Banner entfernen
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
 
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 80px 1fr', gap:'10px', marginBottom:'13px' }}>
-              {(['price','currency'] as const).map((f,i) => (
-                <label key={f}>
-                  <div style={{ fontSize:'12px', color: C.t3, marginBottom:'5px', textTransform:'capitalize' }}>{f}</div>
-                  <input value={(editing as any)[f]} onChange={e => setEditing({...editing, [f]: e.target.value})}
-                    placeholder={f==='price' ? '49' : 'USD'}
-                    style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none' }} />
-                </label>
-              ))}
+            {/* Name + tagline */}
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'13px' }}>
               <label>
-                <div style={{ fontSize:'12px', color: C.t3, marginBottom:'5px' }}>Billing</div>
-                <select value={editing.period} onChange={e => setEditing({...editing, period: e.target.value})}
-                  style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none' }}>
-                  {PERIODS.map(p => <option key={p} value={p}>{p}</option>)}
+                <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Name *</div>
+                <input value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })}
+                  placeholder="z.B. Hot Bundle"
+                  style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }} />
+              </label>
+              <label>
+                <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Tagline</div>
+                <input value={editing.tagline} onChange={e => setEditing({ ...editing, tagline: e.target.value })}
+                  placeholder="Kurzer Untertitel"
+                  style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }} />
+              </label>
+            </div>
+
+            {/* Description */}
+            <label style={{ display:'block', marginBottom:'13px' }}>
+              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Beschreibung</div>
+              <textarea value={editing.description} onChange={e => setEditing({ ...editing, description: e.target.value })}
+                placeholder="Was bekommt der Fan in diesem Paket?"
+                rows={2}
+                style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', resize:'vertical', fontFamily:'inherit', boxSizing:'border-box' }} />
+            </label>
+
+            {/* Media files */}
+            <div style={{ marginBottom:'16px' }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'8px' }}>
+                <div style={{ fontSize:'12px', color: C.t3 }}>📂 Enthaltene Dateien ({editing.media_files.length})</div>
+                <button onClick={() => setMediaPicker('files')} style={{ padding:'4px 10px', borderRadius:'8px', background: C.s2, border:`1px solid ${C.sep}`, color: C.blue, fontSize:'11px', fontWeight:600, cursor:'pointer' }}>
+                  + Aus Media Library
+                </button>
+              </div>
+              {editing.media_files.length === 0 ? (
+                <div style={{ padding:'12px', borderRadius:'10px', background: C.s2, border:`1px dashed ${C.sep}`, textAlign:'center', fontSize:'12px', color: C.t3 }}>
+                  Keine Dateien — klicke "Aus Media Library" um Dateien hinzuzufügen
+                </div>
+              ) : (
+                <div style={{ display:'flex', flexDirection:'column', gap:'6px' }}>
+                  {editing.media_files.map(f => {
+                    const libItem = mediaLib.find(m => m.id === f.media_id);
+                    return (
+                      <div key={f.media_id} style={{ display:'flex', alignItems:'center', gap:'10px', padding:'8px 12px', borderRadius:'10px', background: C.s2, border:`1px solid ${C.sep}` }}>
+                        {libItem?.dataUrl && libItem.type.startsWith('image') && (
+                          <img src={libItem.dataUrl} alt={f.name} style={{ width:'32px', height:'32px', borderRadius:'6px', objectFit:'cover', flexShrink:0 }} />
+                        )}
+                        <span style={{ fontSize:'16px', flexShrink:0 }}>{iconFor(f.type)}</span>
+                        <div style={{ flex:1, minWidth:0 }}>
+                          <div style={{ fontSize:'12px', fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{f.name}</div>
+                          <div style={{ fontSize:'10px', color: C.t3 }}>{f.type.startsWith('video') ? '🎬 Video' : f.type.startsWith('image') ? '🖼️ Bild' : '📄 Datei'}{libItem ? ` · ${fmt(libItem.size)}` : ''}</div>
+                        </div>
+                        {/* Duration for video */}
+                        {f.type.startsWith('video') && (
+                          <input
+                            value={f.duration || ''}
+                            onChange={e => setEditing({ ...editing, media_files: editing.media_files.map(mf => mf.media_id === f.media_id ? { ...mf, duration: e.target.value } : mf) })}
+                            placeholder="z.B. 2:34"
+                            title="Videolänge (optional)"
+                            style={{ width:'58px', background: C.s3, border:`1px solid ${C.sep}`, borderRadius:'6px', padding:'4px 6px', color: C.t2, fontSize:'11px', outline:'none', textAlign:'center' }}
+                          />
+                        )}
+                        <button onClick={() => removeFile(f.media_id)} style={{ background:'none', border:'none', color: C.t3, cursor:'pointer', fontSize:'16px', flexShrink:0, padding:'0 2px' }}>×</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Price + currency + payment link */}
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 60px', gap:'10px', marginBottom:'13px' }}>
+              <label>
+                <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Preis</div>
+                <input value={editing.price} onChange={e => setEditing({ ...editing, price: e.target.value })}
+                  placeholder="29.99"
+                  style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }} />
+              </label>
+              <label>
+                <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Währung</div>
+                <select value={editing.currency} onChange={e => setEditing({ ...editing, currency: e.target.value })}
+                  style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 8px', color: C.t1, fontSize:'13px', outline:'none' }}>
+                  {['€','$','£','CHF'].map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </label>
             </div>
 
             <label style={{ display:'block', marginBottom:'13px' }}>
-              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'5px' }}>Keywords (comma-separated)</div>
-              <input value={editing.keywords} onChange={e => setEditing({...editing, keywords: e.target.value})}
-                placeholder="buy, price, package, subscription"
-                style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none' }} />
-              <div style={{ fontSize:'11px', color: C.t3, marginTop:'4px' }}>AI pitches this package when these words appear in a message</div>
+              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Kauflink</div>
+              <input value={editing.payment_link} onChange={e => setEditing({ ...editing, payment_link: e.target.value })}
+                placeholder="https://buy.stripe.com/…"
+                style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }} />
             </label>
 
-            <label style={{ display:'block', marginBottom:'13px' }}>
-              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'5px' }}>Auto-pitch after N messages (0 = off)</div>
-              <input type="number" min="0" value={editing.send_after_messages}
-                onChange={e => setEditing({...editing, send_after_messages: parseInt(e.target.value)||0})}
-                style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none' }} />
-            </label>
-
-            <label style={{ display:'block', marginBottom:'13px' }}>
-              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'5px' }}>Welcome / pitch message</div>
-              <textarea value={editing.welcome_message} onChange={e => setEditing({...editing, welcome_message: e.target.value})}
-                placeholder="Hey! 👋 I'd love to share our Premium Pack with you…" rows={3}
-                style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', resize:'vertical' }} />
-            </label>
-
-            <label style={{ display:'block', marginBottom:'20px' }}>
-              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'5px' }}>Features (one per line)</div>
-              <textarea value={editing.features} onChange={e => setEditing({...editing, features: e.target.value})}
-                placeholder={"50 exclusive photos\nInstant delivery\nLifetime access"} rows={3}
-                style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', resize:'vertical' }} />
-            </label>
-
-            {/* ── Translations ── */}
-            <div style={{ marginBottom:'20px' }}>
-              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'8px', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.06em' }}>
-                🌍 Translations
+            {/* Package pitch text */}
+            <div style={{ marginBottom:'13px' }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'4px' }}>
+                <div style={{ fontSize:'12px', color: C.t3 }}>Bot-Nachricht (wird an Fan gesendet)</div>
+                <button onClick={() => setEditing({ ...editing, package_text: generatePitchText(editing) })} style={{ background:'none', border:'none', color: C.blue, cursor:'pointer', fontSize:'11px', fontWeight:600, padding:0 }}>
+                  ✨ Auto-generieren
+                </button>
               </div>
-              <div style={{ fontSize:'11px', color: C.t3, marginBottom:'10px' }}>
-                Nika sends the translated pitch message when a user writes in that language.
-                Leave blank to fall back to the default above.
-              </div>
-              {/* Language selector tabs */}
-              <div style={{ display:'flex', gap:'6px', marginBottom:'12px', flexWrap:'wrap' }}>
-                {LANGS.map(l => (
-                  <button key={l.code} onClick={() => setTransLang(l.code)} style={{
-                    padding:'5px 12px', borderRadius:'20px', border:'1px solid', cursor:'pointer', fontSize:'12px', fontWeight:600,
-                    background: transLang === l.code ? 'rgba(10,132,255,0.15)' : 'transparent',
-                    borderColor: transLang === l.code ? C.blue : C.sep,
-                    color: transLang === l.code ? C.blue : C.t3,
-                  }}>{l.flag} {l.label}</button>
-                ))}
-              </div>
-              {/* Translation fields for selected language */}
-              {(() => {
-                const t = editing.translations?.[transLang] || {};
-                const setT = (patch: Partial<PackageTranslation>) => setEditing({
-                  ...editing,
-                  translations: { ...(editing.translations || {}), [transLang]: { ...t, ...patch } },
-                });
-                const lbl = LANGS.find(l => l.code === transLang);
-                return (
-                  <div style={{ display:'flex', flexDirection:'column', gap:'10px' }}>
-                    <label>
-                      <div style={{ fontSize:'11px', color: C.t3, marginBottom:'4px' }}>Pitch message in {lbl?.flag} {lbl?.label}</div>
-                      <textarea value={t.welcome_message || ''} onChange={e => setT({ welcome_message: e.target.value })}
-                        placeholder={`Pitch message in ${lbl?.label} (leave blank to use default)`} rows={3}
-                        style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', resize:'vertical' }} />
-                    </label>
-                    <label>
-                      <div style={{ fontSize:'11px', color: C.t3, marginBottom:'4px' }}>Description in {lbl?.flag} {lbl?.label}</div>
-                      <input value={t.description || ''} onChange={e => setT({ description: e.target.value })}
-                        placeholder={`Short description in ${lbl?.label} (optional)`}
-                        style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none' }} />
-                    </label>
-                  </div>
-                );
-              })()}
+              <textarea value={editing.package_text} onChange={e => setEditing({ ...editing, package_text: e.target.value })}
+                placeholder="Klicke '✨ Auto-generieren' oder schreibe den Text manuell"
+                rows={5}
+                style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', resize:'vertical', fontFamily:'inherit', lineHeight:1.5, boxSizing:'border-box' }} />
+              <div style={{ fontSize:'11px', color: C.t3, marginTop:'3px' }}>Dieser Text wird gesendet wenn ein Fan das Paket anfragt oder der Bot es pitcht</div>
             </div>
 
-            <div style={{ display:'flex', gap:'10px' }}>
-              <button onClick={() => setEditing(null)} style={{ flex:1, padding:'11px', borderRadius:'12px', background: C.s3, border:'none', color: C.t2, fontSize:'14px', cursor:'pointer' }}>Cancel</button>
-              <button onClick={confirmEdit} disabled={saving || !editing.name.trim()}
-                style={{ flex:2, padding:'11px', borderRadius:'12px', background: C.blue, border:'none', color:'#fff', fontSize:'14px', fontWeight:600, cursor:'pointer', opacity:(saving||!editing.name.trim())?0.5:1 }}>
-                {saving ? 'Saving…' : 'Save Package'}
+            {/* Keywords */}
+            <label style={{ display:'block', marginBottom:'13px' }}>
+              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Keywords (kommagetrennt)</div>
+              <input value={editing.keywords} onChange={e => setEditing({ ...editing, keywords: e.target.value })}
+                placeholder="kaufen, preis, paket, bundle, inhalt"
+                style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }} />
+            </label>
+
+            <div style={{ display:'flex', gap:'10px', marginTop:'4px' }}>
+              <button onClick={() => setEditing(null)} style={{ flex:1, padding:'11px', borderRadius:'12px', background: C.s3, border:'none', color: C.t2, fontSize:'14px', cursor:'pointer' }}>
+                Abbrechen
+              </button>
+              <button onClick={confirmEdit} disabled={saving || !editing.name.trim()} style={{
+                flex:2, padding:'11px', borderRadius:'12px', background: C.blue, border:'none', color:'#fff',
+                fontSize:'14px', fontWeight:600, cursor:'pointer', opacity:(saving||!editing.name.trim())?0.5:1,
+              }}>
+                {saving ? 'Speichern…' : 'Paket speichern'}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* ── Media Picker Modal ─────────────────────────────────────────────────── */}
+      {mediaPicker && editing && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:1100, display:'flex', alignItems:'center', justifyContent:'center', padding:'16px' }}
+          onClick={e => { if (e.target === e.currentTarget) setMediaPicker(null); }}>
+          <div style={{ background: C.s1, borderRadius:'20px', padding:'24px', width:'100%', maxWidth:'600px', border:`1px solid ${C.sep}`, maxHeight:'80vh', overflow:'hidden', display:'flex', flexDirection:'column' }}>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'16px', flexShrink:0 }}>
+              <h3 style={{ margin:0, fontSize:'16px', fontWeight:700 }}>
+                {mediaPicker === 'banner' ? '🖼️ Banner-Bild wählen' : '📂 Dateien zum Paket hinzufügen'}
+              </h3>
+              <button onClick={() => setMediaPicker(null)} style={{ background:'none', border:'none', color: C.t3, cursor:'pointer', fontSize:'20px' }}>✕</button>
+            </div>
+            {mediaLib.length === 0 ? (
+              <div style={{ textAlign:'center', padding:'40px', color: C.t3 }}>
+                <div style={{ fontSize:'32px', marginBottom:'10px' }}>📂</div>
+                Noch keine Dateien in der Media Library — lade zuerst Dateien unter /media hoch
+              </div>
+            ) : (
+              <div style={{ overflowY:'auto', flex:1 }}>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(130px, 1fr))', gap:'10px' }}>
+                  {(mediaPicker === 'banner' ? pickableMeds : mediaLib).map(item => {
+                    const alreadyAdded = mediaPicker === 'files' && editing.media_files.some(f => f.media_id === item.id);
+                    const isBanner = mediaPicker === 'banner' && editing.banner_image_id === item.id;
+                    return (
+                      <div key={item.id}
+                        onClick={() => {
+                          if (mediaPicker === 'banner') {
+                            setEditing({ ...editing, banner_image_id: isBanner ? '' : item.id });
+                          } else {
+                            if (!alreadyAdded) addFileToPackage(item);
+                          }
+                        }}
+                        style={{
+                          borderRadius:'12px', overflow:'hidden', cursor: alreadyAdded ? 'default' : 'pointer',
+                          border:`2px solid ${(isBanner || alreadyAdded) ? C.green : C.sep}`,
+                          position:'relative', opacity: alreadyAdded ? 0.6 : 1, transition:'border-color 0.15s',
+                        }}>
+                        <div style={{ height:'90px', background: C.s2, display:'flex', alignItems:'center', justifyContent:'center' }}>
+                          {item.dataUrl && item.type.startsWith('image') ? (
+                            <img src={item.dataUrl} alt={item.name} style={{ width:'100%', height:'100%', objectFit:'cover' }} />
+                          ) : item.dataUrl && item.type.startsWith('video') ? (
+                            <video src={item.dataUrl} muted style={{ width:'100%', height:'100%', objectFit:'cover' }} />
+                          ) : (
+                            <span style={{ fontSize:'32px' }}>{iconFor(item.type)}</span>
+                          )}
+                        </div>
+                        <div style={{ padding:'6px 8px', background: C.s1 }}>
+                          <div style={{ fontSize:'10px', fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.name}</div>
+                          <div style={{ fontSize:'9px', color: C.t3 }}>{item.tag}</div>
+                        </div>
+                        {(isBanner || alreadyAdded) && (
+                          <div style={{ position:'absolute', top:'6px', right:'6px', background: C.green, borderRadius:'50%', width:'18px', height:'18px', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'11px' }}>✓</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {mediaPicker === 'files' && (
+              <button onClick={() => setMediaPicker(null)} style={{ marginTop:'16px', padding:'10px', borderRadius:'12px', background: C.blue, border:'none', color:'#fff', fontSize:'13px', fontWeight:600, cursor:'pointer', flexShrink:0 }}>
+                ✓ Fertig ({editing.media_files.length} Datei{editing.media_files.length!==1?'en':''} ausgewählt)
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        @media(max-width:600px) { div[style*="minmax(130px"]{grid-template-columns:repeat(3,1fr)!important} }
+      `}</style>
     </DashboardLayout>
   );
 }

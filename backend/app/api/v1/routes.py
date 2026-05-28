@@ -437,10 +437,16 @@ async def analytics_summary(
         )
         daily_rows = daily.fetchall()
 
-        # Lead stage distribution
+        # Lead stage distribution (new phases)
         stages = await session.execute(sql_text("""
-            SELECT COALESCE(funnel_stage, 'awareness') as stage, COUNT(*) as count
+            SELECT COALESCE(funnel_stage, 'hook') as stage, COUNT(*) as count
             FROM leads GROUP BY stage
+            ORDER BY CASE funnel_stage
+                WHEN 'hook' THEN 1
+                WHEN 'engagement' THEN 2
+                WHEN 'emotional_connection' THEN 3
+                WHEN 'monetization' THEN 4
+                ELSE 5 END
         """))
 
         # Top users by lead score

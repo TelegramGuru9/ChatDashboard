@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 
 const C = {
@@ -52,11 +53,13 @@ interface Insights {
   lead_score?: number;
 }
 
-const LABELS = ['COLD','CURIOUS','HOT','BUYER','TIMEWASTER','CUSTOM'];
+const LABELS = ['COLD','CURIOUS','WARM','HOT','BUYER','TIMEWASTER','CUSTOM'];
+const FILTER_LABELS = ['All', 'COLD', 'CURIOUS', 'WARM', 'HOT', 'BUYER', 'TIMEWASTER'];
 const INTERESTS = ['SOLO','DILDO','SQUIRTING','DESSOUS','HIGHHEELS','BATHTUB','FEET','TOYS','OUTDOOR','COUPLE'];
 const LABEL_COLORS: Record<string,string> = {
-  COLD: C.teal, CURIOUS: C.blue, HOT: C.orange, BUYER: C.green, TIMEWASTER: C.red, CUSTOM: C.purple,
+  COLD: C.teal, CURIOUS: C.blue, WARM: C.orange, HOT: '#ff2d55', BUYER: C.green, TIMEWASTER: C.red, CUSTOM: C.purple,
 };
+type SortBy = 'recent' | 'oldest' | 'score_high' | 'score_low';
 
 function timeAgo(iso?: string) {
   if (!iso) return '';
@@ -88,6 +91,8 @@ const apiBase = () => {
 };
 
 export default function InboxPage() {
+  const searchParams = useSearchParams();
+  const autoSelectUserId = searchParams?.get('user') ?? null;
   const [tgConnected, setTgConnected] = useState<boolean | null>(null);
   const [tgAccount, setTgAccount]     = useState('');
   const [convos, setConvos]           = useState<Conversation[]>([]);
@@ -106,6 +111,8 @@ export default function InboxPage() {
   const [syncStatus, setSyncStatus]   = useState('');
   const [reconnecting, setReconnecting] = useState(false);
   const [search, setSearch]           = useState('');
+  const [labelFilter, setLabelFilter] = useState<string>('All');
+  const [sortBy, setSortBy]           = useState<SortBy>('recent');
   const [draft, setDraft]             = useState('');
   const [sending, setSending]         = useState(false);
   const [sendError, setSendError]     = useState('');
@@ -333,6 +340,13 @@ export default function InboxPage() {
     })();
   }, []); // eslint-disable-line
 
+  // Auto-select user from URL param (e.g. ?user=UUID from analytics)
+  useEffect(() => {
+    if (!autoSelectUserId || convos.length === 0) return;
+    const target = convos.find(c => c.user_id === autoSelectUserId);
+    if (target) setSelected(target);
+  }, [autoSelectUserId, convos]); // eslint-disable-line
+
   useEffect(() => {
     if (selected) {
       lastMsgTimeRef.current = '';
@@ -379,14 +393,36 @@ export default function InboxPage() {
     return () => { es?.close(); clearInterval(safePoll); };
   }, [selected, api]); // eslint-disable-line
 
-  const filtered = convos.filter(c => {
-    const matchesSearch = !search ||
-      c.name.toLowerCase().includes(search.toLowerCase()) ||
-      (c.username||'').toLowerCase().includes(search.toLowerCase()) ||
-      (c.last_message||'').toLowerCase().includes(search.toLowerCase());
-    const matchesFolder = activeFolder === 'All' || (c.tg_folders || []).includes(activeFolder);
-    return matchesSearch && matchesFolder;
-  });
+  const filtered = (() => {
+    let list = convos.filter(c => {
+      const matchesSearch = !search ||
+        c.name.toLowerCase().includes(search.toLowerCase()) ||
+        (c.username||'').toLowerCase().includes(search.toLowerCase()) ||
+        (c.last_message||'').toLowerCase().includes(search.toLowerCase());
+      const matchesFolder = activeFolder === 'All' || (c.tg_folders || []).includes(activeFolder);
+      const matchesLabel  = labelFilter === 'All' || (c.lead_label || '').toUpperCase() === labelFilter;
+      return matchesSearch && matchesFolder && matchesLabel;
+    });
+    // Sort
+    if (sortBy === 'recent') {
+      list = [...list].sort((a, b) => {
+        const ta = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+        const tb = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
+        return tb - ta;
+      });
+    } else if (sortBy === 'oldest') {
+      list = [...list].sort((a, b) => {
+        const ta = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+        const tb = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
+        return ta - tb;
+      });
+    } else if (sortBy === 'score_high') {
+      list = [...list].sort((a, b) => b.lead_score - a.lead_score);
+    } else if (sortBy === 'score_low') {
+      list = [...list].sort((a, b) => a.lead_score - b.lead_score);
+    }
+    return list;
+  })();
 
   // ── Memory analysis: group messages by day and annotate ──
   const memoryGroups = (() => {
@@ -461,6 +497,34 @@ export default function InboxPage() {
                   }}>{f}</button>
                 ))}
               </div>
+            </div>
+
+            {/* Label filter chips + sort */}
+            <div style={{ padding:'6px 10px 0', display:'flex', alignItems:'center', gap:'6px', flexWrap:'nowrap', overflowX:'auto' }} className="filter-scroll">
+              {FILTER_LABELS.map(lbl => {
+                const active = labelFilter === lbl;
+                const col = lbl === 'All' ? C.blue : (LABEL_COLORS[lbl] ?? C.t3);
+                return (
+                  <button key={lbl} onClick={() => setLabelFilter(lbl)} style={{
+                    padding:'3px 10px', borderRadius:'20px', fontSize:'11px', fontWeight:600,
+                    cursor:'pointer', border:'1px solid', whiteSpace:'nowrap', flexShrink:0, transition:'all 0.15s',
+                    background: active ? `${col}22` : 'transparent',
+                    borderColor: active ? col : 'rgba(84,84,88,0.35)',
+                    color: active ? col : C.t3,
+                  }}>
+                    {lbl === 'All' ? `Alle (${convos.length})` : lbl}
+                  </button>
+                );
+              })}
+              <select value={sortBy} onChange={e => setSortBy(e.target.value as SortBy)} style={{
+                marginLeft:'auto', flexShrink:0, background:C.s2, border:`1px solid rgba(84,84,88,0.35)`,
+                borderRadius:'8px', padding:'3px 7px', color:C.t2, fontSize:'11px', outline:'none', cursor:'pointer',
+              }}>
+                <option value="recent">Neueste</option>
+                <option value="oldest">Älteste</option>
+                <option value="score_high">Score ↓</option>
+                <option value="score_low">Score ↑</option>
+              </select>
             </div>
 
             {/* Search + status */}
@@ -907,6 +971,9 @@ export default function InboxPage() {
         .folder-scroll::-webkit-scrollbar { height:3px; }
         .folder-scroll::-webkit-scrollbar-track { background:transparent; }
         .folder-scroll::-webkit-scrollbar-thumb { background:rgba(84,84,88,0.4); border-radius:2px; }
+        .filter-scroll::-webkit-scrollbar { height:3px; }
+        .filter-scroll::-webkit-scrollbar-track { background:transparent; }
+        .filter-scroll::-webkit-scrollbar-thumb { background:rgba(84,84,88,0.3); border-radius:2px; }
       `}</style>
     </DashboardLayout>
   );

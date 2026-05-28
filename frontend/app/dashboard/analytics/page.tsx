@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 
 const C = {
@@ -16,9 +17,11 @@ interface AnalyticsSummary {
   top_users: { user_id: string; name: string; username: string; score: number; messages: number }[];
 }
 
-const STAGE_COLORS: Record<string, string> = {
-  COLD: C.teal, CURIOUS: C.blue, HOT: C.orange,
-  BUYER: C.green, TIMEWASTER: C.red, CUSTOM: C.purple,
+const FUNNEL_META: Record<string, { label: string; icon: string; color: string }> = {
+  hook:               { label: 'Hook',       icon: '🪝', color: C.teal   },
+  engagement:         { label: 'Engagement', icon: '💬', color: C.blue   },
+  emotional_connection:{ label: 'Emotional', icon: '❤️', color: C.purple },
+  monetization:       { label: 'Monetize',  icon: '💰', color: C.green  },
 };
 
 function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
@@ -42,6 +45,7 @@ const apiBase = () => {
 };
 
 export default function AnalyticsPage() {
+  const router = useRouter();
   const [data, setData] = useState<AnalyticsSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -181,31 +185,39 @@ export default function AnalyticsPage() {
             </Card>
 
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1.6fr', gap:'16px' }} className="bottom-grid">
+              {/* Lead phases */}
               <Card style={{ padding:'24px' }}>
-                <div style={{ fontSize:'13px', fontWeight:600, marginBottom:'20px', color: C.t2 }}>Lead-Phasen</div>
+                <div style={{ fontSize:'13px', fontWeight:600, marginBottom:'20px', color: C.t2 }}>Aktive Leads — Phasen</div>
                 {!data?.lead_stages?.length ? (
                   <div style={{ textAlign:'center', padding:'40px 0', color: C.t3, fontSize:'13px' }}>Keine Lead-Daten</div>
                 ) : (
                   <div style={{ display:'flex', flexDirection:'column', gap:'12px' }}>
                     {data.lead_stages.map(s => {
                       const pct = totalLeads > 0 ? (s.count / totalLeads) * 100 : 0;
-                      const col = STAGE_COLORS[s.stage] ?? C.t3;
+                      const meta = FUNNEL_META[s.stage] ?? { label: s.stage, icon: '●', color: C.t3 };
                       return (
                         <div key={s.stage}>
-                          <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'5px' }}>
-                            <span style={{ fontSize:'12px', fontWeight:600, color: col }}>{s.stage}</span>
+                          <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'5px', alignItems:'center' }}>
+                            <span style={{ fontSize:'12px', fontWeight:600, color: meta.color }}>
+                              {meta.icon} {meta.label}
+                            </span>
                             <span style={{ fontSize:'12px', color: C.t3 }}>{s.count} ({pct.toFixed(0)}%)</span>
                           </div>
                           <div style={{ height:'6px', borderRadius:'3px', background: C.s3 }}>
-                            <div style={{ height:'6px', borderRadius:'3px', width:`${pct}%`, background: col, transition:'width 0.6s ease' }} />
+                            <div style={{ height:'6px', borderRadius:'3px', width:`${pct}%`, background: meta.color, transition:'width 0.6s ease' }} />
                           </div>
                         </div>
                       );
                     })}
+                    <div style={{ paddingTop:'8px', borderTop:`1px solid ${C.sep}`, fontSize:'12px', color:C.t3, display:'flex', justifyContent:'space-between' }}>
+                      <span>Gesamt Leads</span>
+                      <span style={{ fontWeight:700, color:C.t2 }}>{totalLeads}</span>
+                    </div>
                   </div>
                 )}
               </Card>
 
+              {/* Top contacts */}
               <Card style={{ padding:'24px' }}>
                 <div style={{ fontSize:'13px', fontWeight:600, marginBottom:'16px', color: C.t2 }}>Top Kontakte nach Score</div>
                 {!data?.top_users?.length ? (
@@ -218,14 +230,20 @@ export default function AnalyticsPage() {
                       ))}
                     </div>
                     {data.top_users.map((u, i) => (
-                      <div key={u.user_id} style={{
-                        display:'grid', gridTemplateColumns:'1fr 60px 60px', gap:'8px',
-                        padding:'8px', borderRadius:'8px', alignItems:'center',
-                        background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)',
-                      }}>
+                      <div key={u.user_id}
+                        onClick={() => router.push(`/dashboard/inbox?user=${u.user_id}`)}
+                        style={{
+                          display:'grid', gridTemplateColumns:'1fr 60px 60px', gap:'8px',
+                          padding:'8px', borderRadius:'8px', alignItems:'center', cursor:'pointer',
+                          background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)',
+                          transition:'background 0.12s',
+                        }}
+                        onMouseEnter={e => (e.currentTarget as HTMLElement).style.background='rgba(10,132,255,0.08)'}
+                        onMouseLeave={e => (e.currentTarget as HTMLElement).style.background= i%2===0 ? 'transparent' : 'rgba(255,255,255,0.02)'}
+                      >
                         <div style={{ overflow:'hidden' }}>
-                          <div style={{ fontSize:'13px', fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                            {u.name || u.username || 'Unknown'}
+                          <div style={{ fontSize:'13px', fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', color:C.blue }}>
+                            → {u.name || u.username || 'Unknown'}
                           </div>
                           {u.username && u.name && (
                             <div style={{ fontSize:'10px', color: C.t3 }}>@{u.username}</div>
@@ -235,6 +253,9 @@ export default function AnalyticsPage() {
                         <div style={{ fontSize:'13px', color: C.t2 }}>{u.messages}</div>
                       </div>
                     ))}
+                    <div style={{ marginTop:'8px', fontSize:'11px', color:C.t3, textAlign:'center' }}>
+                      Klicken um Chat zu öffnen
+                    </div>
                   </div>
                 )}
               </Card>

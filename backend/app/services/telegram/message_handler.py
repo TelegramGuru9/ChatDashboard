@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from telethon.tl.types import Message as TelegramMessage
 
 from app.db.database import db_manager
-from app.db.models import User, Message, Config
+from app.db.models import User, Message, Config, Lead
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -454,6 +454,7 @@ class MessageProcessor:
                                 logger.info(f"[auto-reply] tagged user {user_id} as WARM")
 
                         await session.commit()
+                    asyncio.create_task(self._update_lead_funnel(user_id, "price_inquiry" if rule_action == "send_package_menu" else "ai_reply"))
 
                     # Send a free teaser BEFORE the package menu (if any exist)
                     if rule_action == "send_package_menu":
@@ -590,6 +591,7 @@ class MessageProcessor:
                 )
                 session.add(ai_msg)
                 await session.commit()
+            asyncio.create_task(self._update_lead_funnel(user_id, "ai_reply"))
 
             # ── Broadcast via SSE ───────────────────────────────────────────
             try:
@@ -609,6 +611,84 @@ class MessageProcessor:
 
         except Exception as e:
             logger.error(f"AI response failed for tg_id={telegram_id}: {e}", exc_info=True)
+
+    async def _update_lead_funnel(self, user_id: UUID, interaction_type: str = "ai_reply") -> None:
+        """
+        Create or update the Lead record for this user.
+        Advances funnel stage based on message count + signals.
+        Awards points based on interaction type.
+
+        interaction_type: "ai_reply" | "price_inquiry" | "personal_signal" | "purchase"
+        """
+        POINTS = {
+            "ai_reply":      1,
+            "price_inquiry": 15,
+            "personal_signal": 20,
+            "purchase":      100,
+            "fan_message":   3,
+        }
+        try:
+            async with db_manager.get_session() as session:
+                from app.db.models import Lead
+                from sqlalchemy import select as sa_select
+                # Get user message count
+                user_res = await session.execute(sa_select(User).where(User.id == user_id))
+                user = user_res.scalars().first()
+                if not user:
+                    return
+                msg_count = user.total_messages or 0
+
+                # Determine funnel stage
+                extra = user.extra_data or {}
+                has_personal = extra.get("has_personal_signal", False)
+
+                if msg_count >= 20 or has_personal:
+                    stage = "emotional_connection"
+                elif msg_count >= 10:
+                    stage = "engagement"
+                else:
+                    stage = "hook"
+
+                # Monetization override: if price inquiry or package interest
+                if interaction_type == "price_inquiry" and msg_count >= 5:
+                    stage = "monetization"
+                # Stay at monetization once there
+                lead_res = await session.execute(sa_select(Lead).where(Lead.user_id == user_id))
+                lead = lead_res.scalars().first()
+                if lead and lead.funnel_stage == "monetization":
+                    stage = "monetization"
+
+                points = POINTS.get(interaction_type, 1)
+
+                if lead:
+                    lead.funnel_stage = stage
+                    lead.lead_score = min(100.0, (lead.lead_score or 0) + points)
+                    lead.total_interactions = (lead.total_interactions or 0) + 1
+                    lead.last_activity_at = _naive_utc()
+                    score_bd = dict(lead.score_breakdown or {})
+                    score_bd[interaction_type] = score_bd.get(interaction_type, 0) + points
+                    lead.score_breakdown = score_bd
+                    if stage in ("monetization",) and not lead.qualified:
+                        lead.qualified = True
+                        lead.qualified_at = _naive_utc()
+                        lead.qualified_by = "ai"
+                else:
+                    lead = Lead(
+                        user_id=user_id,
+                        funnel_stage=stage,
+                        lead_score=float(points),
+                        total_interactions=1,
+                        status="new",
+                        score_breakdown={interaction_type: points},
+                        last_activity_at=_naive_utc(),
+                    )
+                    session.add(lead)
+
+                # Also sync lead_score to User table
+                user.lead_score = lead.lead_score
+                await session.commit()
+        except Exception as e:
+            logger.warning(f"_update_lead_funnel error: {e}")
 
     async def _check_auto_reply_rules(self, incoming_text: str) -> Optional[Dict[str, Any]]:
         """
