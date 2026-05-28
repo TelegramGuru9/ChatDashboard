@@ -317,6 +317,60 @@ class MessageProcessor:
             logger.error(f"Error storing message: {e}")
             return None
 
+    async def _load_packages(self) -> list:
+        """Load active packages from config. Returns list of package dicts."""
+        try:
+            async with db_manager.get_session() as session:
+                res = await session.execute(select(Config).where(Config.key == "packages"))
+                cfg = res.scalars().first()
+                if not cfg:
+                    return []
+                val = cfg.value
+                pkgs = val if isinstance(val, list) else (val.get("packages", []) if isinstance(val, dict) else [])
+                return [p for p in pkgs if p.get("active", True) and p.get("name")]
+        except Exception as e:
+            logger.warning(f"_load_packages error: {e}")
+            return []
+
+    def _build_package_menu_text(self, packages: list) -> str:
+        """
+        Build a clean German package menu message from the real package config.
+        Falls back gracefully if fields are missing.
+        """
+        lines = ["hier sind meine aktuellen angebote 🔥\n"]
+        for pkg in packages:
+            name   = pkg.get("name", "")
+            price  = pkg.get("price", "")
+            curr   = pkg.get("currency", "€")
+            desc   = pkg.get("description", "") or pkg.get("tagline", "")
+            link   = pkg.get("payment_link", "")
+            # files summary
+            files  = pkg.get("media_files", [])
+            file_summary = ""
+            if files:
+                imgs   = sum(1 for f in files if str(f.get("type","")).startswith("image"))
+                vids   = sum(1 for f in files if str(f.get("type","")).startswith("video"))
+                parts  = []
+                if vids:  parts.append(f"{vids} video{'s' if vids>1 else ''}")
+                if imgs:  parts.append(f"{imgs} bild{'er' if imgs>1 else ''}")
+                if parts: file_summary = f" ({', '.join(parts)})"
+
+            price_str = f"{price} {curr}".strip() if price else ""
+
+            block = f"📦 *{name}*"
+            if desc:
+                block += f"\n{desc}"
+            if file_summary:
+                block += f"\ninhalt:{file_summary}"
+            if price_str:
+                block += f"\n💰 {price_str}"
+            if link:
+                block += f"\n🔗 {link}"
+            lines.append(block)
+
+        lines.append("\nwelches interessiert dich? 😊")
+        return "\n\n".join(lines)
+
     async def _send_free_teaser(self, user_id: UUID, telegram_id: int) -> bool:
         """
         Pick a random 'Free' media item and send it via Telegram as a teaser.
@@ -418,60 +472,97 @@ class MessageProcessor:
             # ── Auto-reply rules: keyword match → send template, skip Claude ─────
             auto_reply_match = await self._check_auto_reply_rules(incoming_text)
             if auto_reply_match:
-                auto_reply_text = _clean_response(auto_reply_match["text"])
-                rule_action     = auto_reply_match.get("action", "")
+                rule_action = auto_reply_match.get("action", "")
                 logger.info(f"[auto-reply] rule matched action={rule_action} for tg_id={telegram_id}")
-                try:
-                    from telethon.tl.functions.messages import SetTypingRequest
-                    from telethon.tl.types import SendMessageTypingAction
-                    await telegram_client.client(
-                        SetTypingRequest(peer=telegram_id, action=SendMessageTypingAction())
-                    )
-                except Exception:
-                    pass
-                await _human_typing_delay(auto_reply_text, {})
-                tg_msg_id = await telegram_client.send_message(telegram_id, auto_reply_text)
-                if tg_msg_id:
-                    async with db_manager.get_session() as session:
-                        ai_msg = Message(
-                            message_id=tg_msg_id, user_id=user_id, text=auto_reply_text,
-                            direction="outgoing", has_media=False, is_ai_generated=True,
-                            extra_data={"source": "auto_reply", "action": rule_action},
-                            created_at=_naive_utc(),
-                        )
-                        session.add(ai_msg)
 
-                        # Tag chat as WARM whenever the package menu is sent
-                        if rule_action == "send_package_menu":
-                            user_res = await session.execute(
-                                select(User).where(User.id == user_id)
-                            )
-                            u = user_res.scalars().first()
-                            if u:
-                                extra = dict(u.extra_data or {})
-                                extra["lead_label"] = "WARM"
-                                u.extra_data = extra
-                                logger.info(f"[auto-reply] tagged user {user_id} as WARM")
-
-                        await session.commit()
-                    asyncio.create_task(self._update_lead_funnel(user_id, "price_inquiry" if rule_action == "send_package_menu" else "ai_reply"))
-
-                    # Send a free teaser BEFORE the package menu (if any exist)
-                    if rule_action == "send_package_menu":
+                # ── Package menu: use real package data, not the hardcoded template ──
+                if rule_action == "send_package_menu":
+                    packages = await self._load_packages()
+                    if not packages:
+                        # No packages configured → fall through to Claude so it handles naturally
+                        logger.info("[auto-reply] send_package_menu: no active packages — falling through to Claude")
+                    else:
+                        # 1) Send a free teaser FIRST as a preview/hook
                         teaser_sent = await self._send_free_teaser(user_id, telegram_id)
                         if teaser_sent:
-                            # Small pause between teaser and package list
-                            await asyncio.sleep(1.5)
+                            await asyncio.sleep(1.5)  # brief pause between teaser and menu
+
+                        # 2) Build and send the real package menu
+                        menu_text = self._build_package_menu_text(packages)
+                        try:
+                            from telethon.tl.functions.messages import SetTypingRequest
+                            from telethon.tl.types import SendMessageTypingAction
+                            await telegram_client.client(
+                                SetTypingRequest(peer=telegram_id, action=SendMessageTypingAction())
+                            )
+                        except Exception:
+                            pass
+                        await _human_typing_delay(menu_text, {})
+                        tg_msg_id = await telegram_client.send_message(telegram_id, menu_text)
+                        if tg_msg_id:
+                            async with db_manager.get_session() as session:
+                                ai_msg = Message(
+                                    message_id=tg_msg_id, user_id=user_id, text=menu_text,
+                                    direction="outgoing", has_media=False, is_ai_generated=True,
+                                    extra_data={"source": "auto_reply", "action": rule_action},
+                                    created_at=_naive_utc(),
+                                )
+                                session.add(ai_msg)
+                                # Tag chat as WARM when package menu is sent
+                                user_res = await session.execute(select(User).where(User.id == user_id))
+                                u = user_res.scalars().first()
+                                if u:
+                                    extra = dict(u.extra_data or {})
+                                    extra["lead_label"] = "WARM"
+                                    u.extra_data = extra
+                                    logger.info(f"[auto-reply] tagged user {user_id} as WARM")
+                                await session.commit()
+                            asyncio.create_task(self._update_lead_funnel(user_id, "price_inquiry"))
+                            try:
+                                import main as _main
+                                _main._broadcast_new_message(str(user_id), {
+                                    "id": str(tg_msg_id), "text": menu_text,
+                                    "direction": "outgoing", "is_ai_generated": True,
+                                    "created_at": _naive_utc().isoformat(),
+                                })
+                            except Exception:
+                                pass
+                        return  # Package menu handled — no Claude call
+
+                # ── All other auto-reply rules: send the template text as-is ──
+                else:
+                    auto_reply_text = _clean_response(auto_reply_match["text"])
                     try:
-                        import main as _main
-                        _main._broadcast_new_message(str(user_id), {
-                            "id": str(tg_msg_id), "text": auto_reply_text,
-                            "direction": "outgoing", "is_ai_generated": True,
-                            "created_at": _naive_utc().isoformat(),
-                        })
+                        from telethon.tl.functions.messages import SetTypingRequest
+                        from telethon.tl.types import SendMessageTypingAction
+                        await telegram_client.client(
+                            SetTypingRequest(peer=telegram_id, action=SendMessageTypingAction())
+                        )
                     except Exception:
                         pass
-                return  # Rule handled — no Claude call
+                    await _human_typing_delay(auto_reply_text, {})
+                    tg_msg_id = await telegram_client.send_message(telegram_id, auto_reply_text)
+                    if tg_msg_id:
+                        async with db_manager.get_session() as session:
+                            ai_msg = Message(
+                                message_id=tg_msg_id, user_id=user_id, text=auto_reply_text,
+                                direction="outgoing", has_media=False, is_ai_generated=True,
+                                extra_data={"source": "auto_reply", "action": rule_action},
+                                created_at=_naive_utc(),
+                            )
+                            session.add(ai_msg)
+                            await session.commit()
+                        asyncio.create_task(self._update_lead_funnel(user_id, "ai_reply"))
+                        try:
+                            import main as _main
+                            _main._broadcast_new_message(str(user_id), {
+                                "id": str(tg_msg_id), "text": auto_reply_text,
+                                "direction": "outgoing", "is_ai_generated": True,
+                                "created_at": _naive_utc().isoformat(),
+                            })
+                        except Exception:
+                            pass
+                    return  # Rule handled — no Claude call
 
             async with db_manager.get_session() as session:
                 result = await session.execute(select(Config).where(Config.key == "persona"))
