@@ -437,25 +437,45 @@ async def analytics_summary(
         )
         daily_rows = daily.fetchall()
 
-        # Lead stage distribution (new phases)
-        stages = await session.execute(sql_text("""
-            SELECT COALESCE(funnel_stage, 'hook') as stage, COUNT(*) as count
-            FROM leads GROUP BY stage
-            ORDER BY CASE funnel_stage
-                WHEN 'hook' THEN 1
-                WHEN 'engagement' THEN 2
-                WHEN 'emotional_connection' THEN 3
-                WHEN 'monetization' THEN 4
-                ELSE 5 END
-        """))
+        # Lead stage distribution — use expression in GROUP BY (alias not allowed in PG)
+        try:
+            stages_res = await session.execute(sql_text("""
+                SELECT
+                    CASE funnel_stage
+                        WHEN 'hook'                THEN 'hook'
+                        WHEN 'engagement'          THEN 'engagement'
+                        WHEN 'emotional_connection' THEN 'emotional_connection'
+                        WHEN 'monetization'        THEN 'monetization'
+                        ELSE 'hook'
+                    END AS stage,
+                    COUNT(*) AS count
+                FROM leads
+                GROUP BY 1
+                ORDER BY
+                    CASE funnel_stage
+                        WHEN 'hook'                THEN 1
+                        WHEN 'engagement'          THEN 2
+                        WHEN 'emotional_connection' THEN 3
+                        WHEN 'monetization'        THEN 4
+                        ELSE 1 END
+            """))
+            stage_rows = stages_res.fetchall()
+        except Exception as e:
+            logger.warning(f"lead_stages query failed: {e}")
+            stage_rows = []
 
         # Top users by lead score
-        top_users = await session.execute(sql_text("""
-            SELECT id, first_name, last_name, username, lead_score, total_messages
-            FROM users
-            WHERE is_bot = false OR is_bot IS NULL
-            ORDER BY lead_score DESC LIMIT 10
-        """))
+        try:
+            top_res = await session.execute(sql_text("""
+                SELECT id, first_name, last_name, username, lead_score, total_messages
+                FROM users
+                WHERE is_bot = false OR is_bot IS NULL
+                ORDER BY lead_score DESC NULLS LAST LIMIT 10
+            """))
+            top_rows = top_res.fetchall()
+        except Exception as e:
+            logger.warning(f"top_users query failed: {e}")
+            top_rows = []
 
         return {
             "totals": {
@@ -472,16 +492,21 @@ async def analytics_summary(
                 "ai_enabled": row.ai_enabled_count or 0,
             },
             "daily_messages": [{"date": str(r.date), "count": r.count} for r in daily_rows],
-            "lead_stages": [{"stage": r.stage, "count": r.count} for r in stages.fetchall()],
+            "lead_stages": [{"stage": r.stage, "count": r.count} for r in stage_rows],
             "top_users": [
-                {"user_id": str(r.id), "name": f"{r.first_name or ''} {r.last_name or ''}".strip() or "—",
-                 "username": r.username, "score": r.lead_score or 0, "messages": r.total_messages or 0}
-                for r in top_users.fetchall()
+                {
+                    "user_id": str(r.id),
+                    "name": f"{r.first_name or ''} {r.last_name or ''}".strip() or "—",
+                    "username": r.username or "",
+                    "score": r.lead_score or 0,
+                    "messages": r.total_messages or 0,
+                }
+                for r in top_rows
             ],
         }
     except Exception as e:
         logger.error(f"Analytics error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to load analytics")
+        raise HTTPException(status_code=500, detail=f"Failed to load analytics: {e}")
 
 
 # ==================== LEAD ROUTES ====================

@@ -369,67 +369,108 @@ export default function MediaPage() {
             <div style={{ fontSize:'13px' }}>Lade Dateien hoch um sie hier zu sehen</div>
           </div>
         ) : (
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(210px, 1fr))', gap:'12px' }}>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(200px, 1fr))', gap:'12px' }}>
             {visible.map(item => {
               const col = catColor(item.tag, categories);
               const isFree = item.tag === 'Free';
+              const isVideo = item.type.startsWith('video');
+              const isImage = item.type.startsWith('image');
+              const hasMedia = !!item.dataUrl && (isVideo || isImage);
               return (
                 <div key={item.id} style={{
                   background: C.s1, borderRadius:'14px',
-                  border:`1px solid ${isFree ? 'rgba(48,209,88,0.2)' : C.sep}`,
+                  border:`1px solid ${isFree ? 'rgba(48,209,88,0.25)' : C.sep}`,
                   overflow:'hidden', display:'flex', flexDirection:'column',
-                }}>
-                  {/* Preview clickable */}
+                  transition:'transform 0.1s, border-color 0.15s',
+                }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform='translateY(-2px)'; (e.currentTarget as HTMLElement).style.borderColor=isFree?'rgba(48,209,88,0.5)':C.blue; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform=''; (e.currentTarget as HTMLElement).style.borderColor=isFree?'rgba(48,209,88,0.25)':C.sep; }}
+                >
+                  {/* ── Thumbnail — always visible ── */}
                   <div
                     onClick={() => setPreviewing(item)}
-                    style={{ height:'130px', background: C.s2, display:'flex', alignItems:'center', justifyContent:'center', position:'relative', cursor:'pointer' }}
+                    style={{ height:'150px', background: C.s2, display:'flex', alignItems:'center', justifyContent:'center', position:'relative', cursor:'pointer', overflow:'hidden' }}
                   >
-                    {item.dataUrl && item.type.startsWith('image') ? (
+                    {isImage && item.dataUrl ? (
                       <img src={item.dataUrl} alt={item.name} style={{ width:'100%', height:'100%', objectFit:'cover' }} />
-                    ) : item.dataUrl && item.type.startsWith('video') ? (
-                      <video src={item.dataUrl} style={{ width:'100%', height:'100%', objectFit:'cover' }} muted />
+                    ) : isVideo && item.dataUrl ? (
+                      <>
+                        {/* video element as thumbnail frame */}
+                        <video
+                          src={item.dataUrl}
+                          style={{ width:'100%', height:'100%', objectFit:'cover' }}
+                          muted playsInline preload="metadata"
+                        />
+                        {/* Play button overlay — always visible on video */}
+                        <div style={{
+                          position:'absolute', inset:0,
+                          background:'rgba(0,0,0,0.28)',
+                          display:'flex', alignItems:'center', justifyContent:'center',
+                        }}>
+                          <div style={{
+                            width:'44px', height:'44px', borderRadius:'50%',
+                            background:'rgba(255,255,255,0.9)',
+                            display:'flex', alignItems:'center', justifyContent:'center',
+                            boxShadow:'0 2px 12px rgba(0,0,0,0.4)',
+                          }}>
+                            <span style={{ fontSize:'18px', marginLeft:'3px' }}>▶</span>
+                          </div>
+                        </div>
+                      </>
                     ) : (
-                      <span style={{ fontSize:'44px' }}>{iconFor(item.type)}</span>
+                      <div style={{ textAlign:'center' }}>
+                        <div style={{ fontSize:'44px' }}>{iconFor(item.type)}</div>
+                        <div style={{ fontSize:'10px', color:C.t3, marginTop:'4px' }}>{item.type.split('/')[1]?.toUpperCase() || 'FILE'}</div>
+                      </div>
                     )}
+
                     {/* Tag badge */}
                     <span style={{
                       position:'absolute', top:'8px', left:'8px', fontSize:'10px', fontWeight:700,
                       padding:'2px 8px', borderRadius:'8px',
-                      background: isFree ? 'rgba(48,209,88,0.9)' : `${col}cc`,
+                      background: isFree ? 'rgba(48,209,88,0.92)' : 'rgba(0,0,0,0.65)',
                       color: isFree ? '#000' : '#fff',
+                      backdropFilter: 'blur(4px)',
                     }}>
                       {isFree ? '🎁 Free' : item.tag}
                     </span>
-                    {/* Expand hint */}
-                    <div style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0)', display:'flex', alignItems:'center', justifyContent:'center', opacity:0, transition:'opacity 0.15s' }}
-                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity='1'; (e.currentTarget as HTMLElement).style.background='rgba(0,0,0,0.45)'; }}
-                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity='0'; (e.currentTarget as HTMLElement).style.background='transparent'; }}>
-                      <span style={{ fontSize:'24px' }}>🔍</span>
-                    </div>
+
                     {/* Price badge */}
                     {item.price && !isFree && (
-                      <span style={{ position:'absolute', bottom:'8px', right:'8px', fontSize:'11px', fontWeight:700, padding:'2px 8px', borderRadius:'8px', background:'rgba(0,0,0,0.7)', color: C.orange }}>
+                      <span style={{ position:'absolute', bottom:'8px', right:'8px', fontSize:'11px', fontWeight:700, padding:'2px 8px', borderRadius:'8px', background:'rgba(0,0,0,0.75)', color: C.orange }}>
                         {item.price.includes('€') ? item.price : `${item.price} €`}
                       </span>
+                    )}
+
+                    {/* Fullscreen hint on image hover */}
+                    {isImage && (
+                      <div className="img-hover-hint" style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0)', display:'flex', alignItems:'center', justifyContent:'center', opacity:0, transition:'all 0.15s' }}
+                        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity='1'; (e.currentTarget as HTMLElement).style.background='rgba(0,0,0,0.3)'; }}
+                        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity='0'; (e.currentTarget as HTMLElement).style.background='rgba(0,0,0,0)'; }}>
+                        <div style={{ width:'36px', height:'36px', borderRadius:'50%', background:'rgba(255,255,255,0.85)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'16px' }}>⛶</div>
+                      </div>
                     )}
                   </div>
 
                   {/* Info */}
                   <div style={{ padding:'10px 12px', flex:1, display:'flex', flexDirection:'column' }}>
-                    <div style={{ fontWeight:600, fontSize:'12px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', marginBottom:'3px' }}>{item.name}</div>
-                    <div style={{ fontSize:'10px', color: C.t3 }}>{fmt(item.size)}</div>
+                    <div style={{ fontWeight:600, fontSize:'12px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', marginBottom:'2px' }}>{item.name}</div>
+                    <div style={{ fontSize:'10px', color: C.t3, marginBottom: item.description ? '4px' : 0 }}>
+                      {isVideo ? '🎬 Video' : isImage ? '🖼️ Bild' : '📄 Datei'} · {fmt(item.size)}
+                    </div>
                     {item.description && (
-                      <div style={{ fontSize:'11px', color: C.t2, marginTop:'4px', overflow:'hidden', display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical' }}>
+                      <div style={{ fontSize:'11px', color: C.t2, overflow:'hidden', display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', lineHeight:1.4 }}>
                         {item.description}
                       </div>
                     )}
-                    {item.message_to_user && (
-                      <div style={{ fontSize:'10px', color: C.teal, marginTop:'3px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                        💬 {item.message_to_user}
-                      </div>
-                    )}
                     <div style={{ marginTop:'auto', paddingTop:'8px', display:'flex', gap:'5px' }}>
-                      <button onClick={() => setEditing({ ...item })} style={{ flex:1, padding:'5px', borderRadius:'7px', background: C.s3, border:'none', color: C.t2, fontSize:'11px', cursor:'pointer' }}>Bearbeiten</button>
+                      <button
+                        onClick={() => setPreviewing(item)}
+                        style={{ flex:1, padding:'5px', borderRadius:'7px', background: C.blue + '20', border:`1px solid ${C.blue}40`, color: C.blue, fontSize:'11px', fontWeight:600, cursor:'pointer' }}
+                      >
+                        {isVideo ? '▶ Abspielen' : isImage ? '🔍 Ansehen' : '👁 Details'}
+                      </button>
+                      <button onClick={() => setEditing({ ...item })} style={{ padding:'5px 8px', borderRadius:'7px', background: C.s3, border:'none', color: C.t2, fontSize:'11px', cursor:'pointer' }}>✏</button>
                       <button onClick={() => deleteItem(item.id)} style={{ padding:'5px 8px', borderRadius:'7px', background:'rgba(255,69,58,0.1)', border:'1px solid rgba(255,69,58,0.2)', color: C.red, fontSize:'11px', cursor:'pointer' }}>🗑</button>
                     </div>
                   </div>
@@ -449,81 +490,87 @@ export default function MediaPage() {
         )}
       </div>
 
-      {/* ── Preview Modal ─────────────────────────────────────────────────────── */}
-      {previewing && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:1200, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}
-          onClick={e => { if (e.target === e.currentTarget) setPreviewing(null); }}>
-          <div style={{ background: C.s1, borderRadius:'20px', width:'100%', maxWidth:'640px', border:`1px solid ${C.sep}`, overflow:'hidden', maxHeight:'92vh', display:'flex', flexDirection:'column' }}>
-            {/* Preview area */}
-            <div style={{ background: C.bg, flexShrink:0, maxHeight:'360px', display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden' }}>
-              {previewing.dataUrl && previewing.type.startsWith('image') ? (
-                <img src={previewing.dataUrl} alt={previewing.name} style={{ maxWidth:'100%', maxHeight:'360px', objectFit:'contain' }} />
-              ) : previewing.dataUrl && previewing.type.startsWith('video') ? (
-                <video src={previewing.dataUrl} controls style={{ maxWidth:'100%', maxHeight:'360px' }} />
+      {/* ── Preview Modal — fullscreen ─────────────────────────────────────────── */}
+      {previewing && (() => {
+        const isVid = previewing.type.startsWith('video');
+        const isImg = previewing.type.startsWith('image');
+        const col   = catColor(previewing.tag, categories);
+        return (
+          <div
+            style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.95)', zIndex:1200, display:'flex', flexDirection:'column' }}
+            onKeyDown={e => e.key === 'Escape' && setPreviewing(null)}
+          >
+            {/* Top bar */}
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'12px 18px', flexShrink:0, borderBottom:`1px solid rgba(255,255,255,0.08)` }}>
+              <div>
+                <span style={{ fontWeight:700, fontSize:'15px', color:C.t1 }}>{previewing.name}</span>
+                <span style={{ fontSize:'11px', color:C.t3, marginLeft:'10px' }}>{fmt(previewing.size)} · {isVid ? 'Video' : isImg ? 'Bild' : previewing.type}</span>
+              </div>
+              <div style={{ display:'flex', gap:'8px' }}>
+                <button
+                  onClick={() => { setPreviewing(null); setEditing({ ...previewing }); }}
+                  style={{ padding:'7px 14px', borderRadius:'10px', background:C.s2, border:`1px solid ${C.sep}`, color:C.t2, fontSize:'12px', fontWeight:600, cursor:'pointer' }}
+                >✏ Bearbeiten</button>
+                <button
+                  onClick={() => setPreviewing(null)}
+                  style={{ width:'34px', height:'34px', borderRadius:'10px', background:C.s2, border:`1px solid ${C.sep}`, color:C.t2, fontSize:'18px', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}
+                >✕</button>
+              </div>
+            </div>
+
+            {/* Media area — takes all remaining height */}
+            <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden', position:'relative', minHeight:0 }}
+              onClick={e => { if (e.target === e.currentTarget) setPreviewing(null); }}
+            >
+              {isImg && previewing.dataUrl ? (
+                <img
+                  src={previewing.dataUrl}
+                  alt={previewing.name}
+                  style={{ maxWidth:'100%', maxHeight:'100%', objectFit:'contain', userSelect:'none' }}
+                />
+              ) : isVid && previewing.dataUrl ? (
+                <video
+                  src={previewing.dataUrl}
+                  controls
+                  autoPlay
+                  style={{ maxWidth:'100%', maxHeight:'100%', outline:'none' }}
+                />
               ) : (
-                <div style={{ padding:'60px', textAlign:'center' }}>
-                  <div style={{ fontSize:'64px' }}>{iconFor(previewing.type)}</div>
-                  <div style={{ fontSize:'14px', color: C.t2, marginTop:'10px' }}>{previewing.name}</div>
+                <div style={{ textAlign:'center' }}>
+                  <div style={{ fontSize:'72px', marginBottom:'16px' }}>{iconFor(previewing.type)}</div>
+                  <div style={{ fontSize:'16px', color:C.t2 }}>{previewing.name}</div>
+                  <div style={{ fontSize:'12px', color:C.t3, marginTop:'6px' }}>{fmt(previewing.size)}</div>
                 </div>
               )}
             </div>
 
-            {/* Info */}
-            <div style={{ padding:'20px', overflowY:'auto' }}>
-              <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom:'14px', gap:'12px' }}>
-                <div>
-                  <div style={{ fontWeight:700, fontSize:'16px' }}>{previewing.name}</div>
-                  <div style={{ fontSize:'12px', color: C.t3, marginTop:'2px' }}>{fmt(previewing.size)} · {previewing.type}</div>
-                </div>
-                <div style={{ display:'flex', gap:'6px', flexShrink:0 }}>
-                  <button onClick={() => { setPreviewing(null); setEditing({ ...previewing }); }} style={{ padding:'6px 12px', borderRadius:'10px', background: C.s3, border:'none', color: C.t2, fontSize:'12px', cursor:'pointer' }}>Bearbeiten</button>
-                  <button onClick={() => setPreviewing(null)} style={{ padding:'6px 12px', borderRadius:'10px', background: C.s3, border:'none', color: C.t2, fontSize:'12px', cursor:'pointer' }}>✕</button>
-                </div>
-              </div>
-
-              {/* Category + price */}
-              <div style={{ display:'flex', gap:'8px', flexWrap:'wrap', marginBottom:'14px' }}>
-                <span style={{ fontSize:'12px', padding:'3px 10px', borderRadius:'20px', background:`${catColor(previewing.tag, categories)}18`, color: catColor(previewing.tag, categories), border:`1px solid ${catColor(previewing.tag, categories)}40`, fontWeight:600 }}>
-                  {previewing.tag === 'Free' ? '🎁 ' : ''}{previewing.tag}
-                </span>
-                {previewing.price && previewing.tag !== 'Free' && (
-                  <span style={{ fontSize:'12px', padding:'3px 10px', borderRadius:'20px', background:'rgba(255,149,10,0.12)', color: C.orange, border:'1px solid rgba(255,149,10,0.3)', fontWeight:600 }}>
-                    💰 {previewing.price.includes('€') ? previewing.price : `${previewing.price} €`}
-                  </span>
-                )}
-                {previewing.tag === 'Free' && (
-                  <span style={{ fontSize:'12px', padding:'3px 10px', borderRadius:'20px', background:'rgba(48,209,88,0.1)', color: C.green, border:'1px solid rgba(48,209,88,0.25)', fontWeight:600 }}>
-                    Kein Kauflink — frei gesendet
-                  </span>
-                )}
-              </div>
-
+            {/* Bottom info strip */}
+            <div style={{ flexShrink:0, padding:'12px 18px', borderTop:`1px solid rgba(255,255,255,0.08)`, display:'flex', gap:'12px', alignItems:'center', flexWrap:'wrap', background:'rgba(0,0,0,0.5)' }}>
+              <span style={{ fontSize:'12px', padding:'3px 10px', borderRadius:'20px', background:`${col}20`, color:col, border:`1px solid ${col}40`, fontWeight:600 }}>
+                {previewing.tag === 'Free' ? '🎁 ' : ''}{previewing.tag}
+              </span>
+              {previewing.price && previewing.tag !== 'Free' && (
+                <span style={{ fontSize:'12px', fontWeight:700, color:C.orange }}>💰 {previewing.price.includes('€') ? previewing.price : `${previewing.price} €`}</span>
+              )}
+              {previewing.tag === 'Free' && (
+                <span style={{ fontSize:'11px', color:C.green }}>Kein Kauflink — frei gesendet</span>
+              )}
               {previewing.description && (
-                <div style={{ marginBottom:'12px' }}>
-                  <div style={{ fontSize:'11px', color: C.t3, textTransform:'uppercase', letterSpacing:'0.07em', marginBottom:'4px' }}>Beschreibung</div>
-                  <div style={{ fontSize:'13px', color: C.t2, lineHeight:1.5 }}>{previewing.description}</div>
-                </div>
+                <span style={{ fontSize:'12px', color:C.t2, flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{previewing.description}</span>
               )}
-
               {previewing.message_to_user && (
-                <div style={{ marginBottom:'12px', padding:'10px 12px', background: C.s2, borderRadius:'10px', borderLeft:`3px solid ${C.teal}` }}>
-                  <div style={{ fontSize:'11px', color: C.t3, marginBottom:'3px' }}>💬 Nachricht an User</div>
-                  <div style={{ fontSize:'13px', color: C.t1 }}>{previewing.message_to_user}</div>
-                </div>
+                <span style={{ fontSize:'12px', color:C.teal }}>💬 {previewing.message_to_user}</span>
               )}
-
               {previewing.payment_link && previewing.tag !== 'Free' && (
-                <div style={{ marginBottom:'12px' }}>
-                  <div style={{ fontSize:'11px', color: C.t3, textTransform:'uppercase', letterSpacing:'0.07em', marginBottom:'4px' }}>Kauflink</div>
-                  <a href={previewing.payment_link} target="_blank" rel="noreferrer" style={{ fontSize:'13px', color: C.blue, wordBreak:'break-all' }}>
-                    {previewing.payment_link}
-                  </a>
-                </div>
+                <a href={previewing.payment_link} target="_blank" rel="noreferrer"
+                  style={{ fontSize:'12px', color:C.blue, fontWeight:600, textDecoration:'none', marginLeft:'auto' }}>
+                  🔗 Kaufen →
+                </a>
               )}
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── Edit Modal ─────────────────────────────────────────────────────────── */}
       {editing && (
