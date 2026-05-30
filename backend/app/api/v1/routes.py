@@ -416,7 +416,9 @@ async def analytics_summary(
                 (SELECT COUNT(*) FROM messages WHERE direction = 'incoming') AS incoming_messages,
                 (SELECT COUNT(*) FROM messages WHERE direction = 'outgoing') AS outgoing_messages,
                 (SELECT COUNT(*) FROM messages WHERE is_ai_generated = true) AS ai_messages,
-                (SELECT COUNT(*) FROM leads) AS total_leads,
+                (SELECT COUNT(*) FROM users
+                    WHERE (is_bot = false OR is_bot IS NULL)
+                      AND COALESCE(total_messages, 0) > 0) AS total_leads,
                 (SELECT AVG(lead_score) FROM users WHERE lead_score > 0) AS avg_lead_score,
                 (SELECT COUNT(*) FROM users WHERE lead_score >= 70) AS hot_leads,
                 (SELECT COUNT(*) FROM users WHERE lead_score >= 40 AND lead_score < 70) AS warm_leads,
@@ -437,40 +439,70 @@ async def analytics_summary(
         )
         daily_rows = daily.fetchall()
 
-        # Lead stage distribution — use expression in GROUP BY (alias not allowed in PG)
+        # Lead stage distribution — derive from users table (always populated) +
+        # augment with leads table for users that have been through the funnel.
+        # This ensures we always show data even when the leads table is sparse.
         try:
             stages_res = await session.execute(sql_text("""
-                SELECT
-                    CASE funnel_stage
-                        WHEN 'hook'                THEN 'hook'
-                        WHEN 'engagement'          THEN 'engagement'
-                        WHEN 'emotional_connection' THEN 'emotional_connection'
-                        WHEN 'monetization'        THEN 'monetization'
-                        ELSE 'hook'
-                    END AS stage,
-                    COUNT(*) AS count
-                FROM leads
-                GROUP BY 1
+                SELECT stage, SUM(cnt) AS count
+                FROM (
+                    -- Users that have a lead record: use the stored funnel_stage
+                    SELECT
+                        CASE l.funnel_stage
+                            WHEN 'hook'                 THEN 'hook'
+                            WHEN 'engagement'           THEN 'engagement'
+                            WHEN 'emotional_connection' THEN 'emotional_connection'
+                            WHEN 'monetization'         THEN 'monetization'
+                            ELSE                             'hook'
+                        END AS stage,
+                        COUNT(*) AS cnt
+                    FROM leads l
+                    GROUP BY 1
+
+                    UNION ALL
+
+                    -- Users WITHOUT a lead record: compute stage from message count
+                    SELECT
+                        CASE
+                            WHEN COALESCE(u.total_messages, 0) >= 20 THEN 'emotional_connection'
+                            WHEN COALESCE(u.total_messages, 0) >= 10 THEN 'engagement'
+                            ELSE                                           'hook'
+                        END AS stage,
+                        COUNT(*) AS cnt
+                    FROM users u
+                    WHERE (u.is_bot = false OR u.is_bot IS NULL)
+                      AND COALESCE(u.total_messages, 0) > 0
+                      AND NOT EXISTS (SELECT 1 FROM leads l2 WHERE l2.user_id = u.id)
+                    GROUP BY 1
+                ) combined
+                GROUP BY stage
                 ORDER BY
-                    CASE funnel_stage
-                        WHEN 'hook'                THEN 1
-                        WHEN 'engagement'          THEN 2
+                    CASE stage
+                        WHEN 'hook'                 THEN 1
+                        WHEN 'engagement'           THEN 2
                         WHEN 'emotional_connection' THEN 3
-                        WHEN 'monetization'        THEN 4
-                        ELSE 1 END
+                        WHEN 'monetization'         THEN 4
+                        ELSE 5
+                    END
             """))
             stage_rows = stages_res.fetchall()
         except Exception as e:
             logger.warning(f"lead_stages query failed: {e}")
             stage_rows = []
 
-        # Top users by lead score
+        # Top users — sort by lead_score first, then by total_messages as fallback.
+        # Include anyone who has sent at least 1 message.
         try:
             top_res = await session.execute(sql_text("""
-                SELECT id, first_name, last_name, username, lead_score, total_messages
+                SELECT id, first_name, last_name, username,
+                       COALESCE(lead_score, 0) AS lead_score,
+                       COALESCE(total_messages, 0) AS total_messages
                 FROM users
-                WHERE is_bot = false OR is_bot IS NULL
-                ORDER BY lead_score DESC NULLS LAST LIMIT 10
+                WHERE (is_bot = false OR is_bot IS NULL)
+                  AND COALESCE(total_messages, 0) > 0
+                ORDER BY lead_score DESC NULLS LAST,
+                         total_messages DESC NULLS LAST
+                LIMIT 10
             """))
             top_rows = top_res.fetchall()
         except Exception as e:
