@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
+import { useCreator } from '@/contexts/CreatorContext';
 
 const C = {
   s1:'#111113', s2:'#1c1c1e', s3:'#2c2c2e', sep:'rgba(255,255,255,0.07)',
@@ -118,6 +119,7 @@ export default function SettingsPage() {
   const jsonRef = useRef<HTMLInputElement>(null);
 
   const api = getApi();
+  const { withCreator } = useCreator();
 
   const testAI = useCallback(async () => {
     setTestingAI(true);
@@ -137,9 +139,9 @@ export default function SettingsPage() {
     finally { setEnablingAll(false); }
   }, [api]);
 
-  // Load existing persona on mount
+  // Load existing persona on mount — re-run when creator changes
   useEffect(() => {
-    fetch(`${api}/ai/persona`).then(r => r.json()).then(d => {
+    fetch(withCreator(`${api}/ai/persona`)).then(r => r.json()).then(d => {
       if (d && typeof d === 'object' && Object.keys(d).length > 0) {
         if (typeof d.persona === 'string' && d.persona.trim()) setPersona(d.persona);
         if (typeof d.ai_enabled === 'boolean') setAiEnabled(d.ai_enabled);
@@ -149,12 +151,12 @@ export default function SettingsPage() {
         if (Array.isArray(d.enabled_languages) && d.enabled_languages.length) setEnabledLanguages(d.enabled_languages);
       }
     }).catch(() => {}).finally(() => setLoading(false));
-  }, [api]);
+  }, [api, withCreator]);
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      await fetch(`${api}/ai/persona`, {
+      await fetch(withCreator(`${api}/ai/persona`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ persona, ai_enabled: aiEnabled, max_tokens: maxTokens, temperature, model, enabled_languages: enabledLanguages }),

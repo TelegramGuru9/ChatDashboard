@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
+import { useCreator } from '@/contexts/CreatorContext';
 
 const C = {
   bg:'#0a0a0a', s1:'#111113', s2:'#1c1c1e', s3:'#2c2c2e', s4:'#3a3a3c',
@@ -101,6 +102,7 @@ export default function MediaPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const api = apiBase();
+  const { withCreator } = useCreator();
 
   const toast = (msg: string) => { setStatus(msg); setTimeout(() => setStatus(''), 2800); };
 
@@ -108,9 +110,9 @@ export default function MediaPage() {
   const load = useCallback(async () => {
     try {
       const [libRes, setRes, catRes] = await Promise.all([
-        fetch(`${api}/config/media_library`),
-        fetch(`${api}/config/media_settings`),
-        fetch(`${api}/config/media_categories`),
+        fetch(withCreator(`${api}/config/media_library`)),
+        fetch(withCreator(`${api}/config/media_settings`)),
+        fetch(withCreator(`${api}/config/media_categories`)),
       ]);
       const lib = await libRes.json();
       const set = await setRes.json();
@@ -125,7 +127,7 @@ export default function MediaPage() {
       setCategories(Array.isArray(cat.value) ? cat.value : []);
     } catch { setItems([]); }
     finally { setLoading(false); }
-  }, [api]);
+  }, [api, withCreator]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -133,7 +135,7 @@ export default function MediaPage() {
   const saveLib = async (updated: MediaItem[]) => {
     setSaving(true);
     try {
-      const res = await fetch(`${api}/config/media_library`, {
+      const res = await fetch(withCreator(`${api}/config/media_library`), {
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify(updated),
       });
@@ -145,7 +147,7 @@ export default function MediaPage() {
 
   const saveSettings = async (updated: MediaSettings) => {
     setSettings(updated);
-    fetch(`${api}/config/media_settings`, {
+    fetch(withCreator(`${api}/config/media_settings`), {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(updated),
     }).catch(() => {});
@@ -153,7 +155,7 @@ export default function MediaPage() {
 
   const saveCategories = async (updated: string[]) => {
     setCategories(updated);
-    fetch(`${api}/config/media_categories`, {
+    fetch(withCreator(`${api}/config/media_categories`), {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(updated),
     }).catch(() => {});

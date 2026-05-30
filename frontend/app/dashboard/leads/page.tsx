@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
+import { useCreator } from '@/contexts/CreatorContext';
 
 const C = {
   bg:'#0a0a0a', s1:'#111113', s2:'#1c1c1e', s3:'#2c2c2e',
@@ -86,6 +87,7 @@ const apiBase = () => {
 
 export default function LeadsPage() {
   const router = useRouter();
+  const { withCreator } = useCreator();
   const [leads, setLeads]         = useState<Lead[]>([]);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState('');
@@ -97,13 +99,13 @@ export default function LeadsPage() {
   const fetchLeads = useCallback(async () => {
     try {
       setLoading(true); setError('');
-      const res = await fetch(`${api}/leads?limit=500`);
+      const res = await fetch(withCreator(`${api}/leads?limit=500`));
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json();
       setLeads(d.items || []);
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
-  }, [api]);
+  }, [api, withCreator]);
 
   useEffect(() => { fetchLeads(); }, [fetchLeads]);
 

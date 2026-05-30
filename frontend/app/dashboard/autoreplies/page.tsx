@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
+import { useCreator } from '@/contexts/CreatorContext';
 
 const C = {
   bg:'#0a0a0a', s1:'#111113', s2:'#1c1c1e', s3:'#2c2c2e', s4:'#3a3a3c',
@@ -325,10 +326,11 @@ export default function AutoRepliesPage() {
   const [expanded, setExpanded]       = useState<Set<string>>(new Set());
 
   const api = apiBase();
+  const { withCreator } = useCreator();
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(`${api}/config/auto_replies`);
+      const res = await fetch(withCreator(`${api}/config/auto_replies`));
       const d = await res.json();
       if (Array.isArray(d.value) && d.value.length > 0) {
         setRules(d.value);
@@ -339,12 +341,12 @@ export default function AutoRepliesPage() {
       // Backend nicht erreichbar — Standardregeln verwenden
     }
     setInitialized(true);
-  }, [api]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [api, withCreator]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = async (updated: Rule[], silent = false) => {
     setSaving(true);
     try {
-      const res = await fetch(`${api}/config/auto_replies`, {
+      const res = await fetch(withCreator(`${api}/config/auto_replies`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updated),

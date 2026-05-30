@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import Link from 'next/link';
+import { useCreator } from '@/contexts/CreatorContext';
 
 const C = {
   bg:'#0a0a0a', s1:'#111113', s2:'#1c1c1e', s3:'#2c2c2e', sep:'rgba(255,255,255,0.07)',
@@ -62,6 +63,7 @@ const apiBase = () => {
 };
 
 export default function DashboardPage() {
+  const { withCreator } = useCreator();
   const [health,     setHealth]    = useState<any>(null);
   const [tg,         setTg]        = useState<any>(null);
   const [stats,      setStats]     = useState({ messages:0, users:0, leads:0 });
@@ -79,9 +81,9 @@ export default function DashboardPage() {
     Promise.allSettled([
       fetch(`${base}/health`).then(r => r.json()),
       fetch(`${api}/telegram/status`).then(r => r.json()),
-      fetch(`${api}/messages?limit=1`).then(r => r.json()),
-      fetch(`${api}/users?limit=1`).then(r => r.json()),
-      fetch(`${api}/leads?limit=1`).then(r => r.json()),
+      fetch(withCreator(`${api}/messages?limit=1`)).then(r => r.json()),
+      fetch(withCreator(`${api}/users?limit=1`)).then(r => r.json()),
+      fetch(withCreator(`${api}/leads?limit=1`)).then(r => r.json()),
     ]).then(([h, t, m, u, l]) => {
       if (h.status === 'fulfilled') setHealth(h.value);
       if (t.status === 'fulfilled') setTg(t.value);
@@ -95,7 +97,7 @@ export default function DashboardPage() {
     // Global autopilot state — prefer config, fall back to "are any users enabled?"
     try {
       setApLoading(true);
-      const cfgRes = await fetch(`${api}/config/autopilot_global`);
+      const cfgRes = await fetch(withCreator(`${api}/config/autopilot_global`));
       const cfg = await cfgRes.json();
       if (cfg.value !== null && cfg.value !== undefined) {
         // Stored config exists
@@ -111,7 +113,7 @@ export default function DashboardPage() {
     } finally {
       setApLoading(false);
     }
-  }, [base, api]);
+  }, [base, api, withCreator]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -122,7 +124,7 @@ export default function DashboardPage() {
     setApStatus('');
     try {
       // 1. Save global config
-      await fetch(`${api}/config/autopilot_global`, {
+      await fetch(withCreator(`${api}/config/autopilot_global`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: next }),

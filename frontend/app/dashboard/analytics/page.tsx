@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
+import { useCreator } from '@/contexts/CreatorContext';
 
 const C = {
   bg:'#0a0a0a', s1:'#111113', s2:'#1c1c1e', s3:'#2c2c2e', s4:'#3a3a3c',
@@ -46,6 +47,7 @@ const apiBase = () => {
 
 export default function AnalyticsPage() {
   const router = useRouter();
+  const { withCreator } = useCreator();
   const [data, setData] = useState<AnalyticsSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -56,7 +58,7 @@ export default function AnalyticsPage() {
     if (!silent) setLoading(true);
     else setRefreshing(true);
     try {
-      const res = await fetch(`${apiBase()}/analytics/summary?days=${d}`);
+      const res = await fetch(withCreator(`${apiBase()}/analytics/summary?days=${d}`));
       if (!res.ok) throw new Error(`${res.status}`);
       const json = await res.json();
       setData(json);
@@ -67,7 +69,7 @@ export default function AnalyticsPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [days]);
+  }, [days, withCreator]);
 
   useEffect(() => { load(false, days); }, [days]); // eslint-disable-line react-hooks/exhaustive-deps
 

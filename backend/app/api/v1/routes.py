@@ -82,6 +82,7 @@ async def list_conversations(
     skip: int = Query(0, ge=0),
     limit: int = Query(500, ge=1, le=2000),
     folder: Optional[str] = Query(None, description="Filter by Telegram folder name"),
+    creator_id: Optional[str] = Query(None),
     session: AsyncSession = Depends(get_db),
 ):
     """
@@ -93,12 +94,15 @@ async def list_conversations(
         from sqlalchemy.sql import text as sql_text
 
         folder_clause = ""
+        creator_clause = ""
         params: dict = {"limit": limit, "skip": skip}
         if folder:
-            # JSONB array contains check: metadata->'tg_folders' @> '["FolderName"]'
             folder_clause = "AND u.metadata->'tg_folders' @> :folder_json::jsonb"
             import json
             params["folder_json"] = json.dumps([folder])
+        if creator_id:
+            creator_clause = "AND u.creator_id = :creator_id::uuid"
+            params["creator_id"] = creator_id
 
         raw = await session.execute(sql_text(f"""
             SELECT
@@ -125,6 +129,7 @@ async def list_conversations(
             ) m ON m.user_id = u.id
             WHERE (u.is_bot = false OR u.is_bot IS NULL)
             {folder_clause}
+            {creator_clause}
             ORDER BY COALESCE(m.created_at, u.created_at) DESC
             LIMIT :limit OFFSET :skip
         """), params)
@@ -153,12 +158,16 @@ async def list_conversations(
         # Total count
         count_params: dict = {}
         count_clause = ""
+        count_creator_clause = ""
         if folder:
             count_clause = "AND u.metadata->'tg_folders' @> :folder_json::jsonb"
             count_params["folder_json"] = params["folder_json"]
+        if creator_id:
+            count_creator_clause = "AND u.creator_id = :creator_id::uuid"
+            count_params["creator_id"] = creator_id
         count_res = await session.execute(sql_text(f"""
             SELECT COUNT(*) FROM users u
-            WHERE (u.is_bot = false OR u.is_bot IS NULL) {count_clause}
+            WHERE (u.is_bot = false OR u.is_bot IS NULL) {count_clause} {count_creator_clause}
         """), count_params)
         total = count_res.scalar() or 0
 
@@ -401,6 +410,7 @@ analytics_router = APIRouter(prefix="/analytics", tags=["Analytics"])
 @analytics_router.get("/summary")
 async def analytics_summary(
     days: int = Query(14, ge=1, le=365),
+    creator_id: Optional[str] = Query(None),
     session: AsyncSession = Depends(get_db),
 ):
     """Dashboard analytics: totals, funnel, lead distribution."""
@@ -409,101 +419,97 @@ async def analytics_summary(
         from datetime import timedelta
         cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
 
-        raw = await session.execute(sql_text("""
+        cfilter = "AND creator_id = :cid::uuid" if creator_id else ""
+        cparams = {"cid": creator_id} if creator_id else {}
+
+        raw = await session.execute(sql_text(f"""
             SELECT
-                (SELECT COUNT(*) FROM users WHERE is_bot = false OR is_bot IS NULL) AS total_users,
-                (SELECT COUNT(*) FROM messages) AS total_messages,
-                (SELECT COUNT(*) FROM messages WHERE direction = 'incoming') AS incoming_messages,
-                (SELECT COUNT(*) FROM messages WHERE direction = 'outgoing') AS outgoing_messages,
-                (SELECT COUNT(*) FROM messages WHERE is_ai_generated = true) AS ai_messages,
+                (SELECT COUNT(*) FROM users WHERE (is_bot = false OR is_bot IS NULL) {cfilter}) AS total_users,
+                (SELECT COUNT(*) FROM messages WHERE user_id IN
+                    (SELECT id FROM users WHERE (is_bot = false OR is_bot IS NULL) {cfilter})) AS total_messages,
+                (SELECT COUNT(*) FROM messages WHERE direction = 'incoming' AND user_id IN
+                    (SELECT id FROM users WHERE (is_bot = false OR is_bot IS NULL) {cfilter})) AS incoming_messages,
+                (SELECT COUNT(*) FROM messages WHERE direction = 'outgoing' AND user_id IN
+                    (SELECT id FROM users WHERE (is_bot = false OR is_bot IS NULL) {cfilter})) AS outgoing_messages,
+                (SELECT COUNT(*) FROM messages WHERE is_ai_generated = true AND user_id IN
+                    (SELECT id FROM users WHERE (is_bot = false OR is_bot IS NULL) {cfilter})) AS ai_messages,
                 (SELECT COUNT(*) FROM users
                     WHERE (is_bot = false OR is_bot IS NULL)
-                      AND COALESCE(total_messages, 0) > 0) AS total_leads,
-                (SELECT AVG(lead_score) FROM users WHERE lead_score > 0) AS avg_lead_score,
-                (SELECT COUNT(*) FROM users WHERE lead_score >= 70) AS hot_leads,
-                (SELECT COUNT(*) FROM users WHERE lead_score >= 40 AND lead_score < 70) AS warm_leads,
-                (SELECT COUNT(*) FROM users WHERE lead_score < 40 OR lead_score IS NULL) AS cold_leads,
-                (SELECT COUNT(*) FROM users WHERE ai_enabled = true) AS ai_enabled_count
-        """))
+                      AND COALESCE(total_messages, 0) > 0 {cfilter}) AS total_leads,
+                (SELECT AVG(lead_score) FROM users WHERE lead_score > 0 {cfilter}) AS avg_lead_score,
+                (SELECT COUNT(*) FROM users WHERE lead_score >= 70 {cfilter}) AS hot_leads,
+                (SELECT COUNT(*) FROM users WHERE lead_score >= 40 AND lead_score < 70 {cfilter}) AS warm_leads,
+                (SELECT COUNT(*) FROM users WHERE (lead_score < 40 OR lead_score IS NULL) {cfilter}) AS cold_leads,
+                (SELECT COUNT(*) FROM users WHERE ai_enabled = true {cfilter}) AS ai_enabled_count
+        """), cparams)
         row = raw.fetchone()
 
         # Messages per day (dynamic range)
-        daily = await session.execute(
-            sql_text("""
-                SELECT DATE(created_at) as date, COUNT(*) as count
-                FROM messages
-                WHERE created_at >= :cutoff
-                GROUP BY date ORDER BY date
-            """),
-            {"cutoff": cutoff},
-        )
+        daily_cfilter = "AND user_id IN (SELECT id FROM users WHERE creator_id = :cid::uuid)" if creator_id else ""
+        daily_params = {"cutoff": cutoff, **cparams}
+        daily = await session.execute(sql_text(f"""
+            SELECT DATE(created_at) as date, COUNT(*) as count
+            FROM messages
+            WHERE created_at >= :cutoff {daily_cfilter}
+            GROUP BY date ORDER BY date
+        """), daily_params)
         daily_rows = daily.fetchall()
 
-        # Lead stage distribution — derive from users table (always populated) +
-        # augment with leads table for users that have been through the funnel.
-        # This ensures we always show data even when the leads table is sparse.
+        # Lead stage distribution
+        ucfilter = "AND u.creator_id = :cid::uuid" if creator_id else ""
+        lcfilter = "AND l.user_id IN (SELECT id FROM users WHERE creator_id = :cid::uuid)" if creator_id else ""
         try:
-            stages_res = await session.execute(sql_text("""
+            stages_res = await session.execute(sql_text(f"""
                 SELECT stage, SUM(cnt) AS count
                 FROM (
-                    -- Users that have a lead record: use the stored funnel_stage
                     SELECT
                         CASE l.funnel_stage
                             WHEN 'hook'                 THEN 'hook'
                             WHEN 'engagement'           THEN 'engagement'
                             WHEN 'emotional_connection' THEN 'emotional_connection'
                             WHEN 'monetization'         THEN 'monetization'
-                            ELSE                             'hook'
-                        END AS stage,
-                        COUNT(*) AS cnt
+                            ELSE 'hook'
+                        END AS stage, COUNT(*) AS cnt
                     FROM leads l
+                    WHERE 1=1 {lcfilter}
                     GROUP BY 1
-
                     UNION ALL
-
-                    -- Users WITHOUT a lead record: compute stage from message count
                     SELECT
                         CASE
-                            WHEN COALESCE(u.total_messages, 0) >= 20 THEN 'emotional_connection'
-                            WHEN COALESCE(u.total_messages, 0) >= 10 THEN 'engagement'
-                            ELSE                                           'hook'
-                        END AS stage,
-                        COUNT(*) AS cnt
+                            WHEN COALESCE(u.total_messages,0) >= 20 THEN 'emotional_connection'
+                            WHEN COALESCE(u.total_messages,0) >= 10 THEN 'engagement'
+                            ELSE 'hook'
+                        END AS stage, COUNT(*) AS cnt
                     FROM users u
                     WHERE (u.is_bot = false OR u.is_bot IS NULL)
-                      AND COALESCE(u.total_messages, 0) > 0
+                      AND COALESCE(u.total_messages,0) > 0
                       AND NOT EXISTS (SELECT 1 FROM leads l2 WHERE l2.user_id = u.id)
+                      {ucfilter}
                     GROUP BY 1
                 ) combined
                 GROUP BY stage
-                ORDER BY
-                    CASE stage
-                        WHEN 'hook'                 THEN 1
-                        WHEN 'engagement'           THEN 2
-                        WHEN 'emotional_connection' THEN 3
-                        WHEN 'monetization'         THEN 4
-                        ELSE 5
-                    END
-            """))
+                ORDER BY CASE stage
+                    WHEN 'hook' THEN 1 WHEN 'engagement' THEN 2
+                    WHEN 'emotional_connection' THEN 3 WHEN 'monetization' THEN 4 ELSE 5
+                END
+            """), cparams)
             stage_rows = stages_res.fetchall()
         except Exception as e:
             logger.warning(f"lead_stages query failed: {e}")
             stage_rows = []
 
-        # Top users — sort by lead_score first, then by total_messages as fallback.
-        # Include anyone who has sent at least 1 message.
         try:
-            top_res = await session.execute(sql_text("""
+            top_res = await session.execute(sql_text(f"""
                 SELECT id, first_name, last_name, username,
                        COALESCE(lead_score, 0) AS lead_score,
                        COALESCE(total_messages, 0) AS total_messages
                 FROM users
                 WHERE (is_bot = false OR is_bot IS NULL)
                   AND COALESCE(total_messages, 0) > 0
-                ORDER BY lead_score DESC NULLS LAST,
-                         total_messages DESC NULLS LAST
+                  {ucfilter}
+                ORDER BY lead_score DESC NULLS LAST, total_messages DESC NULLS LAST
                 LIMIT 10
-            """))
+            """), cparams)
             top_rows = top_res.fetchall()
         except Exception as e:
             logger.warning(f"top_users query failed: {e}")
@@ -1020,13 +1026,38 @@ async def ai_status():
 config_router = APIRouter(prefix="/config", tags=["Config"])
 
 
-@config_router.get("/{key}")
-async def get_config(key: str):
-    """Get config value by key."""
+def _scoped_key(key: str, creator_id: Optional[str], default_id: Optional[str]) -> str:
+    """Return creator-scoped config key. Default creator uses plain keys."""
+    if not creator_id or creator_id == default_id:
+        return key
+    return f"creator:{creator_id}:{key}"
+
+
+async def _get_default_creator_id() -> Optional[str]:
+    """Return the UUID string of the default creator, or None."""
     try:
+        from app.db.models import Creator as CreatorModel
         async with db_manager.get_session() as session:
-            result = await session.execute(select(Config).where(Config.key == key))
+            res = await session.execute(select(CreatorModel).where(CreatorModel.is_default == True))
+            c = res.scalars().first()
+            return str(c.id) if c else None
+    except Exception:
+        return None
+
+
+@config_router.get("/{key}")
+async def get_config(key: str, creator_id: Optional[str] = Query(None)):
+    """Get config value by key, scoped to creator."""
+    try:
+        default_id = await _get_default_creator_id()
+        scoped = _scoped_key(key, creator_id, default_id)
+        async with db_manager.get_session() as session:
+            result = await session.execute(select(Config).where(Config.key == scoped))
             cfg = result.scalars().first()
+            # Fallback: if non-default creator has no config yet, return the default creator's config
+            if cfg is None and scoped != key:
+                result2 = await session.execute(select(Config).where(Config.key == key))
+                cfg = result2.scalars().first()
             return {"key": key, "value": cfg.value if cfg else None}
     except Exception as e:
         logger.error(f"Error getting config {key}: {e}")
@@ -1034,28 +1065,25 @@ async def get_config(key: str):
 
 
 @config_router.post("/{key}")
-async def save_config(key: str, payload: Any = Body(...)):
-    """
-    Save or merge config for a key.
-    Accepts any JSON value (dict, list, string, …).
-    If payload is a dict containing '__merge': true it deep-merges instead of replacing.
-    """
+async def save_config(key: str, creator_id: Optional[str] = Query(None), payload: Any = Body(...)):
+    """Save or merge config for a key, scoped to creator."""
     try:
+        default_id = await _get_default_creator_id()
+        scoped = _scoped_key(key, creator_id, default_id)
         merge = False
         if isinstance(payload, dict):
             merge = payload.pop("__merge", False)
         async with db_manager.get_session() as session:
-            result = await session.execute(select(Config).where(Config.key == key))
+            result = await session.execute(select(Config).where(Config.key == scoped))
             cfg = result.scalars().first()
             if cfg:
                 if merge and isinstance(cfg.value, dict) and isinstance(payload, dict):
-                    merged = {**cfg.value, **payload}
-                    cfg.value = merged
+                    cfg.value = {**cfg.value, **payload}
                 else:
                     cfg.value = payload
                 cfg.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
             else:
-                cfg = Config(key=key, value=payload)
+                cfg = Config(key=scoped, value=payload)
                 session.add(cfg)
             await session.commit()
         return {"status": "saved", "key": key}
@@ -1077,6 +1105,122 @@ async def list_config_keys():
         raise HTTPException(status_code=500, detail="Failed to list config")
 
 
+# ==================== CREATOR ROUTES ====================
+
+from app.db.models import Creator as CreatorModel
+
+creators_router = APIRouter(prefix="/creators", tags=["Creators"])
+
+
+@creators_router.get("")
+async def list_creators():
+    """List all creators."""
+    try:
+        async with db_manager.get_session() as session:
+            res = await session.execute(
+                select(CreatorModel).order_by(CreatorModel.is_default.desc(), CreatorModel.created_at)
+            )
+            rows = res.scalars().all()
+            return [
+                {
+                    "id": str(r.id),
+                    "name": r.name,
+                    "display_name": r.display_name or r.name,
+                    "color": r.color or "#0a84ff",
+                    "emoji": r.emoji or "🎭",
+                    "telegram_phone": r.telegram_phone,
+                    "has_session": bool(r.telegram_session),
+                    "is_active": r.is_active,
+                    "is_default": r.is_default,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                }
+                for r in rows
+            ]
+    except Exception as e:
+        logger.error(f"list_creators error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@creators_router.post("")
+async def create_creator(payload: Dict[str, Any] = Body(...)):
+    """Create a new creator."""
+    try:
+        import uuid as _uuid
+        async with db_manager.get_session() as session:
+            c = CreatorModel(
+                id=_uuid.uuid4(),
+                name=payload.get("name", "Creator"),
+                display_name=payload.get("display_name") or payload.get("name"),
+                color=payload.get("color", "#0a84ff"),
+                emoji=payload.get("emoji", "🎭"),
+                telegram_phone=payload.get("telegram_phone"),
+                telegram_session=payload.get("telegram_session"),
+                is_active=payload.get("is_active", True),
+                is_default=False,
+            )
+            session.add(c)
+            await session.commit()
+            return {
+                "id": str(c.id), "name": c.name, "display_name": c.display_name,
+                "color": c.color, "emoji": c.emoji, "is_active": c.is_active,
+                "is_default": c.is_default, "has_session": bool(c.telegram_session),
+            }
+    except Exception as e:
+        logger.error(f"create_creator error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@creators_router.put("/{cid}")
+async def update_creator(cid: str, payload: Dict[str, Any] = Body(...)):
+    """Update creator fields."""
+    try:
+        import uuid as _uuid
+        async with db_manager.get_session() as session:
+            res = await session.execute(
+                select(CreatorModel).where(CreatorModel.id == _uuid.UUID(cid))
+            )
+            c = res.scalars().first()
+            if not c:
+                raise HTTPException(status_code=404, detail="Creator not found")
+            for field in ("name", "display_name", "color", "emoji", "telegram_phone", "is_active"):
+                if field in payload:
+                    setattr(c, field, payload[field])
+            # Only update session if explicitly provided and non-empty
+            if payload.get("telegram_session"):
+                c.telegram_session = payload["telegram_session"]
+            await session.commit()
+            return {"status": "updated", "id": str(c.id)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"update_creator error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@creators_router.delete("/{cid}")
+async def delete_creator(cid: str):
+    """Delete a creator (cannot delete the default creator)."""
+    try:
+        import uuid as _uuid
+        async with db_manager.get_session() as session:
+            res = await session.execute(
+                select(CreatorModel).where(CreatorModel.id == _uuid.UUID(cid))
+            )
+            c = res.scalars().first()
+            if not c:
+                raise HTTPException(status_code=404, detail="Creator not found")
+            if c.is_default:
+                raise HTTPException(status_code=400, detail="Cannot delete the default creator")
+            await session.delete(c)
+            await session.commit()
+            return {"status": "deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"delete_creator error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ==================== ROUTER AGGREGATION ====================
 
 api_router = APIRouter()
@@ -1087,5 +1231,6 @@ api_router.include_router(telegram_router)
 api_router.include_router(ai_router)
 api_router.include_router(config_router)
 api_router.include_router(analytics_router)
+api_router.include_router(creators_router)
 
 __all__ = ["api_router"]

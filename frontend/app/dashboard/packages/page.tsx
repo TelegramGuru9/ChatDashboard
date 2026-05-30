@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
+import { useCreator } from '@/contexts/CreatorContext';
 
 const C = {
   bg:'#0a0a0a', s1:'#111113', s2:'#1c1c1e', s3:'#2c2c2e', s4:'#3a3a3c',
@@ -81,6 +82,7 @@ const getApi = () => {
 };
 
 export default function PackagesPage() {
+  const { withCreator } = useCreator();
   const [packages,    setPackages]    = useState<Package[]>([]);
   const [mediaLib,    setMediaLib]    = useState<MediaItem[]>([]);
   const [editing,     setEditing]     = useState<Package | null>(null);
@@ -96,8 +98,8 @@ export default function PackagesPage() {
   const load = useCallback(async () => {
     try {
       const [pkgRes, libRes] = await Promise.all([
-        fetch(`${api}/config/packages`),
-        fetch(`${api}/config/media_library`),
+        fetch(withCreator(`${api}/config/packages`)),
+        fetch(withCreator(`${api}/config/media_library`)),
       ]);
       const pkgData  = await pkgRes.json();
       const libData  = await libRes.json();
@@ -117,12 +119,12 @@ export default function PackagesPage() {
       setMediaLib(Array.isArray(libData.value) ? libData.value : []);
     } catch { setPackages([]); }
     finally { setLoading(false); }
-  }, [api]);
+  }, [api, withCreator]);
 
   const persist = async (updated: Package[]) => {
     setSaving(true);
     try {
-      const res = await fetch(`${api}/config/packages`, {
+      const res = await fetch(withCreator(`${api}/config/packages`), {
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify(updated),
       });

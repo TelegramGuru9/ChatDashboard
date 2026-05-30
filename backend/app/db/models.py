@@ -29,10 +29,36 @@ def get_utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+class Creator(Base):
+    """
+    A creator / Telegram account managed by this CRM.
+    Each creator has their own contacts, conversations, config (persona, packages, etc.)
+    and optionally their own Telegram session string.
+    """
+
+    __tablename__ = "creators"
+
+    id           = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name         = Column(String(255), nullable=False)          # internal identifier
+    display_name = Column(String(255), nullable=True)           # shown in UI
+    color        = Column(String(20),  default="#0a84ff")       # avatar accent color
+    emoji        = Column(String(10),  default="🎭")            # avatar emoji
+    telegram_phone   = Column(String(50), nullable=True)
+    telegram_session = Column(Text, nullable=True)              # Telethon StringSession
+    is_active    = Column(Boolean, default=True,  nullable=False)
+    is_default   = Column(Boolean, default=False, nullable=False)  # the original account
+    created_at   = Column(DateTime, default=get_utc_now, nullable=False)
+    updated_at   = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
+
+    __table_args__ = (
+        Index("idx_creator_active", "is_active"),
+    )
+
+
 class User(Base):
     """
     Telegram user entity.
-    
+
     WHY THIS STRUCTURE:
     - user_id is Telegram's user ID (indexed for fast lookups)
     - conversation_state tracks relationship stage for funnel logic
@@ -40,11 +66,12 @@ class User(Base):
     - ai_enabled allows manual control per user
     - last_message_at for engagement tracking
     """
-    
+
     __tablename__ = "users"
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(BigInteger, unique=True, nullable=False, index=True)
+    user_id = Column(BigInteger, nullable=False, index=True)
+    creator_id = Column(UUID(as_uuid=True), ForeignKey("creators.id", ondelete="SET NULL"), nullable=True, index=True)
     
     # Basic info
     first_name = Column(String(255), nullable=False)
@@ -107,10 +134,13 @@ class User(Base):
     )
     
     __table_args__ = (
+        # Each Telegram user_id is unique per creator (two creators can share a fan)
+        UniqueConstraint("user_id", "creator_id", name="uq_user_creator"),
         Index("idx_user_conversation_state", "conversation_state"),
         Index("idx_user_lead_score", "lead_score"),
         Index("idx_user_created_at", "created_at"),
         Index("idx_user_tags", "tags", postgresql_using="gin"),
+        Index("idx_user_creator", "creator_id"),
     )
 
 
@@ -490,6 +520,7 @@ class Config(Base):
 
 
 __all__ = [
+    "Creator",
     "User",
     "Message",
     "Memory",

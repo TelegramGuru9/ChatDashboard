@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
+import { useCreator } from '@/contexts/CreatorContext';
 
 const C = {
   bg:'#0a0a0a', s1:'#111113', s2:'#1c1c1e', s3:'#2c2c2e', s4:'#3a3a3c',
@@ -93,6 +94,7 @@ const apiBase = () => {
 function InboxContent() {
   const searchParams = useSearchParams();
   const autoSelectUserId = searchParams?.get('user') ?? null;
+  const { withCreator } = useCreator();
   const [tgConnected, setTgConnected] = useState<boolean | null>(null);
   const [tgAccount, setTgAccount]     = useState('');
   const [convos, setConvos]           = useState<Conversation[]>([]);
@@ -147,12 +149,12 @@ function InboxContent() {
     try {
       setLoadingConvos(true);
       const folderParam = (folder && folder !== 'All') ? `&folder=${encodeURIComponent(folder)}` : '';
-      const data = await fetch(`${api}/messages/conversations?limit=500${folderParam}`).then(r => r.json());
+      const data = await fetch(withCreator(`${api}/messages/conversations?limit=500${folderParam}`)).then(r => r.json());
       setConvos(data.items || []);
       return (data.items || []).length as number;
     } catch { setConvos([]); return 0; }
     finally { setLoadingConvos(false); }
-  }, [api]);
+  }, [api, withCreator]);
 
   const loadMessages = useCallback(async (userId: string, append = false) => {
     try {
