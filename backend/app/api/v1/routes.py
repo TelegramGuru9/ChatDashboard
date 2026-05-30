@@ -1114,16 +1114,33 @@ creators_router = APIRouter(prefix="/creators", tags=["Creators"])
 
 @creators_router.get("")
 async def list_creators():
-    """List all creators."""
+    """List all creators with live connection status."""
     try:
+        from app.services.telegram.client import telegram_client, creator_pool
         async with db_manager.get_session() as session:
             res = await session.execute(
                 select(CreatorModel).order_by(CreatorModel.is_default.desc(), CreatorModel.created_at)
             )
             rows = res.scalars().all()
-            return [
-                {
-                    "id": str(r.id),
+            result = []
+            for r in rows:
+                cid = str(r.id)
+                if r.is_default:
+                    is_connected = telegram_client.is_connected
+                    account = {}
+                    if is_connected:
+                        try:
+                            me = await telegram_client.client.get_me()
+                            name = f"{getattr(me,'first_name','') or ''} {getattr(me,'last_name','') or ''}".strip()
+                            account = {"name": name or getattr(me,"username",""), "username": getattr(me,"username",None)}
+                        except Exception:
+                            pass
+                else:
+                    is_connected = creator_pool.is_connected(cid)
+                    account = creator_pool.get_account(cid) or {}
+
+                result.append({
+                    "id": cid,
                     "name": r.name,
                     "display_name": r.display_name or r.name,
                     "color": r.color or "#0a84ff",
@@ -1132,10 +1149,11 @@ async def list_creators():
                     "has_session": bool(r.telegram_session),
                     "is_active": r.is_active,
                     "is_default": r.is_default,
+                    "is_connected": is_connected,
+                    "account_name": account.get("name") or account.get("username"),
                     "created_at": r.created_at.isoformat() if r.created_at else None,
-                }
-                for r in rows
-            ]
+                })
+            return result
     except Exception as e:
         logger.error(f"list_creators error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1218,6 +1236,144 @@ async def delete_creator(cid: str):
         raise
     except Exception as e:
         logger.error(f"delete_creator error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@creators_router.post("/{cid}/connect")
+async def connect_creator(cid: str, payload: Dict[str, Any] = Body(default={})):
+    """
+    Connect a creator's Telegram account.
+    For the default creator: uses env-var session (reconnect flow).
+    For non-default creators: uses the session string stored in DB
+      (or one supplied in the request body as 'session_string').
+    Also updates creator.display_name from the Telegram account name.
+    """
+    try:
+        import uuid as _uuid
+        from app.services.telegram.client import telegram_client, creator_pool
+
+        async with db_manager.get_session() as session:
+            res = await session.execute(
+                select(CreatorModel).where(CreatorModel.id == _uuid.UUID(cid))
+            )
+            c = res.scalars().first()
+            if not c:
+                raise HTTPException(status_code=404, detail="Creator not found")
+
+            # Allow session_string override from payload
+            session_str = payload.get("session_string") or c.telegram_session
+            if payload.get("session_string"):
+                c.telegram_session = payload["session_string"]
+
+            if c.is_default:
+                # Default creator → use the legacy telegram_client (env vars)
+                success = await telegram_client.connect()
+                if not success:
+                    raise HTTPException(status_code=400, detail="Connection failed — check session string in Railway env vars")
+                me = await telegram_client.client.get_me()
+                name = f"{getattr(me,'first_name','') or ''} {getattr(me,'last_name','') or ''}".strip()
+                account_name = name or getattr(me, "username", "") or c.name
+                c.display_name = account_name
+                await session.commit()
+                return {"status": "connected", "account_name": account_name, "creator_id": cid}
+
+            # Non-default creator
+            if not session_str:
+                raise HTTPException(status_code=400, detail="No session string stored for this creator. Save a session string first.")
+
+            api_id  = int(getattr(__import__("app.core.config", fromlist=["settings"]), "settings").TELEGRAM_API_ID or 0)
+            api_hash = getattr(__import__("app.core.config", fromlist=["settings"]), "settings").TELEGRAM_API_HASH or ""
+
+            ok, account = await creator_pool.connect_creator(cid, session_str, api_id, api_hash)
+            if not ok:
+                raise HTTPException(status_code=400, detail="Connection failed — check session string and API credentials")
+
+            # Update display_name and phone in DB
+            account_name = account.get("name") or account.get("username") or c.name
+            c.display_name = account_name
+            if account.get("phone"):
+                c.telegram_phone = account["phone"]
+            await session.commit()
+
+            return {"status": "connected", "account_name": account_name, "creator_id": cid}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"connect_creator {cid}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@creators_router.post("/{cid}/disconnect")
+async def disconnect_creator_endpoint(cid: str):
+    """Disconnect a creator's Telegram client."""
+    try:
+        import uuid as _uuid
+        from app.services.telegram.client import telegram_client, creator_pool
+
+        async with db_manager.get_session() as session:
+            res = await session.execute(
+                select(CreatorModel).where(CreatorModel.id == _uuid.UUID(cid))
+            )
+            c = res.scalars().first()
+            if not c:
+                raise HTTPException(status_code=404, detail="Creator not found")
+
+            if c.is_default:
+                await telegram_client.disconnect()
+            else:
+                await creator_pool.disconnect_creator(cid)
+
+            return {"status": "disconnected", "creator_id": cid}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"disconnect_creator {cid}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@creators_router.get("/{cid}/status")
+async def creator_status(cid: str):
+    """Get connection status + account info for a creator."""
+    try:
+        import uuid as _uuid
+        from app.services.telegram.client import telegram_client, creator_pool
+
+        async with db_manager.get_session() as session:
+            res = await session.execute(
+                select(CreatorModel).where(CreatorModel.id == _uuid.UUID(cid))
+            )
+            c = res.scalars().first()
+            if not c:
+                raise HTTPException(status_code=404, detail="Creator not found")
+
+        if c.is_default:
+            connected = telegram_client.is_connected
+            account = {}
+            if connected:
+                try:
+                    me = await telegram_client.client.get_me()
+                    name = f"{getattr(me,'first_name','') or ''} {getattr(me,'last_name','') or ''}".strip()
+                    account = {"name": name or getattr(me,"username",""), "username": getattr(me,"username",None), "phone": getattr(me,"phone",None)}
+                except Exception:
+                    pass
+        else:
+            connected = creator_pool.is_connected(cid)
+            account = creator_pool.get_account(cid) or {}
+
+        return {
+            "creator_id": cid,
+            "connected": connected,
+            "has_session": bool(c.telegram_session),
+            "account": account,
+            "display_name": c.display_name or c.name,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"creator_status {cid}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

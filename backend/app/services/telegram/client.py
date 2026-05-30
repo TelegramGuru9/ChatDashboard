@@ -1,65 +1,53 @@
 """
 app/services/telegram/client.py
-Telethon client wrapper for Telegram integration.
-
-ARCHITECTURE DECISIONS:
-1. Wrapper pattern for dependency injection
-2. Connection pooling and reconnection logic
-3. Async/await throughout
-4. Error handling and recovery
-5. Event emitter for message notifications
+Telethon client wrapper — supports both the legacy single-client mode
+(default creator via env vars) and the new CreatorClientPool (one client
+per creator, connected via stored session string).
 """
 
 import logging
-from typing import Optional, Callable, Any
+import asyncio
+from typing import Optional, Callable, Any, Dict, Tuple
 from telethon import TelegramClient, events
 from telethon.errors import SessionPasswordNeededError, AuthKeyUnregisteredError
 from telethon.network import ConnectionTcpAbridged
 from telethon.sessions import StringSession
 from pathlib import Path
-import asyncio
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Low-level client wrapper (used both standalone and inside the pool)
+# ─────────────────────────────────────────────────────────────────────────────
+
 class TelegramClientManager:
     """
-    Manages Telegram client connection and lifecycle.
-    
-    WHY THIS PATTERN:
-    - Abstraction over Telethon for easier testing
-    - Centralized connection management
-    - Automatic reconnection
-    - Event handling separation
+    Manages one Telegram userbot connection.
+    Can be initialised from env-var settings (legacy) or explicit credentials.
     """
-    
+
     def __init__(self):
         self.client: Optional[TelegramClient] = None
         self._is_connected = False
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = 5
-        self._reconnect_delay = 5  # seconds
-        
-        # Event handlers registry
+        self._reconnect_delay = 5
+
         self._handlers: dict[str, list[Callable]] = {
             "message_new": [],
             "message_edit": [],
             "connection_lost": [],
             "connection_restored": [],
         }
-    
+
+    # ── Public connect API ────────────────────────────────────────────────
+
     async def connect(self) -> bool:
-        """
-        Establish Telegram connection.
-        
-        Returns:
-            bool: True if connection successful
-        """
+        """Connect using env-var credentials (default creator / legacy mode)."""
         try:
-            # Use StringSession if available (preferred for cloud deploys),
-            # otherwise fall back to file session
             if settings.TELEGRAM_SESSION_STRING:
                 session = StringSession(settings.TELEGRAM_SESSION_STRING)
                 logger.info("Using StringSession for Telegram auth")
@@ -78,7 +66,6 @@ class TelegramClientManager:
                 request_retries=settings.TELEGRAM_REQUEST_RETRIES,
             )
 
-            # StringSession is already authenticated — just connect, no phone needed
             if settings.TELEGRAM_SESSION_STRING:
                 await self.client.connect()
             else:
@@ -87,69 +74,181 @@ class TelegramClientManager:
                     code_callback=self._code_callback,
                     password=self._password_callback,
                 )
-            
-            # Get self user
+
             me = await self.client.get_me()
             logger.info(f"Connected to Telegram as {me.first_name} (@{me.username})")
-            
-            # Register event handlers
             self._register_event_handlers()
-            
             self._is_connected = True
             self._reconnect_attempts = 0
-            
             return True
-            
+
         except SessionPasswordNeededError:
-            logger.error("2FA password needed - configure and try again")
+            logger.error("2FA password needed")
             return False
         except AuthKeyUnregisteredError:
-            logger.error("Session key unregistered - delete session and reconnect")
+            logger.error("Session key unregistered — delete session and reconnect")
             return False
         except Exception as e:
             logger.error(f"Failed to connect to Telegram: {e}")
             return False
-    
+
+    async def connect_with_session(
+        self,
+        session_string: str,
+        api_id: int,
+        api_hash: str,
+        creator_id: str,
+    ) -> Tuple[bool, dict]:
+        """
+        Connect using an explicit session string + credentials.
+        Returns (success, account_info_dict).
+        Used by CreatorClientPool for non-default creators.
+        """
+        try:
+            session = StringSession(session_string)
+            self.client = TelegramClient(
+                session=session,
+                api_id=api_id,
+                api_hash=api_hash,
+                connection=ConnectionTcpAbridged,
+                auto_reconnect=True,
+                connection_retries=3,
+                retry_delay=1,
+                request_retries=3,
+            )
+            await self.client.connect()
+
+            if not await self.client.is_user_authorized():
+                logger.error(f"Creator {creator_id}: session not authorized")
+                await self.client.disconnect()
+                return False, {}
+
+            me = await self.client.get_me()
+            name = f"{getattr(me, 'first_name', '') or ''} {getattr(me, 'last_name', '') or ''}".strip()
+            account = {
+                "name": name or getattr(me, "username", ""),
+                "username": getattr(me, "username", None),
+                "phone": getattr(me, "phone", None),
+            }
+            logger.info(f"Creator {creator_id}: connected as {account['name']} (@{account['username']})")
+
+            # Register per-creator message handler
+            self._register_creator_handlers(creator_id)
+            self._is_connected = True
+            self._reconnect_attempts = 0
+            return True, account
+
+        except Exception as e:
+            logger.error(f"Creator {creator_id}: connect_with_session failed: {e}")
+            return False, {}
+
     async def disconnect(self) -> None:
-        """Disconnect from Telegram."""
         if self.client:
             await self.client.disconnect()
             self._is_connected = False
             logger.info("Disconnected from Telegram")
-    
+
     async def ensure_connected(self) -> bool:
-        """
-        Ensure connection is active, reconnect if needed.
-        
-        Returns:
-            bool: True if connected
-        """
         if self._is_connected and self.client and self.client.is_connected():
             return True
-        
-        logger.warning("Connection lost, attempting to reconnect...")
-        
+        logger.warning("Connection lost, attempting to reconnect…")
         if self._reconnect_attempts >= self._max_reconnect_attempts:
             logger.error("Max reconnection attempts reached")
             return False
-        
         self._reconnect_attempts += 1
         await asyncio.sleep(self._reconnect_delay)
-        
         success = await self.connect()
         if success:
             await self._emit_event("connection_restored", {})
         else:
             await self._emit_event("connection_lost", {})
-        
         return success
-    
+
+    # ── Messaging helpers ────────────────────────────────────────────────
+
+    async def send_message(self, user_id: int, text: str, reply_to: Optional[int] = None) -> Optional[int]:
+        if not await self.ensure_connected():
+            return None
+        try:
+            message = await self.client.send_message(entity=user_id, message=text, reply_to=reply_to)
+            return message.id
+        except Exception as e:
+            logger.error(f"Failed to send message to {user_id}: {e}")
+            return None
+
+    async def send_file(self, user_id: int, file_bytes, caption: str = "", file_name: str = "file") -> Optional[int]:
+        if not await self.ensure_connected():
+            return None
+        try:
+            import io
+            bio = io.BytesIO(file_bytes)
+            bio.name = file_name
+            message = await self.client.send_file(entity=user_id, file=bio, caption=caption)
+            return message.id
+        except Exception as e:
+            logger.error(f"Failed to send file to {user_id}: {e}")
+            return None
+
+    async def action(self, user_id: int):
+        """Return a typing action context manager."""
+        if self.client:
+            return self.client.action(user_id, "typing")
+        return None
+
+    async def edit_message(self, user_id: int, message_id: int, text: str) -> bool:
+        if not await self.ensure_connected():
+            return False
+        try:
+            await self.client.edit_message(entity=user_id, message=message_id, text=text)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to edit message: {e}")
+            return False
+
+    async def get_user(self, user_id: int) -> Optional[Any]:
+        if not await self.ensure_connected():
+            return None
+        try:
+            return await self.client.get_entity(user_id)
+        except Exception as e:
+            logger.error(f"Failed to get user {user_id}: {e}")
+            return None
+
+    async def get_chat_history(self, user_id: int, limit: int = 100) -> list[Any]:
+        if not await self.ensure_connected():
+            return []
+        try:
+            messages = []
+            async for message in self.client.iter_messages(user_id, limit=limit):
+                messages.append(message)
+            return messages
+        except Exception as e:
+            logger.error(f"Failed to get chat history: {e}")
+            return []
+
+    # ── Event system ────────────────────────────────────────────────────
+
+    def on(self, event_name: str, handler: Callable) -> None:
+        if event_name not in self._handlers:
+            raise ValueError(f"Unknown event type: {event_name}")
+        self._handlers[event_name].append(handler)
+
+    def off(self, event_name: str, handler: Callable) -> None:
+        if event_name in self._handlers:
+            self._handlers[event_name].remove(handler)
+
+    async def _emit_event(self, event_name: str, data: dict) -> None:
+        if event_name not in self._handlers:
+            return
+        tasks = [handler(data) for handler in self._handlers[event_name]]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     def _register_event_handlers(self) -> None:
-        """Register Telethon event handlers."""
+        """Register handlers for the legacy single-client (default creator)."""
         if not self.client:
             return
-        
-        # New message event
+
         @self.client.on(events.NewMessage(incoming=True))
         async def handle_new_message(event):
             try:
@@ -160,8 +259,7 @@ class TelegramClientManager:
                 })
             except Exception as e:
                 logger.error(f"Error handling new message: {e}")
-        
-        # Message edited event
+
         @self.client.on(events.MessageEdited())
         async def handle_message_edited(event):
             try:
@@ -172,166 +270,150 @@ class TelegramClientManager:
                 })
             except Exception as e:
                 logger.error(f"Error handling message edit: {e}")
-        
-        logger.info("Event handlers registered")
-    
-    async def send_message(
-        self,
-        user_id: int,
-        text: str,
-        reply_to: Optional[int] = None,
-    ) -> Optional[int]:
-        """
-        Send message to user.
-        
-        Args:
-            user_id: Telegram user ID
-            text: Message text
-            reply_to: Message ID to reply to
-            
-        Returns:
-            Message ID if successful, None otherwise
-        """
-        if not await self.ensure_connected():
-            logger.error("Cannot send message: not connected")
-            return None
-        
-        try:
-            message = await self.client.send_message(
-                entity=user_id,
-                message=text,
-                reply_to=reply_to,
-            )
-            logger.info(f"Sent message {message.id} to user {user_id}")
-            return message.id
-            
-        except Exception as e:
-            logger.error(f"Failed to send message to {user_id}: {e}")
-            return None
-    
-    async def edit_message(
-        self,
-        user_id: int,
-        message_id: int,
-        text: str,
-    ) -> bool:
-        """
-        Edit existing message.
-        
-        Args:
-            user_id: Telegram user ID
-            message_id: ID of message to edit
-            text: New message text
-            
-        Returns:
-            True if successful
-        """
-        if not await self.ensure_connected():
-            return False
-        
-        try:
-            await self.client.edit_message(
-                entity=user_id,
-                message=message_id,
-                text=text,
-            )
-            logger.info(f"Edited message {message_id} for user {user_id}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to edit message: {e}")
-            return False
-    
-    async def get_user(self, user_id: int) -> Optional[Any]:
-        """Get user entity from Telegram."""
-        if not await self.ensure_connected():
-            return None
-        
-        try:
-            return await self.client.get_entity(user_id)
-        except Exception as e:
-            logger.error(f"Failed to get user {user_id}: {e}")
-            return None
-    
-    async def get_chat_history(
-        self,
-        user_id: int,
-        limit: int = 100,
-    ) -> list[Any]:
-        """
-        Get message history with user.
-        
-        Args:
-            user_id: Telegram user ID
-            limit: Number of messages to retrieve
-            
-        Returns:
-            List of messages
-        """
-        if not await self.ensure_connected():
-            return []
-        
-        try:
-            messages = []
-            async for message in self.client.iter_messages(user_id, limit=limit):
-                messages.append(message)
-            return messages
-            
-        except Exception as e:
-            logger.error(f"Failed to get chat history: {e}")
-            return []
-    
-    # ==================== EVENT SYSTEM ====================
-    
-    def on(self, event_name: str, handler: Callable) -> None:
-        """
-        Register event handler.
-        
-        Args:
-            event_name: Event type ('message_new', 'message_edit', etc)
-            handler: Async callback function
-        """
-        if event_name not in self._handlers:
-            raise ValueError(f"Unknown event type: {event_name}")
-        self._handlers[event_name].append(handler)
-    
-    def off(self, event_name: str, handler: Callable) -> None:
-        """Unregister event handler."""
-        if event_name in self._handlers:
-            self._handlers[event_name].remove(handler)
-    
-    async def _emit_event(self, event_name: str, data: dict) -> None:
-        """Emit event to all registered handlers."""
-        if event_name not in self._handlers:
+
+        logger.info("Event handlers registered (legacy default client)")
+
+    def _register_creator_handlers(self, creator_id: str) -> None:
+        """Register per-creator handlers that tag messages with creator_id."""
+        if not self.client:
             return
-        
-        handlers = self._handlers[event_name]
-        
-        # Run handlers concurrently
-        tasks = [handler(data) for handler in handlers]
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-    
-    # ==================== PRIVATE METHODS ====================
-    
+
+        @self.client.on(events.NewMessage(incoming=True))
+        async def handle_new_message(event):
+            try:
+                from app.services.telegram.message_handler import message_processor
+                await message_processor.process_incoming_message({
+                    "event": event,
+                    "message": event.message,
+                    "sender_id": event.sender_id,
+                    "creator_id": creator_id,
+                })
+            except Exception as e:
+                logger.error(f"Creator {creator_id}: error handling new message: {e}")
+
+        logger.info(f"Event handlers registered for creator {creator_id}")
+
+    # ── Private helpers ──────────────────────────────────────────────────
+
     async def _code_callback(self) -> str:
-        """Callback for 2FA code input."""
-        code = input("Enter Telegram code: ")
-        return code
-    
+        return input("Enter Telegram code: ")
+
     async def _password_callback(self) -> str:
-        """Callback for password input."""
-        password = input("Enter Telegram password: ")
-        return password
-    
+        return input("Enter Telegram password: ")
+
     @property
     def is_connected(self) -> bool:
-        """Check if connected to Telegram."""
-        return self._is_connected and self.client and self.client.is_connected()
+        return self._is_connected and self.client is not None and self.client.is_connected()
 
 
-# Global Telegram client instance
+# ─────────────────────────────────────────────────────────────────────────────
+# Multi-creator pool — one Telethon client per creator
+# ─────────────────────────────────────────────────────────────────────────────
+
+class CreatorClientPool:
+    """
+    Manages a pool of Telethon clients, keyed by creator_id (str UUID).
+    The default creator's client is kept as a separate singleton (`telegram_client`)
+    for backward compatibility; non-default creators live here.
+    """
+
+    def __init__(self):
+        self._clients: Dict[str, TelegramClientManager] = {}
+        self._accounts: Dict[str, dict] = {}   # creator_id -> {name, username, phone}
+
+    async def connect_creator(
+        self,
+        creator_id: str,
+        session_string: str,
+        api_id: int,
+        api_hash: str,
+    ) -> Tuple[bool, dict]:
+        """
+        Connect (or reconnect) a creator's Telethon client.
+        Returns (success, account_info).
+        """
+        # Disconnect existing client if any
+        if creator_id in self._clients:
+            try:
+                await self._clients[creator_id].disconnect()
+            except Exception:
+                pass
+
+        mgr = TelegramClientManager()
+        success, account = await mgr.connect_with_session(session_string, api_id, api_hash, creator_id)
+        if success:
+            self._clients[creator_id] = mgr
+            self._accounts[creator_id] = account
+        return success, account
+
+    async def disconnect_creator(self, creator_id: str) -> None:
+        if creator_id in self._clients:
+            try:
+                await self._clients[creator_id].disconnect()
+            except Exception:
+                pass
+            del self._clients[creator_id]
+            self._accounts.pop(creator_id, None)
+            logger.info(f"Creator {creator_id}: disconnected")
+
+    def get_client(self, creator_id: str) -> Optional[TelegramClientManager]:
+        return self._clients.get(creator_id)
+
+    def get_account(self, creator_id: str) -> Optional[dict]:
+        return self._accounts.get(creator_id)
+
+    def is_connected(self, creator_id: str) -> bool:
+        c = self._clients.get(creator_id)
+        return c is not None and c.is_connected
+
+    def all_connected(self) -> list:
+        return [cid for cid, c in self._clients.items() if c.is_connected]
+
+    async def startup_connect_all(self) -> None:
+        """
+        Called at app startup: load all non-default creators that have a session
+        string stored in the DB and connect them.
+        """
+        try:
+            from app.db.models import Creator
+            from app.db.database import db_manager
+            from sqlalchemy import select as sa_select
+
+            async with db_manager.get_session() as session:
+                res = await session.execute(
+                    sa_select(Creator).where(
+                        Creator.is_active == True,
+                        Creator.is_default == False,
+                        Creator.telegram_session.isnot(None),
+                    )
+                )
+                creators = res.scalars().all()
+
+            api_id  = int(settings.TELEGRAM_API_ID or 0)
+            api_hash = settings.TELEGRAM_API_HASH or ""
+
+            for c in creators:
+                logger.info(f"Auto-connecting creator {c.id} ({c.name})…")
+                ok, account = await self.connect_creator(
+                    str(c.id), c.telegram_session, api_id, api_hash
+                )
+                if ok:
+                    logger.info(f"Creator {c.id}: auto-connected as {account.get('name')}")
+                else:
+                    logger.warning(f"Creator {c.id}: auto-connect failed")
+        except Exception as e:
+            logger.warning(f"startup_connect_all: {e}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Singletons
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Legacy single-client for the default creator (reads from env vars)
 telegram_client = TelegramClientManager()
 
+# Multi-creator pool for non-default creators
+creator_pool = CreatorClientPool()
 
-__all__ = ["telegram_client", "TelegramClientManager"]
+
+__all__ = ["telegram_client", "TelegramClientManager", "creator_pool", "CreatorClientPool"]

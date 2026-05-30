@@ -12,6 +12,8 @@ export interface Creator {
   has_session: boolean;
   is_active: boolean;
   is_default: boolean;
+  is_connected?: boolean;
+  account_name?: string | null;
 }
 
 interface CreatorContextValue {

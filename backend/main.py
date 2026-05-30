@@ -532,26 +532,35 @@ async def lifespan(app: FastAPI):
         logger.error(f"Database init failed: {e}")
 
     try:
-        from app.services.telegram.client import telegram_client
+        from app.services.telegram.client import telegram_client, creator_pool
         from app.services.telegram.message_handler import message_processor
 
+        # Default creator client — uses env-var session
         telegram_client.on("message_new", message_processor.process_incoming_message)
-
         connected = await telegram_client.connect()
         if connected:
-            logger.info("Telegram connected ✓")
+            logger.info("Telegram connected ✓ (default creator)")
             asyncio.create_task(message_processor.start_processor())
             asyncio.create_task(_startup_sync())
         else:
             logger.warning("Telegram NOT connected — session may be expired.")
+
+        # Non-default creators — connect from stored session strings
+        asyncio.create_task(creator_pool.startup_connect_all())
     except Exception as e:
         logger.warning(f"Telegram init failed: {e}")
 
     yield
 
     try:
-        from app.services.telegram.client import telegram_client
+        from app.services.telegram.client import telegram_client, creator_pool
         await telegram_client.disconnect()
+        # Disconnect all creator pool clients
+        for cid in list(creator_pool.all_connected()):
+            try:
+                await creator_pool.disconnect_creator(cid)
+            except Exception:
+                pass
     except Exception:
         pass
     try:

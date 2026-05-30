@@ -223,6 +223,8 @@ class MessageProcessor:
         try:
             telegram_message: TelegramMessage = event_data["message"]
             sender_id: int = event_data["sender_id"]
+            # creator_id is set for non-default creators; None → handled by default client
+            creator_id: Optional[str] = event_data.get("creator_id")
 
             if not sender_id:
                 return False
@@ -230,10 +232,10 @@ class MessageProcessor:
             text = telegram_message.message or ""
             has_media = telegram_message.media is not None
 
-            logger.info(f"Processing incoming message from {sender_id}")
+            logger.info(f"Processing incoming message from {sender_id} (creator={creator_id})")
 
             async with db_manager.get_session() as session:
-                user = await self._get_or_create_user(session, sender_id)
+                user = await self._get_or_create_user(session, sender_id, creator_id=creator_id)
                 if not user:
                     return False
 
@@ -250,6 +252,7 @@ class MessageProcessor:
                 ai_enabled = bool(user.ai_enabled)
                 user_id = user.id
                 telegram_id = user.user_id
+                user_creator_id = str(user.creator_id) if user.creator_id else creator_id
                 await session.commit()
 
             # Broadcast to SSE stream (live inbox update)
@@ -267,7 +270,7 @@ class MessageProcessor:
 
             if ai_enabled and text:
                 asyncio.create_task(
-                    self._generate_and_send_ai_response(user_id, telegram_id, text)
+                    self._generate_and_send_ai_response(user_id, telegram_id, text, creator_id=user_creator_id)
                 )
 
             self._stats["processed"] += 1
@@ -278,18 +281,66 @@ class MessageProcessor:
             self._stats["failed"] += 1
             return False
 
-    async def _get_or_create_user(self, session: AsyncSession, telegram_user_id: int) -> Optional[User]:
+    async def _get_or_create_user(
+        self,
+        session: AsyncSession,
+        telegram_user_id: int,
+        creator_id: Optional[str] = None,
+    ) -> Optional[User]:
+        """
+        Look up a user scoped to the creator.
+        For the default creator (creator_id=None) we fall back to the first match.
+        For non-default creators we enforce the (user_id, creator_id) composite.
+        """
         try:
-            result = await session.execute(select(User).where(User.user_id == telegram_user_id))
+            import uuid as _uuid
+
+            # Resolve real creator UUID (default creator if creator_id is None)
+            resolved_creator_id = None
+            if creator_id:
+                resolved_creator_id = _uuid.UUID(creator_id)
+            else:
+                # Get default creator id
+                from app.db.models import Creator as CreatorModel
+                res = await session.execute(
+                    select(CreatorModel).where(CreatorModel.is_default == True)
+                )
+                default_creator = res.scalars().first()
+                if default_creator:
+                    resolved_creator_id = default_creator.id
+
+            # Lookup by telegram_user_id + creator_id
+            from sqlalchemy import and_ as sa_and
+            if resolved_creator_id:
+                result = await session.execute(
+                    select(User).where(
+                        sa_and(User.user_id == telegram_user_id, User.creator_id == resolved_creator_id)
+                    )
+                )
+            else:
+                result = await session.execute(select(User).where(User.user_id == telegram_user_id))
+
             user = result.scalars().first()
             if user:
                 return user
 
-            from app.services.telegram.client import telegram_client
-            tg_user = await telegram_client.get_user(telegram_user_id)
+            # Fetch Telegram profile info — use the creator's client if available
+            tg_user = None
+            try:
+                if creator_id:
+                    from app.services.telegram.client import creator_pool
+                    pool_client = creator_pool.get_client(creator_id)
+                    if pool_client:
+                        tg_user = await pool_client.get_user(telegram_user_id)
+                if tg_user is None:
+                    from app.services.telegram.client import telegram_client
+                    tg_user = await telegram_client.get_user(telegram_user_id)
+            except Exception:
+                pass
 
             user = User(
                 user_id=telegram_user_id,
+                creator_id=resolved_creator_id,
                 first_name=(getattr(tg_user, "first_name", None) or "Unknown") if tg_user else "Unknown",
                 last_name=getattr(tg_user, "last_name", None) if tg_user else None,
                 username=getattr(tg_user, "username", None) if tg_user else None,
@@ -297,7 +348,7 @@ class MessageProcessor:
             )
             session.add(user)
             await session.flush()
-            logger.info(f"Created new user {user.id} for Telegram {telegram_user_id}")
+            logger.info(f"Created new user {user.id} for Telegram {telegram_user_id} (creator={resolved_creator_id})")
             return user
         except Exception as e:
             logger.error(f"Error getting/creating user {telegram_user_id}: {e}")
@@ -539,7 +590,7 @@ class MessageProcessor:
         lines.append("\nwelches interessiert dich? 😊")
         return "\n\n".join(lines)
 
-    async def _send_free_teaser(self, user_id: UUID, telegram_id: int) -> bool:
+    async def _send_free_teaser(self, user_id: UUID, telegram_id: int, creator_id: Optional[str] = None) -> bool:
         """
         Pick a random 'Free' media item and send it via Telegram as a teaser.
         Respects the no_repeat setting — tracks sent_media in user extra_data.
@@ -583,8 +634,8 @@ class MessageProcessor:
             file_bytes = base64.b64decode(b64)
             file_name  = chosen.get("name", "preview.jpg")
 
-            from app.services.telegram.client import telegram_client
-            await telegram_client.client.send_file(
+            tg_client = self._resolve_tg_client(creator_id)
+            await tg_client.client.send_file(
                 telegram_id,
                 file=file_bytes,
                 attributes=[],
@@ -611,11 +662,22 @@ class MessageProcessor:
             logger.warning(f"[teaser] failed to send free teaser: {e}")
             return False
 
+    def _resolve_tg_client(self, creator_id: Optional[str]):
+        """Return the right TelegramClientManager for this creator."""
+        if creator_id:
+            from app.services.telegram.client import creator_pool
+            pool_client = creator_pool.get_client(creator_id)
+            if pool_client and pool_client.is_connected:
+                return pool_client
+        from app.services.telegram.client import telegram_client
+        return telegram_client
+
     async def _generate_and_send_ai_response(
         self,
         user_id: UUID,
         telegram_id: int,
         incoming_text: str,
+        creator_id: Optional[str] = None,
     ) -> None:
         """Generate Claude AI response and send it via Telegram with human-like timing."""
         try:
@@ -635,7 +697,8 @@ class MessageProcessor:
             except Exception:
                 pass  # If we can't read the config, proceed anyway
 
-            from app.services.telegram.client import telegram_client
+            # Use the correct Telegram client (creator's client or default)
+            tg_client = self._resolve_tg_client(creator_id)
 
             # ── Auto-reply rules: keyword match → send template, skip Claude ─────
             auto_reply_match = await self._check_auto_reply_rules(incoming_text)
@@ -651,7 +714,7 @@ class MessageProcessor:
                         logger.info("[auto-reply] send_package_menu: no active packages — falling through to Claude")
                     else:
                         # 1) Send a free teaser FIRST as a preview/hook
-                        teaser_sent = await self._send_free_teaser(user_id, telegram_id)
+                        teaser_sent = await self._send_free_teaser(user_id, telegram_id, creator_id=creator_id)
                         if teaser_sent:
                             await asyncio.sleep(1.5)  # brief pause between teaser and menu
 
@@ -660,13 +723,13 @@ class MessageProcessor:
                         try:
                             from telethon.tl.functions.messages import SetTypingRequest
                             from telethon.tl.types import SendMessageTypingAction
-                            await telegram_client.client(
+                            await tg_client.client(
                                 SetTypingRequest(peer=telegram_id, action=SendMessageTypingAction())
                             )
                         except Exception:
                             pass
                         await _human_typing_delay(menu_text, {})
-                        tg_msg_id = await telegram_client.send_message(telegram_id, menu_text)
+                        tg_msg_id = await tg_client.send_message(telegram_id, menu_text)
                         if tg_msg_id:
                             async with db_manager.get_session() as session:
                                 ai_msg = Message(
@@ -703,13 +766,13 @@ class MessageProcessor:
                     try:
                         from telethon.tl.functions.messages import SetTypingRequest
                         from telethon.tl.types import SendMessageTypingAction
-                        await telegram_client.client(
+                        await tg_client.client(
                             SetTypingRequest(peer=telegram_id, action=SendMessageTypingAction())
                         )
                     except Exception:
                         pass
                     await _human_typing_delay(auto_reply_text, {})
-                    tg_msg_id = await telegram_client.send_message(telegram_id, auto_reply_text)
+                    tg_msg_id = await tg_client.send_message(telegram_id, auto_reply_text)
                     if tg_msg_id:
                         async with db_manager.get_session() as session:
                             ai_msg = Message(
@@ -846,7 +909,7 @@ class MessageProcessor:
             try:
                 from telethon.tl.functions.messages import SetTypingRequest
                 from telethon.tl.types import SendMessageTypingAction
-                await telegram_client.client(
+                await tg_client.client(
                     SetTypingRequest(peer=telegram_id, action=SendMessageTypingAction())
                 )
             except Exception:
@@ -855,7 +918,7 @@ class MessageProcessor:
             await _human_typing_delay(ai_text, persona_data)
 
             # ── Send via Telegram ───────────────────────────────────────────
-            tg_msg_id = await telegram_client.send_message(telegram_id, ai_text)
+            tg_msg_id = await tg_client.send_message(telegram_id, ai_text)
             if tg_msg_id is None:
                 logger.error(f"Telegram send failed for tg_id={telegram_id}")
                 return
