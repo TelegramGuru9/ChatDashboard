@@ -111,9 +111,16 @@ CRITICAL FORMATTING RULES:
 - NEVER use " - " as a separator. Use a comma or rewrite the sentence
 - Message length: {msg_len}
 - Typing quirks: {quirks_str}
-- Occasional emojis only when they feel natural: 😊 😈 😌 🔥 💦 🥰
+- EMOJIS: use at most 1 emoji per message. Never put an emoji at the start of a sentence. Never use more than one emoji in a row. When in doubt, use none.
 - When writing German: always use "du", never "Sie"
 - Never write long structured paragraphs or bullet points
+
+ANTI-REPETITION (critical):
+- NEVER open two messages in a row the same way (no "oh", "hey", "haha" as every opener)
+- NEVER repeat a sentence structure you already used in your last 3 replies
+- NEVER use the same filler phrase twice in a conversation ("stimmt", "krass", "echt jetzt" etc.)
+- If you notice the conversation getting monotone — switch register: ask a question, be more direct, change tone slightly
+- Read your last 2 replies before writing. If anything sounds similar → rewrite it completely differently
 
 EXAMPLE CONVERSATIONS (match this energy and style):
 {examples_block}
@@ -133,7 +140,7 @@ CONVERSATION ENDERS: {" | ".join(conv_enders[:3])}
 
 def _clean_response(text: str) -> str:
     """
-    Post-process AI response to enforce no-dash rule and clean up formatting.
+    Post-process AI response to enforce no-dash rule, limit emojis, and clean up formatting.
     Acts as a safety net in case Claude ignores the system prompt instruction.
     """
     # Em dash and en dash → ellipsis (feels more natural in casual texting)
@@ -145,6 +152,37 @@ def _clean_response(text: str) -> str:
     text = re.sub(r'\.{4,}', '...', text)
     # Collapse multiple spaces
     text = re.sub(r' {2,}', ' ', text)
+
+    # ── Emoji limiter: max 2 emojis per message ────────────────────────────
+    # Unicode emoji regex — matches any emoji character
+    emoji_pattern = re.compile(
+        "[\U0001F600-\U0001F64F"   # emoticons
+        "\U0001F300-\U0001F5FF"   # symbols & pictographs
+        "\U0001F680-\U0001F6FF"   # transport & map
+        "\U0001F1E0-\U0001F1FF"   # flags
+        "\U00002702-\U000027B0"
+        "\U000024C2-\U0001F251"
+        "\U0001f926-\U0001f937"
+        "\U00010000-\U0010ffff"
+        "♀-♂"
+        "☀-⭕"
+        "‍⏏⏩⌚️〰"
+        "]+", flags=re.UNICODE
+    )
+    emojis_found = emoji_pattern.findall(text)
+    if len(emojis_found) > 2:
+        # Keep only the first 2 emoji occurrences, strip the rest
+        count = 0
+        def _maybe_keep(m):
+            nonlocal count
+            count += 1
+            return m.group(0) if count <= 2 else ''
+        text = emoji_pattern.sub(_maybe_keep, text)
+
+    # Remove emojis stuck directly at the start of a sentence/line
+    # (e.g. "😊 hey" → "hey")  — only if it's the very first char
+    text = re.sub(r'^[\U0001F300-\U0001FAFF☀-➿️⃐-⃿\s]+(?=[a-zA-ZäöüÄÖÜа-яА-Яа-ґА-Ґ])', '', text)
+
     return text.strip()
 
 
@@ -317,6 +355,136 @@ class MessageProcessor:
             logger.error(f"Error storing message: {e}")
             return None
 
+    # ── Dynamic package helpers ────────────────────────────────────────────────
+
+    def _extract_topic_keyword(self, text: str) -> str:
+        """
+        Extract the main content keyword from the user's message.
+        Used to pick matching media for dynamic packages.
+        Returns lowercase keyword string (may be empty if nothing useful found).
+        """
+        if not text:
+            return ""
+        # German + English stopwords to ignore
+        STOP = {
+            "ich", "du", "er", "sie", "wir", "ihr", "ist", "bin", "hat", "hast",
+            "haben", "hatte", "bist", "sind", "war", "wird", "werden", "kann",
+            "kannst", "muss", "müssen", "soll", "wollen", "mal", "noch", "auch",
+            "aber", "und", "oder", "nicht", "kein", "keine", "schon", "halt",
+            "irgendwie", "gerade", "immer", "noch", "bitte", "danke", "okay",
+            "nein", "ja", "the", "and", "for", "you", "are", "this", "that",
+            "have", "with", "from", "they", "will", "would", "could", "should",
+            "send", "show", "give", "what", "when", "how", "your", "our",
+            "paket", "pakete", "inhalt", "video", "videos", "bilder", "bild",
+            "content", "preis", "kaufen", "mehr", "alles", "heute", "jetzt",
+        }
+        # Tokenize — lowercase words, min length 4
+        words = re.findall(r'\b[a-zA-ZäöüÄÖÜß]{4,}\b', text.lower())
+        candidates = [w for w in words if w not in STOP]
+        if not candidates:
+            return ""
+        # Return the longest candidate (most likely to be a specific topic word)
+        return max(candidates, key=len)
+
+    async def _load_media_library(self) -> list:
+        """Load all media items from config."""
+        try:
+            async with db_manager.get_session() as session:
+                res = await session.execute(select(Config).where(Config.key == "media_library"))
+                cfg = res.scalars().first()
+                return cfg.value if cfg and isinstance(cfg.value, list) else []
+        except Exception as e:
+            logger.warning(f"_load_media_library error: {e}")
+            return []
+
+    def _pick_files_for_keyword(
+        self, media_items: list, keyword: str, n_videos: int, n_images: int
+    ) -> list:
+        """
+        Search media library for items matching `keyword` in name/description/tag.
+        Returns a list of file dicts (name, type) up to n_videos + n_images total.
+        Falls back to any available files if keyword yields no matches.
+        """
+        if not keyword:
+            matched = media_items
+        else:
+            kw = keyword.lower()
+            matched = [
+                m for m in media_items
+                if kw in (m.get("name") or "").lower()
+                or kw in (m.get("description") or "").lower()
+                or kw in (m.get("tag") or "").lower()
+                or kw in (m.get("message_to_user") or "").lower()
+            ]
+            if not matched:
+                # No keyword match — use any non-Free content item
+                matched = [m for m in media_items if m.get("tag", "Free") != "Free"]
+            if not matched:
+                matched = media_items  # last resort: anything
+
+        videos = [m for m in matched if str(m.get("type", "")).startswith("video")]
+        images = [m for m in matched if str(m.get("type", "")).startswith("image")]
+
+        # Shuffle for variety
+        random.shuffle(videos)
+        random.shuffle(images)
+
+        picked = videos[:n_videos] + images[:n_images]
+        return [{"name": m.get("name", ""), "type": m.get("type", ""), "media_id": m.get("id", "")} for m in picked]
+
+    async def _build_dynamic_package_menu(
+        self, packages: list, incoming_text: str, user_id: UUID
+    ) -> str:
+        """
+        Build package menu text. For packages with dynamic=True, picks matching
+        media files from the library based on the conversation keyword.
+        """
+        keyword = self._extract_topic_keyword(incoming_text)
+        logger.info(f"[package-menu] keyword='{keyword}' from: {incoming_text[:60]}")
+
+        # Load media library once for dynamic packages
+        media_items: list = []
+        if any(p.get("dynamic") for p in packages):
+            media_items = await self._load_media_library()
+
+        lines = [f"hier sind meine aktuellen angebote 🔥\n"]
+        for pkg in packages:
+            name   = pkg.get("name", "")
+            price  = pkg.get("price", "")
+            curr   = pkg.get("currency", "€")
+            desc   = pkg.get("description", "") or pkg.get("tagline", "")
+            link   = pkg.get("payment_link", "")
+
+            if pkg.get("dynamic"):
+                # Dynamic: pick files matching the keyword
+                rules = pkg.get("dynamic_rules") or {}
+                n_vids = int(rules.get("videos", 0))
+                n_imgs = int(rules.get("images", 0))
+                files  = self._pick_files_for_keyword(media_items, keyword, n_vids, n_imgs)
+            else:
+                files = pkg.get("media_files", [])
+
+            # File summary
+            file_summary = ""
+            if files:
+                imgs  = sum(1 for f in files if str(f.get("type","")).startswith("image"))
+                vids  = sum(1 for f in files if str(f.get("type","")).startswith("video"))
+                parts = []
+                if vids: parts.append(f"{vids} video{'s' if vids>1 else ''}")
+                if imgs: parts.append(f"{imgs} bild{'er' if imgs>1 else ''}")
+                if parts: file_summary = f" ({', '.join(parts)})"
+
+            price_str = f"{price} {curr}".strip() if price else ""
+            block = f"📦 *{name}*"
+            if desc:        block += f"\n{desc}"
+            if file_summary: block += f"\ninhalt:{file_summary}"
+            if price_str:   block += f"\n💰 {price_str}"
+            if link:        block += f"\n🔗 {link}"
+            lines.append(block)
+
+        lines.append("\nwelches interessiert dich?")
+        return "\n\n".join(lines)
+
     async def _load_packages(self) -> list:
         """Load active packages from config. Returns list of package dicts."""
         try:
@@ -487,8 +655,8 @@ class MessageProcessor:
                         if teaser_sent:
                             await asyncio.sleep(1.5)  # brief pause between teaser and menu
 
-                        # 2) Build and send the real package menu
-                        menu_text = self._build_package_menu_text(packages)
+                        # 2) Build and send the real package menu (keyword-aware for dynamic pkgs)
+                        menu_text = await self._build_dynamic_package_menu(packages, incoming_text, user_id)
                         try:
                             from telethon.tl.functions.messages import SetTypingRequest
                             from telethon.tl.types import SendMessageTypingAction
@@ -610,6 +778,30 @@ class MessageProcessor:
                 )
                 recent = list(reversed(hist_result.scalars().all()))
 
+                # ── Load user extra_data for context guards ─────────────────
+                user_res = await session.execute(select(User).where(User.id == user_id))
+                user_obj = user_res.scalars().first()
+                user_extra = dict(user_obj.extra_data or {}) if user_obj else {}
+
+            # ── PayPal guard: don't ask again if already asked ──────────────
+            if user_extra.get("paypal_asked"):
+                system_prompt += (
+                    "\n\nPAYMENT RULE (mandatory): You already asked for their payment details "
+                    "(PayPal / payment address) in a previous message. Do NOT ask for it again. "
+                    "If they haven't provided it, mention the payment link only — do not ask "
+                    "for any email or address."
+                )
+
+            # ── Recent-replies context: inject last 3 bot messages so Claude ──
+            # can self-check and avoid repetition
+            recent_bot_replies = [m.text for m in recent if m.direction == "outgoing" and m.text][-3:]
+            if len(recent_bot_replies) >= 2:
+                snippet = "\n".join(f'- "{r[:120]}"' for r in recent_bot_replies)
+                system_prompt += (
+                    f"\n\nYOUR LAST {len(recent_bot_replies)} REPLIES (do NOT repeat any phrase, "
+                    f"opener, or structure from these):\n{snippet}"
+                )
+
             # Build Claude messages list
             claude_msgs: List[Dict[str, str]] = []
             for m in recent:
@@ -668,7 +860,7 @@ class MessageProcessor:
                 logger.error(f"Telegram send failed for tg_id={telegram_id}")
                 return
 
-            # ── Store in DB ─────────────────────────────────────────────────
+            # ── Store in DB + set PayPal flag if bot just asked ────────────
             async with db_manager.get_session() as session:
                 ai_msg = Message(
                     message_id=tg_msg_id,
@@ -681,6 +873,19 @@ class MessageProcessor:
                     created_at=_naive_utc(),
                 )
                 session.add(ai_msg)
+
+                # Detect PayPal mention → set flag so we never ask again
+                ai_lower = ai_text.lower()
+                if not user_extra.get("paypal_asked") and any(
+                    kw in ai_lower for kw in ["paypal", "pay pal", "zahlung", "payment", "email", "e-mail", "adresse"]
+                ):
+                    user_res2 = await session.execute(select(User).where(User.id == user_id))
+                    u2 = user_res2.scalars().first()
+                    if u2:
+                        ex2 = dict(u2.extra_data or {})
+                        ex2["paypal_asked"] = True
+                        u2.extra_data = ex2
+
                 await session.commit()
             asyncio.create_task(self._update_lead_funnel(user_id, "ai_reply"))
 

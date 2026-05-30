@@ -31,6 +31,11 @@ interface PackageFile {
   duration?: string; // e.g. "2:34"
 }
 
+interface DynamicRules {
+  videos: number;
+  images: number;
+}
+
 interface Package {
   id: string;
   name: string;
@@ -39,7 +44,9 @@ interface Package {
   currency: string;
   payment_link: string;
   banner_image_id: string;   // media item ID to use as banner
-  media_files: PackageFile[]; // included files
+  media_files: PackageFile[]; // included files (used when dynamic=false)
+  dynamic: boolean;           // if true, files are picked by keyword at send time
+  dynamic_rules: DynamicRules; // how many videos/images to pick for dynamic packages
   description: string;
   package_text: string;       // full pitch text for the bot
   keywords: string;
@@ -50,7 +57,8 @@ interface Package {
 const BLANK: Package = {
   id: '', name: '', tagline: '', price: '', currency: '€',
   payment_link: '', banner_image_id: '',
-  media_files: [], description: '', package_text: '', keywords: '',
+  media_files: [], dynamic: false, dynamic_rules: { videos: 2, images: 8 },
+  description: '', package_text: '', keywords: '',
   send_after_messages: 0, active: true,
 };
 
@@ -102,6 +110,8 @@ export default function PackagesPage() {
         payment_link: p.payment_link || '',
         package_text: p.package_text || p.welcome_message || '',
         currency: p.currency || '€',
+        dynamic: p.dynamic ?? false,
+        dynamic_rules: p.dynamic_rules || { videos: 2, images: 8 },
       }));
       setPackages(rawPkgs);
       setMediaLib(Array.isArray(libData.value) ? libData.value : []);
@@ -262,7 +272,10 @@ export default function PackagesPage() {
                             {pkg.price && <span style={{ color: C.orange, fontWeight:700 }}>💰 {pkg.price} {pkg.currency}</span>}
                             {pkg.keywords && <span>🔑 {pkg.keywords}</span>}
                             {pkg.payment_link && <span style={{ color: C.blue }}>🔗 Kauflink</span>}
-                            {pkg.media_files.length > 0 && <span>📂 {pkg.media_files.length} Datei{pkg.media_files.length!==1?'en':''}</span>}
+                            {pkg.dynamic
+                              ? <span style={{ color: C.teal }}>🎯 Dynamisch — {pkg.dynamic_rules?.videos ?? 0}V + {pkg.dynamic_rules?.images ?? 0}B</span>
+                              : pkg.media_files.length > 0 && <span>📂 {pkg.media_files.length} Datei{pkg.media_files.length!==1?'en':''}</span>
+                            }
                           </div>
                         </div>
                         <div style={{ display:'flex', gap:'6px', flexShrink:0 }}>
@@ -343,7 +356,60 @@ export default function PackagesPage() {
                 style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', resize:'vertical', fontFamily:'inherit', boxSizing:'border-box' }} />
             </label>
 
-            {/* Media files */}
+            {/* Dynamic toggle */}
+            <div style={{ marginBottom:'16px', padding:'14px', borderRadius:'12px', background: C.s2, border:`1px solid ${C.sep}` }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom: editing.dynamic ? '14px' : '0' }}>
+                <div>
+                  <div style={{ fontSize:'13px', fontWeight:600, color: C.t1 }}>🎯 Dynamische Zusammenstellung</div>
+                  <div style={{ fontSize:'11px', color: C.t3, marginTop:'2px' }}>
+                    {editing.dynamic
+                      ? 'Dateien werden per Keyword aus der Media Library gewählt'
+                      : 'Feste Dateien — du wählst was im Paket ist'}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setEditing({ ...editing, dynamic: !editing.dynamic })}
+                  style={{
+                    width:'42px', height:'24px', borderRadius:'12px', border:'none', cursor:'pointer',
+                    background: editing.dynamic ? C.blue : C.s4, position:'relative', transition:'background 0.2s', flexShrink:0,
+                  }}
+                >
+                  <div style={{
+                    position:'absolute', top:'3px', left: editing.dynamic ? '21px' : '3px',
+                    width:'18px', height:'18px', borderRadius:'50%', background:'#fff', transition:'left 0.2s',
+                  }} />
+                </button>
+              </div>
+
+              {editing.dynamic && (
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }}>
+                  <label>
+                    <div style={{ fontSize:'11px', color: C.t3, marginBottom:'4px' }}>Anzahl Videos</div>
+                    <input
+                      type="number" min="0" max="20"
+                      value={editing.dynamic_rules.videos}
+                      onChange={e => setEditing({ ...editing, dynamic_rules: { ...editing.dynamic_rules, videos: Math.max(0, parseInt(e.target.value)||0) } })}
+                      style={{ width:'100%', background: C.s3, border:`1px solid ${C.sep}`, borderRadius:'8px', padding:'7px 10px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }}
+                    />
+                  </label>
+                  <label>
+                    <div style={{ fontSize:'11px', color: C.t3, marginBottom:'4px' }}>Anzahl Bilder</div>
+                    <input
+                      type="number" min="0" max="50"
+                      value={editing.dynamic_rules.images}
+                      onChange={e => setEditing({ ...editing, dynamic_rules: { ...editing.dynamic_rules, images: Math.max(0, parseInt(e.target.value)||0) } })}
+                      style={{ width:'100%', background: C.s3, border:`1px solid ${C.sep}`, borderRadius:'8px', padding:'7px 10px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }}
+                    />
+                  </label>
+                  <div style={{ gridColumn:'1/-1', fontSize:'11px', color: C.teal, padding:'6px 8px', background:'rgba(90,200,250,0.06)', borderRadius:'8px' }}>
+                    💡 Der Bot sucht beim Senden automatisch passende Dateien aus der Media Library — basierend auf dem Keyword das der Fan erwähnt hat (z.B. "squirting" → Squirting-Videos + Bilder)
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Media files (only shown for non-dynamic packages) */}
+            {!editing.dynamic && (
             <div style={{ marginBottom:'16px' }}>
               <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'8px' }}>
                 <div style={{ fontSize:'12px', color: C.t3 }}>📂 Enthaltene Dateien ({editing.media_files.length})</div>
@@ -386,6 +452,7 @@ export default function PackagesPage() {
                 </div>
               )}
             </div>
+            )}
 
             {/* Price + currency + payment link */}
             <div style={{ display:'grid', gridTemplateColumns:'1fr 60px', gap:'10px', marginBottom:'13px' }}>
