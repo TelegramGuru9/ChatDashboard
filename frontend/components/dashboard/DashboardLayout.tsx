@@ -106,7 +106,7 @@ function CreatorSwitcher({ full }: { full: boolean }) {
                 onClick={() => { switchCreator(c.id); setOpen(false); }}
                 style={{
                   width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
-                  padding: '9px 12px', background: 'none', border: 'none', cursor: 'pointer',
+                  padding: '9px 12px', border: 'none', cursor: 'pointer',
                   color: C.t1, transition: 'background 0.1s',
                   background: c.id === selected?.id ? 'rgba(10,132,255,0.12)' : 'transparent',
                 }}
