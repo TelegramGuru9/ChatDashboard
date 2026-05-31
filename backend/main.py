@@ -1,10 +1,12 @@
 import logging
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.db.database import db_manager
@@ -602,3 +604,14 @@ async def health_check():
 
 from app.api.v1 import api_router
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
+# ── Static media file serving ──────────────────────────────────────────────
+# Files uploaded via POST /api/v1/media/upload/file are served here.
+# Set MEDIA_STORAGE_PATH env var to a persistent volume path in production.
+_MEDIA_DIR = os.getenv("MEDIA_STORAGE_PATH", "/tmp/media")
+os.makedirs(_MEDIA_DIR, exist_ok=True)
+try:
+    app.mount("/media/files", StaticFiles(directory=_MEDIA_DIR), name="media_files")
+    logger.info(f"Media files served from {_MEDIA_DIR}")
+except Exception as _e:
+    logger.warning(f"Could not mount media static files: {_e}")

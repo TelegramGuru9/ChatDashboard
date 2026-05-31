@@ -1377,6 +1377,75 @@ async def creator_status(cid: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ==================== MEDIA FILE UPLOAD ====================
+
+import os as _os
+import uuid as _uuid_mod
+
+_MEDIA_DIR = _os.getenv("MEDIA_STORAGE_PATH", "/tmp/media")
+
+media_router = APIRouter(prefix="/media", tags=["Media"])
+
+from fastapi import Request as _Request
+
+@media_router.post("/upload/file")
+async def upload_media_file_raw(request: _Request):
+    """
+    Multipart file upload. Saves to MEDIA_STORAGE_PATH and returns a URL.
+    Frontend sends: POST /api/v1/media/upload/file  (multipart, field name = 'file')
+    """
+    try:
+        form = await request.form()
+        upload = form.get("file")
+        if not upload:
+            raise HTTPException(status_code=400, detail="No file in request")
+
+        _os.makedirs(_MEDIA_DIR, exist_ok=True)
+
+        filename_raw: str = getattr(upload, "filename", None) or "upload"
+        ext = _os.path.splitext(filename_raw)[1].lower() or ""
+        safe_name = f"{_uuid_mod.uuid4().hex}{ext}"
+        dest = _os.path.join(_MEDIA_DIR, safe_name)
+
+        contents: bytes = await upload.read()
+        with open(dest, "wb") as fh:
+            fh.write(contents)
+
+        content_type: str = getattr(upload, "content_type", "application/octet-stream") or "application/octet-stream"
+        file_url = f"/media/files/{safe_name}"
+        logger.info(f"[media-upload] saved {safe_name} ({len(contents)} bytes)")
+        return {
+            "url": file_url,
+            "filename": safe_name,
+            "original_name": filename_raw,
+            "size": len(contents),
+            "content_type": content_type,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[media-upload] error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Upload failed")
+
+
+@media_router.delete("/files/{filename}")
+async def delete_media_file(filename: str):
+    """Delete an uploaded media file from disk."""
+    try:
+        if ".." in filename or _os.sep in filename:
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        path = _os.path.join(_MEDIA_DIR, filename)
+        if _os.path.exists(path):
+            _os.remove(path)
+            logger.info(f"[media-upload] deleted {filename}")
+        return {"status": "deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[media-upload] delete error: {e}")
+        raise HTTPException(status_code=500, detail="Delete failed")
+
+
 # ==================== ROUTER AGGREGATION ====================
 
 api_router = APIRouter()
@@ -1388,5 +1457,6 @@ api_router.include_router(ai_router)
 api_router.include_router(config_router)
 api_router.include_router(analytics_router)
 api_router.include_router(creators_router)
+api_router.include_router(media_router)
 
 __all__ = ["api_router"]

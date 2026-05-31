@@ -15,8 +15,9 @@ interface MediaItem {
   name: string;
   type: string;
   size: number;
-  dataUrl?: string;
-  tag: string;              // "Free" | user-defined category name
+  dataUrl?: string;   // base64 preview — only kept in memory for small files
+  fileUrl?: string;   // server URL (/media/files/…) for files uploaded via multipart
+  tag: string;        // "Free" | user-defined category name
   keywords: string;
   action: string;
   description: string;
@@ -106,6 +107,26 @@ export default function MediaPage() {
 
   const toast = (msg: string) => { setStatus(msg); setTimeout(() => setStatus(''), 2800); };
 
+  // Files larger than this threshold are uploaded to the server as multipart
+  // instead of being stored as base64 inside the PostgreSQL config JSON.
+  const LARGE_FILE_THRESHOLD = 500 * 1024; // 500 KB
+
+  const uploadFileToServer = async (file: File): Promise<{ url: string; filename: string } | null> => {
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await fetch(`${api}/media/upload/file`, { method: 'POST', body: form });
+      if (!res.ok) {
+        const err = await res.text().catch(() => res.status.toString());
+        throw new Error(err);
+      }
+      return await res.json();
+    } catch (e) {
+      logger.warn?.(`[media-upload] ${e}`);
+      return null;
+    }
+  };
+
   // ── Load ──────────────────────────────────────────────────────────────────
   const load = useCallback(async () => {
     try {
@@ -135,13 +156,23 @@ export default function MediaPage() {
   const saveLib = async (updated: MediaItem[]) => {
     setSaving(true);
     try {
+      // Strip base64 dataUrl from items that have a server fileUrl,
+      // so the DB payload stays small (avoids 413 / timeout on large videos).
+      const forDb = updated.map(item =>
+        item.fileUrl ? { ...item, dataUrl: undefined } : item
+      );
       const res = await fetch(withCreator(`${api}/config/media_library`), {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify(updated),
+        body: JSON.stringify(forDb),
       });
-      if (!res.ok) throw new Error(`${res.status}`);
-      setItems(updated);
-    } catch { toast('⚠ Fehler beim Speichern'); }
+      if (!res.ok) {
+        const err = await res.text().catch(() => res.status.toString());
+        throw new Error(err);
+      }
+      setItems(updated); // keep dataUrl in memory for instant display this session
+    } catch (e) {
+      toast(`⚠ Fehler beim Speichern: ${e instanceof Error ? e.message : e}`);
+    }
     finally { setSaving(false); }
   };
 
@@ -167,7 +198,24 @@ export default function MediaPage() {
     Array.from(files).forEach(f => {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const isMedia = f.type.startsWith('image') || f.type.startsWith('video');
-      if (isMedia) {
+
+      if (isMedia && f.size > LARGE_FILE_THRESHOLD) {
+        // Large file: upload to server — don't store base64 in DB
+        toast('⏳ Datei wird hochgeladen…');
+        uploadFileToServer(f).then(result => {
+          if (!result) { toast('⚠ Upload fehlgeschlagen — Datei zu groß oder Server-Fehler'); return; }
+          const defaultTag = f.type.startsWith('video') ? (categories[0] || 'Free') : 'Free';
+          const defaultAction = f.type.startsWith('video') ? 'send_file' : 'send_teaser';
+          setEditing(emptyItem({
+            id, name: f.name, type: f.type, size: f.size,
+            fileUrl: result.url,
+            dataUrl: undefined,
+            tag: defaultTag, action: defaultAction,
+          }));
+          toast('✓ Datei hochgeladen — Details ausfüllen & speichern');
+        });
+      } else if (isMedia) {
+        // Small file: read as base64 (fine for DB storage)
         const reader = new FileReader();
         reader.onload = e => {
           setEditing(emptyItem({
@@ -219,6 +267,14 @@ export default function MediaPage() {
 
   const deleteItem = (id: string) => {
     if (!confirm('Datei löschen?')) return;
+    // Also delete the server-side file if it was uploaded via multipart
+    const target = items.find(i => i.id === id);
+    if (target?.fileUrl) {
+      const filename = target.fileUrl.split('/').pop();
+      if (filename) {
+        fetch(`${api}/media/files/${filename}`, { method: 'DELETE' }).catch(() => {});
+      }
+    }
     saveLib(items.filter(i => i.id !== id));
     setPreviewing(null);
     toast('✓ Gelöscht');
@@ -377,7 +433,11 @@ export default function MediaPage() {
               const isFree = item.tag === 'Free';
               const isVideo = item.type.startsWith('video');
               const isImage = item.type.startsWith('image');
-              const hasMedia = !!item.dataUrl && (isVideo || isImage);
+              // Use server URL if available (large files), fall back to base64
+              const mediaSrc = item.fileUrl
+                ? `${process.env.NEXT_PUBLIC_API_URL?.replace('/api/v1', '') || 'http://localhost:8000'}${item.fileUrl}`
+                : item.dataUrl;
+              const hasMedia = !!mediaSrc && (isVideo || isImage);
               return (
                 <div key={item.id} style={{
                   background: C.s1, borderRadius:'14px',
@@ -393,13 +453,13 @@ export default function MediaPage() {
                     onClick={() => setPreviewing(item)}
                     style={{ height:'150px', background: C.s2, display:'flex', alignItems:'center', justifyContent:'center', position:'relative', cursor:'pointer', overflow:'hidden' }}
                   >
-                    {isImage && item.dataUrl ? (
-                      <img src={item.dataUrl} alt={item.name} style={{ width:'100%', height:'100%', objectFit:'cover' }} />
-                    ) : isVideo && item.dataUrl ? (
+                    {isImage && mediaSrc ? (
+                      <img src={mediaSrc} alt={item.name} style={{ width:'100%', height:'100%', objectFit:'cover' }} />
+                    ) : isVideo && mediaSrc ? (
                       <>
                         {/* video element as thumbnail frame */}
                         <video
-                          src={item.dataUrl}
+                          src={mediaSrc}
                           style={{ width:'100%', height:'100%', objectFit:'cover' }}
                           muted playsInline preload="metadata"
                         />
@@ -497,6 +557,8 @@ export default function MediaPage() {
         const isVid = previewing.type.startsWith('video');
         const isImg = previewing.type.startsWith('image');
         const col   = catColor(previewing.tag, categories);
+        const apiBase2 = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace('/api/v1', '');
+        const previewSrc = previewing.fileUrl ? `${apiBase2}${previewing.fileUrl}` : previewing.dataUrl;
         return (
           <div
             style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.95)', zIndex:1200, display:'flex', flexDirection:'column' }}
@@ -524,15 +586,15 @@ export default function MediaPage() {
             <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden', position:'relative', minHeight:0 }}
               onClick={e => { if (e.target === e.currentTarget) setPreviewing(null); }}
             >
-              {isImg && previewing.dataUrl ? (
+              {isImg && previewSrc ? (
                 <img
-                  src={previewing.dataUrl}
+                  src={previewSrc}
                   alt={previewing.name}
                   style={{ maxWidth:'100%', maxHeight:'100%', objectFit:'contain', userSelect:'none' }}
                 />
-              ) : isVid && previewing.dataUrl ? (
+              ) : isVid && previewSrc ? (
                 <video
-                  src={previewing.dataUrl}
+                  src={previewSrc}
                   controls
                   autoPlay
                   style={{ maxWidth:'100%', maxHeight:'100%', outline:'none' }}
@@ -584,16 +646,24 @@ export default function MediaPage() {
             </h3>
 
             {/* Inline preview */}
-            {editing.dataUrl && editing.type.startsWith('image') && (
-              <div style={{ marginBottom:'16px', borderRadius:'12px', overflow:'hidden', height:'150px', background: C.bg }}>
-                <img src={editing.dataUrl} alt={editing.name} style={{ width:'100%', height:'100%', objectFit:'cover' }} />
-              </div>
-            )}
-            {editing.dataUrl && editing.type.startsWith('video') && (
-              <div style={{ marginBottom:'16px', borderRadius:'12px', overflow:'hidden', height:'150px', background: C.bg }}>
-                <video src={editing.dataUrl} style={{ width:'100%', height:'100%', objectFit:'cover' }} muted />
-              </div>
-            )}
+            {(() => {
+              const base3 = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace('/api/v1', '');
+              const editSrc = editing.fileUrl ? `${base3}${editing.fileUrl}` : editing.dataUrl;
+              return (
+                <>
+                  {editSrc && editing.type.startsWith('image') && (
+                    <div style={{ marginBottom:'16px', borderRadius:'12px', overflow:'hidden', height:'150px', background: C.bg }}>
+                      <img src={editSrc} alt={editing.name} style={{ width:'100%', height:'100%', objectFit:'cover' }} />
+                    </div>
+                  )}
+                  {editSrc && editing.type.startsWith('video') && (
+                    <div style={{ marginBottom:'16px', borderRadius:'12px', overflow:'hidden', height:'150px', background: C.bg }}>
+                      <video src={editSrc} style={{ width:'100%', height:'100%', objectFit:'cover' }} muted />
+                    </div>
+                  )}
+                </>
+              );
+            })()}
 
             {/* Category */}
             <label style={{ display:'block', marginBottom:'13px' }}>
