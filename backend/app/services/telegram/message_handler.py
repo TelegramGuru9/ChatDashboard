@@ -211,6 +211,72 @@ async def _human_typing_delay(response_text: str, persona_data: dict) -> None:
     await asyncio.sleep(total)
 
 
+# ── Per-user message debouncer ─────────────────────────────────────────────────
+
+class MessageDebouncer:
+    """
+    Collects rapid consecutive messages from the same user and merges them into
+    a single AI call after a quiet window of DEBOUNCE_SECONDS.
+
+    Flow:
+      push(msg1) → starts 5 s timer
+      push(msg2) → cancels timer, appends msg2, restarts 5 s timer
+      ... silence for 5 s ...
+      → fires callback("msg1 msg2")  [one AI call, one reply]
+    """
+
+    DEBOUNCE_SECONDS: float = 5.0
+
+    def __init__(self) -> None:
+        # key: (user_id_str, creator_id) → {"texts": [...], "task": Task|None}
+        self._buffers: Dict[tuple, Dict] = {}
+
+    async def push(
+        self,
+        user_id,                          # UUID
+        telegram_id: int,
+        text: str,
+        creator_id: Optional[str],
+        callback,                         # bound method: _generate_and_send_ai_response
+    ) -> None:
+        key = (str(user_id), creator_id)
+
+        entry = self._buffers.setdefault(key, {"texts": [], "task": None})
+        entry["texts"].append(text)
+
+        # Cancel the existing countdown so the window resets
+        old: Optional[asyncio.Task] = entry.get("task")
+        if old and not old.done():
+            old.cancel()
+
+        async def _fire(k=key) -> None:
+            try:
+                await asyncio.sleep(self.DEBOUNCE_SECONDS)
+            except asyncio.CancelledError:
+                return  # newer message arrived — a fresh timer will fire instead
+
+            buf = self._buffers.pop(k, None)
+            if not buf:
+                return
+
+            texts = [t for t in buf.get("texts", []) if t.strip()]
+            if not texts:
+                return
+
+            combined = " ".join(texts)
+            n = len(texts)
+            logger.info(
+                f"[debounce] merged {n} msg(s) for user={str(user_id)[:8]}… → "
+                f"{combined[:80]}{'…' if len(combined) > 80 else ''}"
+            )
+            try:
+                await callback(user_id, telegram_id, combined, creator_id=creator_id)
+            except Exception as exc:
+                logger.error(f"[debounce] callback error: {exc}", exc_info=True)
+
+        entry["task"] = asyncio.create_task(_fire())
+
+
 # ── Main processor ─────────────────────────────────────────────────────────────
 
 class MessageProcessor:
@@ -218,6 +284,7 @@ class MessageProcessor:
         self.queue: asyncio.Queue = asyncio.Queue()
         self._processor_running = False
         self._stats = {"processed": 0, "failed": 0, "ai_responses": 0}
+        self.debouncer = MessageDebouncer()
 
     async def process_incoming_message(self, event_data: Dict[str, Any]) -> bool:
         try:
@@ -269,8 +336,14 @@ class MessageProcessor:
                 pass
 
             if ai_enabled and text:
+                # Push into the per-user debounce buffer instead of firing immediately.
+                # If the user sends another message within 5 s the timer resets and
+                # both texts are merged into one AI call.
                 asyncio.create_task(
-                    self._generate_and_send_ai_response(user_id, telegram_id, text, creator_id=user_creator_id)
+                    self.debouncer.push(
+                        user_id, telegram_id, text, user_creator_id,
+                        self._generate_and_send_ai_response,
+                    )
                 )
 
             self._stats["processed"] += 1
