@@ -122,7 +122,7 @@ export default function MediaPage() {
       }
       return await res.json();
     } catch (e) {
-      logger.warn?.(`[media-upload] ${e}`);
+      console.warn(`[media-upload] ${e}`);
       return null;
     }
   };
