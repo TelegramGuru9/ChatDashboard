@@ -14,7 +14,7 @@ from sqlalchemy import select, and_, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db, db_manager
-from app.db.models import Message, User, Lead, Config
+from app.db.models import Message, User, Lead, Config, Memory, Conversation
 from app.db.schemas import (
     MessageResponse,
     MessageDetailResponse,
@@ -423,14 +423,21 @@ async def reset_user_conversation(
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        # 1. Delete all messages
         from sqlalchemy import delete as sa_delete
+
+        # 1. Delete all memories (AI memory / embeddings)
+        await session.execute(sa_delete(Memory).where(Memory.user_id == user_id))
+
+        # 2. Delete all messages
         await session.execute(sa_delete(Message).where(Message.user_id == user_id))
 
-        # 2. Delete lead record
+        # 3. Delete conversation state record
+        await session.execute(sa_delete(Conversation).where(Conversation.user_id == user_id))
+
+        # 4. Delete lead record
         await session.execute(sa_delete(Lead).where(Lead.user_id == user_id))
 
-        # 3. Reset user stats + state
+        # 5. Reset user stats + state
         user.total_messages = 0
         user.total_interactions = 0
         user.first_message_at = None
@@ -438,9 +445,10 @@ async def reset_user_conversation(
         user.lead_score = 0.0
         user.conversation_state = None
         user.extra_data = {}
+        user.last_message = None
 
         await session.commit()
-        logger.info(f"[reset] Conversation cleared for user {user_id}")
+        logger.info(f"[reset] Full conversation wipe for user {user_id}")
         return {"status": "reset", "user_id": str(user_id)}
 
     except HTTPException:

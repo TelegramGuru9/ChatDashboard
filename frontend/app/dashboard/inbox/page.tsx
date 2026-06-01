@@ -208,17 +208,24 @@ function InboxContent() {
   const resetConversation = async (userId?: string) => {
     const targetId = userId ?? selected?.user_id;
     if (!targetId) return;
-    if (!confirm('Kompletten Chat löschen? Bot startet von vorne. Diese Aktion kann nicht rückgängig gemacht werden.')) return;
+    if (!confirm('Kompletten Chat löschen?\n\nAlle Nachrichten, Erinnerungen und Daten werden gelöscht. Der Bot startet von vorne.\n\nDiese Aktion kann nicht rückgängig gemacht werden.')) return;
     setResetting(true);
     try {
-      await fetch(withCreator(`${api}/users/${targetId}/reset`), { method: 'POST' });
-      if (!userId || userId === selected?.user_id) {
+      const res = await fetch(withCreator(`${api}/users/${targetId}/reset`), { method: 'POST' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // Clear messages + insights if this chat is currently open
+      if (selected?.user_id === targetId) {
         setMessages([]);
+        setInsights(null);
         lastMsgTimeRef.current = '';
-        await loadInsights(targetId);
+        setSelected(null);
       }
-      setConvos(prev => prev.map(c => c.user_id === targetId ? { ...c, last_message: '', total_messages: 0 } : c));
-    } catch { /* silent */ }
+      // Remove from conversation list entirely
+      setConvos(prev => prev.filter(c => c.user_id !== targetId));
+    } catch (e) {
+      alert('Fehler beim Löschen. Bitte erneut versuchen.');
+      console.error('Reset failed:', e);
+    }
     finally { setResetting(false); }
   };
 
