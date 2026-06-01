@@ -226,6 +226,104 @@ def _enforce_sentence_limit(text: str, max_sentences: int = 3) -> str:
     return result.strip()
 
 
+# ── Sales intent detection ─────────────────────────────────────────────────────
+
+def _detect_sales_intent(
+    text: str,
+    packages: list,
+    user_extra: dict,
+) -> Dict[str, Any]:
+    """
+    Classify an incoming message into a sales funnel stage.
+
+    Returns:
+        {
+          "intent": "payment_confirmed" | "asking_details" | "selecting_package"
+                    | "ready_to_pay" | "browsing",
+          "matched_package": dict | None,   # package referenced in the message
+          "package_index": int | None,
+        }
+
+    Priority (highest first):
+        payment_confirmed → asking_details → selecting_package → ready_to_pay → browsing
+    """
+    t = text.lower()
+
+    # ── 1. Payment confirmed ───────────────────────────────────────────────────
+    if any(kw in t for kw in [
+        "habe bezahlt", "hab bezahlt", "ist bezahlt",
+        "habe überwiesen", "hab überwiesen",
+        "habe gezahlt", "hab gezahlt",
+        "i paid", "i have paid", "payment sent",
+        "money sent", "just paid", "done paying", "ist raus",
+    ]):
+        return {"intent": "payment_confirmed", "matched_package": None, "package_index": None}
+
+    # ── Helper: find referenced package ───────────────────────────────────────
+    matched_pkg: Optional[dict] = None
+    matched_idx: Optional[int] = None
+    for i, pkg in enumerate(packages):
+        name_lower = (pkg.get("name") or "").lower()
+        if name_lower and name_lower in t:
+            matched_pkg, matched_idx = pkg, i
+            break
+        for pat in [f"paket {i+1}", f"package {i+1}", f"option {i+1}", f"nr {i+1}", f"#{i+1}"]:
+            if pat in t:
+                matched_pkg, matched_idx = pkg, i
+                break
+    if not matched_pkg:
+        _ORDS = [
+            ["das erste", "ersten", "first", "1st", "paket eins"],
+            ["das zweite", "zweiten", "second", "2nd", "paket zwei"],
+            ["das dritte", "dritten", "third", "3rd", "paket drei"],
+        ]
+        for i, ords in enumerate(_ORDS):
+            if i < len(packages) and any(o in t for o in ords):
+                matched_pkg, matched_idx = packages[i], i
+                break
+
+    # ── 2. Asking for content/preview details ──────────────────────────────────
+    if any(kw in t for kw in [
+        # German
+        "was sehe ich", "was ist drin", "was bekomme ich", "was passiert",
+        "was zeigst du", "beschreib", "mehr infos", "was genau",
+        "was ist im paket", "was ist in paket", "was hat das paket",
+        "zeig mir was", "erzähl mir mehr", "mehr details", "was gibts",
+        "was siehst man", "was ist zu sehen",
+        # English
+        "what do i see", "what's in it", "what's inside", "describe",
+        "what will i get", "what do i get", "what exactly", "tell me more",
+        "what's in the", "what is in the",
+    ]):
+        return {"intent": "asking_details", "matched_package": matched_pkg, "package_index": matched_idx}
+
+    # ── 3. Selecting a specific package ───────────────────────────────────────
+    if any(kw in t for kw in [
+        # German
+        "ich nehme", "ich will", "nehme ich", "das nehme", "ich hätte gerne",
+        "ich kaufe", "ich bestelle", "ich möchte das",
+        # English
+        "i'll take", "i want this", "i want that", "i'll go with",
+        "give me package", "i'd like this",
+    ]):
+        return {"intent": "selecting_package", "matched_package": matched_pkg, "package_index": matched_idx}
+
+    # ── 4. Asking how/where to pay ────────────────────────────────────────────
+    if any(kw in t for kw in [
+        # German
+        "paypal", "wie bezahle", "wie bezahl", "zahlung", "bezahlen",
+        "kauflink", "zahlungslink", "überweisen", "schick mir den link",
+        "wo kann ich zahlen", "klarna", "stripe",
+        # English
+        "how do i pay", "how to pay", "payment link", "where do i pay",
+        "ready to pay",
+    ]):
+        return {"intent": "ready_to_pay", "matched_package": matched_pkg, "package_index": matched_idx}
+
+    # ── 5. Default ─────────────────────────────────────────────────────────────
+    return {"intent": "browsing", "matched_package": matched_pkg, "package_index": matched_idx}
+
+
 async def _human_typing_delay(response_text: str, persona_data: dict) -> None:
     """
     Simulate realistic human behaviour before sending:
@@ -638,12 +736,17 @@ class MessageProcessor:
                 if imgs: parts.append(f"{imgs} bild{'er' if imgs>1 else ''}")
                 if parts: file_summary = f" ({', '.join(parts)})"
 
-            price_str = f"{price} {curr}".strip() if price else ""
+            price_str    = f"{price} {curr}".strip() if price else ""
+            preview_desc = (pkg.get("package_preview_description") or "").strip()
+
             block = f"📦 *{name}*"
-            if desc:        block += f"\n{desc}"
-            if file_summary: block += f"\ninhalt:{file_summary}"
-            if price_str:   block += f"\n💰 {price_str}"
-            if link:        block += f"\n🔗 {link}"
+            if desc:                              block += f"\n{desc}"
+            # Show the admin-configured "what you will see" description if set
+            if preview_desc and preview_desc != desc:
+                                                  block += f"\n{preview_desc}"
+            if file_summary:                      block += f"\ninhalt:{file_summary}"
+            if price_str:                         block += f"\n💰 {price_str}"
+            if link:                              block += f"\n🔗 {link}"
             lines.append(block)
 
         lines.append("\nwelches interessiert dich?")
@@ -774,6 +877,21 @@ class MessageProcessor:
         except Exception as e:
             logger.warning(f"[teaser] failed to send free teaser: {e}")
             return False
+
+    async def _save_selected_package(self, user_id: UUID, package_id: str) -> None:
+        """Persist the user's chosen package ID to their extra_data."""
+        try:
+            async with db_manager.get_session() as session:
+                user_res = await session.execute(select(User).where(User.id == user_id))
+                user = user_res.scalars().first()
+                if user:
+                    extra = dict(user.extra_data or {})
+                    extra["selected_package_id"] = package_id
+                    user.extra_data = extra
+                    await session.commit()
+                    logger.debug(f"[sales-flow] saved selected_package_id={package_id} for user {user_id}")
+        except Exception as e:
+            logger.warning(f"[sales-flow] _save_selected_package error: {e}")
 
     def _resolve_tg_client(self, creator_id: Optional[str]):
         """Return the right TelegramClientManager for this creator."""
@@ -986,6 +1104,18 @@ class MessageProcessor:
                 user_obj = user_res.scalars().first()
                 user_extra = dict(user_obj.extra_data or {}) if user_obj else {}
 
+                # ── Load active packages + detect sales intent ──────────────
+                _sp_res = await session.execute(
+                    select(Config).where(Config.key == "packages")
+                )
+                _sp_cfg = _sp_res.scalars().first()
+                _pkg_raw = _sp_cfg.value if _sp_cfg else []
+                _active_pkgs: list = [
+                    p for p in (_pkg_raw if isinstance(_pkg_raw, list) else [])
+                    if p.get("active", True) and p.get("name")
+                ]
+                sales_intent = _detect_sales_intent(incoming_text, _active_pkgs, user_extra)
+
             # ── Sentence-limit rule: inject into prompt so Claude obeys upfront ─
             max_sents_cfg = int(persona_data.get("max_sentences", 3))
             if max_sents_cfg > 0:
@@ -1012,6 +1142,129 @@ class MessageProcessor:
                 system_prompt += (
                     f"\n\nYOUR LAST {len(recent_bot_replies)} REPLIES (do NOT repeat any phrase, "
                     f"opener, or structure from these):\n{snippet}"
+                )
+
+            # ── Sales flow: intercept or inject based on detected intent ─────
+            _si        = sales_intent["intent"]
+            _si_pkg    = sales_intent.get("matched_package")
+
+            # ── ready_to_pay WITHOUT a selected package → show menu first ───
+            # Prevents the bot from jumping straight to payment instructions
+            # before the user has chosen what they want to buy.
+            if _si == "ready_to_pay" and not user_extra.get("selected_package_id") and _active_pkgs:
+                teaser_sent = await self._send_free_teaser(user_id, telegram_id, creator_id=creator_id)
+                if teaser_sent:
+                    await asyncio.sleep(1.5)
+                menu_text = await self._build_dynamic_package_menu(_active_pkgs, incoming_text, user_id)
+                try:
+                    from telethon.tl.functions.messages import SetTypingRequest
+                    from telethon.tl.types import SendMessageTypingAction
+                    await tg_client.client(
+                        SetTypingRequest(peer=telegram_id, action=SendMessageTypingAction())
+                    )
+                except Exception:
+                    pass
+                await _human_typing_delay(menu_text, persona_data)
+                _tg_id2 = await tg_client.send_message(telegram_id, menu_text)
+                if _tg_id2:
+                    async with db_manager.get_session() as _s2:
+                        _s2.add(Message(
+                            message_id=_tg_id2, user_id=user_id, text=menu_text,
+                            direction="outgoing", has_media=False, is_ai_generated=True,
+                            extra_data={"source": "sales_flow", "intent": "ready_to_pay_no_selection"},
+                            created_at=_naive_utc(),
+                        ))
+                        await _s2.commit()
+                    asyncio.create_task(self._update_lead_funnel(user_id, "price_inquiry"))
+                    try:
+                        import main as _main
+                        _main._broadcast_new_message(str(user_id), {
+                            "id": str(_tg_id2), "text": menu_text, "direction": "outgoing",
+                            "is_ai_generated": True, "created_at": _naive_utc().isoformat(),
+                        })
+                    except Exception:
+                        pass
+                return
+
+            # ── selecting_package → save selection, inject pitch instruction ─
+            if _si == "selecting_package" and _si_pkg:
+                asyncio.create_task(
+                    self._save_selected_package(user_id, str(_si_pkg.get("id", "")))
+                )
+                p_name  = _si_pkg.get("name", "")
+                p_price = f"{_si_pkg.get('price', '')} {_si_pkg.get('currency', '€')}".strip()
+                p_link  = _si_pkg.get("payment_link", "")
+                p_prev  = (
+                    _si_pkg.get("package_preview_description")
+                    or _si_pkg.get("description")
+                    or ""
+                )
+                _pkg_injection = (
+                    f"\n\nPACKAGE SELECTED — user chose '{p_name}' (MANDATORY):\n"
+                    f"1. Confirm their choice of '{p_name}' enthusiastically and in character.\n"
+                    f"2. State the price: {p_price}\n"
+                    f"3. Include the payment link verbatim: {p_link}\n"
+                )
+                if p_prev:
+                    _pkg_injection += f"4. You may briefly reference: {p_prev}\n"
+                _pkg_injection += (
+                    "Keep it short. Use your persona tone. Sentence limit applies. "
+                    "The payment link MUST appear in the reply."
+                )
+                system_prompt += _pkg_injection
+                logger.info(f"[sales-flow] selecting_package → injecting pitch for '{p_name}'")
+
+            # ── ready_to_pay WITH a selected package → inject payment reminder ─
+            elif _si == "ready_to_pay" and user_extra.get("selected_package_id"):
+                _sel = next(
+                    (p for p in _active_pkgs if p.get("id") == user_extra["selected_package_id"]),
+                    _si_pkg or (_active_pkgs[0] if _active_pkgs else None),
+                )
+                if _sel:
+                    system_prompt += (
+                        f"\n\nPAYMENT LINK REQUIRED: User wants to pay for '{_sel.get('name', '')}'. "
+                        f"MUST include this exact payment link in your reply: {_sel.get('payment_link', '')} "
+                        f"Price: {_sel.get('price', '')} {_sel.get('currency', '€')}. Keep it short."
+                    )
+
+            # ── asking_details → ground Claude in the configured description ──
+            # The bot MUST use only the admin-configured preview description.
+            # It must NOT invent details.
+            elif _si == "asking_details":
+                _desc_pkg = _si_pkg
+                if not _desc_pkg and user_extra.get("selected_package_id"):
+                    _desc_pkg = next(
+                        (p for p in _active_pkgs if p.get("id") == user_extra["selected_package_id"]),
+                        None,
+                    )
+                if not _desc_pkg and _active_pkgs:
+                    _desc_pkg = _active_pkgs[0]
+                if _desc_pkg:
+                    _preview = (
+                        _desc_pkg.get("package_preview_description")
+                        or _desc_pkg.get("description")
+                        or ""
+                    )
+                    if _preview:
+                        system_prompt += (
+                            f"\n\nCONTENT QUESTION: User asks what they will see in "
+                            f"'{_desc_pkg.get('name', 'the package')}'.\n"
+                            f"Answer using ONLY this configured description — DO NOT invent or add "
+                            f"any details beyond what is written here:\n"
+                            f"\"{_preview}\"\n"
+                            f"Keep tone in persona. Sentence limit applies. "
+                            f"Do not mention file names or internal keywords."
+                        )
+                        logger.debug(f"[sales-flow] asking_details → injected preview description")
+
+            # ── payment_confirmed → acknowledge only, delivery is separate ───
+            elif _si == "payment_confirmed":
+                system_prompt += (
+                    "\n\nPAYMENT CONFIRMED: The user says they have paid. "
+                    "Acknowledge their payment warmly and in character. "
+                    "Tell them you will send their content shortly. "
+                    "Do NOT send any files in this message — delivery is handled separately. "
+                    "Sentence limit applies."
                 )
 
             # Build Claude messages list

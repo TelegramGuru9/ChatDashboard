@@ -44,12 +44,13 @@ interface Package {
   price: string;
   currency: string;
   payment_link: string;
-  banner_image_id: string;   // media item ID to use as banner
-  media_files: PackageFile[]; // included files (used when dynamic=false)
-  dynamic: boolean;           // if true, files are picked by keyword at send time
-  dynamic_rules: DynamicRules; // how many videos/images to pick for dynamic packages
-  description: string;
-  package_text: string;       // full pitch text for the bot
+  banner_image_id: string;          // media item ID to use as banner
+  media_files: PackageFile[];       // included files (used when dynamic=false)
+  dynamic: boolean;                 // if true, files are picked by keyword at send time
+  dynamic_rules: DynamicRules;      // how many videos/images to pick for dynamic packages
+  description: string;              // internal notes / admin summary
+  package_preview_description: string; // what the buyer will see — used by bot to answer questions
+  package_text: string;             // full pitch text for the bot
   keywords: string;
   send_after_messages: number;
   active: boolean;
@@ -59,7 +60,7 @@ const BLANK: Package = {
   id: '', name: '', tagline: '', price: '', currency: '€',
   payment_link: '', banner_image_id: '',
   media_files: [], dynamic: false, dynamic_rules: { videos: 2, images: 8 },
-  description: '', package_text: '', keywords: '',
+  description: '', package_preview_description: '', package_text: '', keywords: '',
   send_after_messages: 0, active: true,
 };
 
@@ -114,6 +115,7 @@ export default function PackagesPage() {
         currency: p.currency || '€',
         dynamic: p.dynamic ?? false,
         dynamic_rules: p.dynamic_rules || { videos: 2, images: 8 },
+        package_preview_description: p.package_preview_description || '',
       }));
       setPackages(rawPkgs);
       setMediaLib(Array.isArray(libData.value) ? libData.value : []);
@@ -176,7 +178,8 @@ export default function PackagesPage() {
   const generatePitchText = (pkg: Package) => {
     const lines: string[] = [];
     lines.push(`📦 *${pkg.name}*${pkg.tagline ? ` — ${pkg.tagline}` : ''}`);
-    if (pkg.description) lines.push(`\n${pkg.description}`);
+    if (pkg.package_preview_description) lines.push(`\n${pkg.package_preview_description}`);
+    else if (pkg.description) lines.push(`\n${pkg.description}`);
     if (pkg.media_files.length > 0) {
       lines.push('\n📂 *Inhalt:*');
       pkg.media_files.forEach(f => {
@@ -259,7 +262,13 @@ export default function PackagesPage() {
                               {pkg.active ? 'Aktiv' : 'Pausiert'}
                             </span>
                           </div>
-                          {pkg.description && <div style={{ fontSize:'13px', color: C.t2, marginBottom:'8px' }}>{pkg.description}</div>}
+                          {pkg.description && <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px', fontStyle:'italic' }}>{pkg.description}</div>}
+                          {pkg.package_preview_description && (
+                            <div style={{ fontSize:'13px', color: C.t2, marginBottom:'8px', padding:'6px 10px', borderRadius:'8px', background:`${C.teal}0A`, borderLeft:`2px solid ${C.teal}60` }}>
+                              <span style={{ fontSize:'10px', color: C.teal, fontWeight:700, marginRight:'6px' }}>👁 WAS DER USER SIEHT</span>
+                              {pkg.package_preview_description}
+                            </div>
+                          )}
                           {/* File list */}
                           {pkg.media_files.length > 0 && (
                             <div style={{ display:'flex', gap:'5px', flexWrap:'wrap', marginBottom:'8px' }}>
@@ -349,13 +358,30 @@ export default function PackagesPage() {
               </label>
             </div>
 
-            {/* Description */}
+            {/* Description (internal notes) */}
             <label style={{ display:'block', marginBottom:'13px' }}>
-              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Beschreibung</div>
+              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Beschreibung <span style={{ color: C.t3, fontWeight:400 }}>(interne Notiz)</span></div>
               <textarea value={editing.description} onChange={e => setEditing({ ...editing, description: e.target.value })}
-                placeholder="Was bekommt der Fan in diesem Paket?"
+                placeholder="Interne Notiz zum Paket (wird dem Fan nicht gezeigt)"
                 rows={2}
                 style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', resize:'vertical', fontFamily:'inherit', boxSizing:'border-box' }} />
+            </label>
+
+            {/* Package preview description — what the buyer will see */}
+            <label style={{ display:'block', marginBottom:'16px' }}>
+              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>
+                Was der User sieht <span style={{ color: C.teal }}>👁 (für Bot-Antworten + Paketmenü)</span>
+              </div>
+              <textarea
+                value={editing.package_preview_description}
+                onChange={e => setEditing({ ...editing, package_preview_description: e.target.value })}
+                placeholder="Beschreibe kurz was der Käufer in diesem Paket zu sehen bekommt.&#10;z.B. Outfit, Stimmung, Setting, was passiert.&#10;&#10;Wenn ein Fan fragt 'Was ist im Paket?' antwortet der Bot NUR mit diesem Text."
+                rows={4}
+                style={{ width:'100%', background: C.s2, border:`1px solid ${C.teal}40`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', resize:'vertical', fontFamily:'inherit', boxSizing:'border-box' }}
+              />
+              <div style={{ fontSize:'11px', color: C.teal, marginTop:'4px' }}>
+                🛡 Bot erfindet keine Details — er antwortet ausschließlich mit diesem Text wenn jemand fragt "was ist drin?"
+              </div>
             </label>
 
             {/* Dynamic toggle */}
