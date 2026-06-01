@@ -408,14 +408,15 @@ async def reset_user_conversation(
     session: AsyncSession = Depends(get_db),
 ):
     """
-    Wipe the entire conversation for a user so the bot starts fresh.
+    Hard-delete the user and ALL related data so the bot treats the next
+    incoming message as if it is the very first contact.
 
-    What gets cleared:
-      • All Message rows for this user
-      • User stats: total_messages, total_interactions, first_message_at, last_message_at
-      • User extra_data (lead labels, sent_media, selected_package, paypal flags…)
-      • Lead record (funnel stage, score, etc.)
-      • conversation_state / lead_score on the User row
+    Deleted in order (FK-safe):
+      1. Memory  (embeddings / AI memory)
+      2. Message (full chat history)
+      3. Conversation (state record)
+      4. Lead    (CRM funnel data)
+      5. User    (the row itself — recreated automatically on next Telegram message)
     """
     try:
         result = await session.execute(select(User).where(User.id == user_id))
@@ -425,37 +426,24 @@ async def reset_user_conversation(
 
         from sqlalchemy import delete as sa_delete
 
-        # 1. Delete all memories (AI memory / embeddings)
+        # Delete child rows first to satisfy FK constraints
         await session.execute(sa_delete(Memory).where(Memory.user_id == user_id))
-
-        # 2. Delete all messages
         await session.execute(sa_delete(Message).where(Message.user_id == user_id))
-
-        # 3. Delete conversation state record
         await session.execute(sa_delete(Conversation).where(Conversation.user_id == user_id))
-
-        # 4. Delete lead record
         await session.execute(sa_delete(Lead).where(Lead.user_id == user_id))
 
-        # 5. Reset user stats + state
-        user.total_messages = 0
-        user.total_interactions = 0
-        user.first_message_at = None
-        user.last_message_at = None
-        user.lead_score = 0.0
-        user.conversation_state = None
-        user.extra_data = {}
-        user.last_message = None
+        # Delete the user row itself — Telethon will recreate it on the next message
+        await session.delete(user)
 
         await session.commit()
-        logger.info(f"[reset] Full conversation wipe for user {user_id}")
-        return {"status": "reset", "user_id": str(user_id)}
+        logger.info(f"[reset] Hard-deleted user {user_id} and all related data")
+        return {"status": "deleted", "user_id": str(user_id)}
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error resetting conversation for {user_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to reset conversation")
+        logger.error(f"Error deleting user {user_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to delete user")
 
 
 # ==================== ANALYTICS ====================
