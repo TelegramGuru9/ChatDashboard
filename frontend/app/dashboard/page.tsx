@@ -54,7 +54,6 @@ const QUICK = [
   { href:'/dashboard/analytics',   icon:'📊', label:'Analytics',   desc:'Conversion-Metriken' },
   { href:'/dashboard/media',       icon:'🖼️', label:'Media',       desc:'Teaser & Dateien' },
   { href:'/dashboard/packages',    icon:'📦', label:'Pakete',      desc:'Angebote & Preise' },
-  { href:'/dashboard/autoreplies', icon:'⚡', label:'Auto-Antwort', desc:'Automationen' },
 ];
 
 const apiBase = () => {

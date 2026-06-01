@@ -39,7 +39,6 @@ const NAV = [
   { label: 'Analytics',  href: '/dashboard/analytics',   icon: 'analytics' },
   { label: 'Media',      href: '/dashboard/media',       icon: 'media' },
   { label: 'Packages',   href: '/dashboard/packages',    icon: 'packages' },
-  { label: 'Auto-Reply', href: '/dashboard/autoreplies', icon: 'autoreply' },
   { label: 'Creators',   href: '/dashboard/creators',    icon: 'creators' },
   { label: 'Settings',   href: '/dashboard/settings',    icon: 'settings' },
 ];
