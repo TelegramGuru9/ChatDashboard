@@ -402,6 +402,54 @@ async def update_user_insights(
         raise HTTPException(status_code=500, detail="Failed to update insights")
 
 
+@user_router.post("/{user_id}/reset")
+async def reset_user_conversation(
+    user_id: UUID,
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    Wipe the entire conversation for a user so the bot starts fresh.
+
+    What gets cleared:
+      • All Message rows for this user
+      • User stats: total_messages, total_interactions, first_message_at, last_message_at
+      • User extra_data (lead labels, sent_media, selected_package, paypal flags…)
+      • Lead record (funnel stage, score, etc.)
+      • conversation_state / lead_score on the User row
+    """
+    try:
+        result = await session.execute(select(User).where(User.id == user_id))
+        user = result.scalars().first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # 1. Delete all messages
+        from sqlalchemy import delete as sa_delete
+        await session.execute(sa_delete(Message).where(Message.user_id == user_id))
+
+        # 2. Delete lead record
+        await session.execute(sa_delete(Lead).where(Lead.user_id == user_id))
+
+        # 3. Reset user stats + state
+        user.total_messages = 0
+        user.total_interactions = 0
+        user.first_message_at = None
+        user.last_message_at = None
+        user.lead_score = 0.0
+        user.conversation_state = None
+        user.extra_data = {}
+
+        await session.commit()
+        logger.info(f"[reset] Conversation cleared for user {user_id}")
+        return {"status": "reset", "user_id": str(user_id)}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error resetting conversation for {user_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to reset conversation")
+
+
 # ==================== ANALYTICS ====================
 
 analytics_router = APIRouter(prefix="/analytics", tags=["Analytics"])

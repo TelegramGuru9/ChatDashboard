@@ -122,6 +122,7 @@ function InboxContent() {
   const [broadcastMsg, setBroadcastMsg]   = useState('hey wie gehts dir so 😊');
   const [broadcasting, setBroadcasting]   = useState(false);
   const [broadcastResult, setBroadcastResult] = useState('');
+  const [resetting, setResetting] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef       = useRef<HTMLTextAreaElement>(null);
   const pollRef        = useRef<NodeJS.Timeout | null>(null);
@@ -202,6 +203,19 @@ function InboxContent() {
       }
     } catch { /* silent */ }
     finally { setInsightsSaving(false); }
+  };
+
+  const resetConversation = async () => {
+    if (!selected) return;
+    if (!confirm('Kompletten Chat löschen? Bot startet von vorne. Diese Aktion kann nicht rückgängig gemacht werden.')) return;
+    setResetting(true);
+    try {
+      await fetch(withCreator(`${api}/users/${selected.user_id}/reset`), { method: 'POST' });
+      setMessages([]);
+      lastMsgTimeRef.current = '';
+      await loadInsights(selected.user_id);
+    } catch { /* silent */ }
+    finally { setResetting(false); }
   };
 
   const toggleChatAI = async (e: React.MouseEvent, userId: string, current: boolean | undefined) => {
@@ -884,6 +898,21 @@ function InboxContent() {
                         style={{ width:'100%', boxSizing:'border-box', background:C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 10px', color:C.t1, fontSize:'12px', outline:'none', resize:'vertical', fontFamily:'inherit', lineHeight:1.5 }}
                       />
                     </div>
+
+                    {/* Reset conversation */}
+                    <button
+                      onClick={resetConversation}
+                      disabled={resetting}
+                      style={{
+                        width: '100%', padding: '9px', borderRadius: '10px',
+                        background: 'rgba(255,69,58,0.08)', border: '1px solid rgba(255,69,58,0.25)',
+                        color: '#ff453a', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
+                        opacity: resetting ? 0.5 : 1, transition: 'opacity 0.2s',
+                        marginTop: '4px',
+                      }}
+                    >
+                      {resetting ? '🗑 Löschen…' : '🗑 Kompletten Chat zurücksetzen'}
+                    </button>
                   </>
                 )}
               </div>
