@@ -928,7 +928,7 @@ function InboxContent() {
 
                     {/* Reset conversation */}
                     <button
-                      onClick={resetConversation}
+                      onClick={() => resetConversation()}
                       disabled={resetting}
                       style={{
                         width: '100%', padding: '9px', borderRadius: '10px',
