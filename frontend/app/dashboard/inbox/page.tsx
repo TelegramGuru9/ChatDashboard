@@ -205,15 +205,19 @@ function InboxContent() {
     finally { setInsightsSaving(false); }
   };
 
-  const resetConversation = async () => {
-    if (!selected) return;
+  const resetConversation = async (userId?: string) => {
+    const targetId = userId ?? selected?.user_id;
+    if (!targetId) return;
     if (!confirm('Kompletten Chat löschen? Bot startet von vorne. Diese Aktion kann nicht rückgängig gemacht werden.')) return;
     setResetting(true);
     try {
-      await fetch(withCreator(`${api}/users/${selected.user_id}/reset`), { method: 'POST' });
-      setMessages([]);
-      lastMsgTimeRef.current = '';
-      await loadInsights(selected.user_id);
+      await fetch(withCreator(`${api}/users/${targetId}/reset`), { method: 'POST' });
+      if (!userId || userId === selected?.user_id) {
+        setMessages([]);
+        lastMsgTimeRef.current = '';
+        await loadInsights(targetId);
+      }
+      setConvos(prev => prev.map(c => c.user_id === targetId ? { ...c, last_message: '', total_messages: 0 } : c));
     } catch { /* silent */ }
     finally { setResetting(false); }
   };
@@ -634,6 +638,19 @@ function InboxContent() {
                         </div>
                         <span style={{ fontSize:'9px', color:scoreColor(c.lead_score) }}>{Math.round(c.lead_score)}</span>
                       </div>
+                      {/* Delete / reset chat button */}
+                      <button
+                        onClick={e => { e.stopPropagation(); resetConversation(c.user_id); }}
+                        title="Chat zurücksetzen"
+                        style={{
+                          background:'none', border:'none', cursor:'pointer',
+                          padding:'2px 4px', borderRadius:'6px', fontSize:'11px',
+                          color:C.t3, lineHeight:1, flexShrink:0,
+                          transition:'color 0.15s',
+                        }}
+                        onMouseEnter={e => (e.currentTarget.style.color = '#ff453a')}
+                        onMouseLeave={e => (e.currentTarget.style.color = C.t3)}
+                      >🗑</button>
                     </div>
                   </div>
                 </div>
