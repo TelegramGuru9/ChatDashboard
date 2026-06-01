@@ -186,6 +186,46 @@ def _clean_response(text: str) -> str:
     return text.strip()
 
 
+def _enforce_sentence_limit(text: str, max_sentences: int = 3) -> str:
+    """
+    Truncate response to at most `max_sentences` sentences.
+    Splits on sentence-ending punctuation (. ! ?) followed by whitespace or end-of-string.
+    Preserves the original trailing punctuation of the last kept sentence.
+
+    Examples:
+        "Hey! How are you? I'm good. What about you?" → (max=2) "Hey! How are you?"
+        "okay lol... that's wild" → (max=3) unchanged (1 sentence-ish, no hard break)
+    """
+    if max_sentences <= 0:
+        return text
+
+    # Split on sentence boundaries while keeping the delimiter
+    # Pattern: split after . ! ? when followed by whitespace or end-of-string,
+    # but NOT after "..." ellipses (keep those as part of the sentence).
+    parts = re.split(r'(?<=[^.])[.!?](?=\s|$)', text)
+
+    # re.split drops the delimiter — we need to recover punctuation
+    # Use a findall approach instead for accuracy
+    sentence_pattern = re.compile(
+        r'[^.!?]*'          # sentence body
+        r'(?:[.!?](?!\.))'  # single terminator (not part of "...")
+        r'|[^.!?]+'         # or a fragment without terminator (last segment)
+    )
+    sentences = [m.group().strip() for m in sentence_pattern.finditer(text) if m.group().strip()]
+
+    if not sentences:
+        return text
+
+    kept = sentences[:max_sentences]
+    result = " ".join(kept)
+
+    # If we truncated anything, make sure result ends with proper punctuation
+    if len(sentences) > max_sentences and result and result[-1] not in ".!?":
+        result += "."
+
+    return result.strip()
+
+
 async def _human_typing_delay(response_text: str, persona_data: dict) -> None:
     """
     Simulate realistic human behaviour before sending:
@@ -877,6 +917,19 @@ class MessageProcessor:
                     logger.debug("AI globally disabled — skipping")
                     return
 
+                # ── Load operator system rules (highest priority) ───────────
+                sys_rule_res = await session.execute(
+                    select(Config).where(Config.key == "system_prompt")
+                )
+                sys_rule_cfg = sys_rule_res.scalars().first()
+                operator_rules: str = ""
+                if sys_rule_cfg:
+                    raw_val = sys_rule_cfg.value
+                    if isinstance(raw_val, str):
+                        operator_rules = raw_val.strip()
+                    elif isinstance(raw_val, dict):
+                        operator_rules = str(raw_val.get("value", "") or "").strip()
+
                 # ── Build system prompt from persona JSON ───────────────────
                 base_prompt = _build_system_prompt(persona_data)
 
@@ -890,7 +943,21 @@ class MessageProcessor:
                     f"Supported: {lang_list}. Default to English if unsupported language. "
                     f"Never mix languages in a single reply."
                 )
-                system_prompt = base_prompt + lang_rule
+
+                # ── Compose final prompt: operator rules (top) + persona + lang ──
+                # Operator system rules are treated as absolute constraints — Claude
+                # sees them first and they take precedence over anything in the persona.
+                if operator_rules:
+                    system_prompt = (
+                        "SYSTEM RULES (ABSOLUTE PRIORITY — follow these before everything else):\n"
+                        + operator_rules
+                        + "\n\n---\n\n"
+                        + base_prompt
+                        + lang_rule
+                    )
+                    logger.debug(f"[system_prompt] operator rules prepended ({len(operator_rules)} chars)")
+                else:
+                    system_prompt = base_prompt + lang_rule
 
                 # ── Model selection ─────────────────────────────────────────
                 VALID_MODELS = {
@@ -918,6 +985,15 @@ class MessageProcessor:
                 user_res = await session.execute(select(User).where(User.id == user_id))
                 user_obj = user_res.scalars().first()
                 user_extra = dict(user_obj.extra_data or {}) if user_obj else {}
+
+            # ── Sentence-limit rule: inject into prompt so Claude obeys upfront ─
+            max_sents_cfg = int(persona_data.get("max_sentences", 3))
+            if max_sents_cfg > 0:
+                system_prompt += (
+                    f"\n\nSENTENCE LIMIT (mandatory): Your response MUST contain at most "
+                    f"{max_sents_cfg} sentence{'s' if max_sents_cfg != 1 else ''}. "
+                    f"Count carefully. If you are about to write more, stop after sentence {max_sents_cfg}."
+                )
 
             # ── PayPal guard: don't ask again if already asked ──────────────
             if user_extra.get("paypal_asked"):
@@ -973,8 +1049,18 @@ class MessageProcessor:
                 logger.warning(f"Claude returned empty response for {telegram_id}")
                 return
 
-            # ── Post-process: strip dashes ──────────────────────────────────
+            # ── Post-process: strip dashes + enforce sentence limit ────────
             ai_text = _clean_response(ai_text)
+
+            max_sents = int(persona_data.get("max_sentences", 3))
+            if max_sents > 0:
+                original_len = len(ai_text)
+                ai_text = _enforce_sentence_limit(ai_text, max_sents)
+                if len(ai_text) < original_len:
+                    logger.debug(
+                        f"[sentence-limit] truncated to {max_sents} sentences "
+                        f"({original_len} → {len(ai_text)} chars)"
+                    )
 
             logger.info(f"✓ AI response for tg_id={telegram_id}: {ai_text[:120]}")
 

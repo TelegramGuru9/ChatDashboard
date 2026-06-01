@@ -112,7 +112,8 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [jsonError, setJsonError] = useState('');
   const [jsonSuccess, setJsonSuccess] = useState('');
-  const [tab, setTab] = useState<'persona'|'model'|'languages'|'advanced'>('persona');
+  const [systemPrompt, setSystemPrompt] = useState('');
+  const [tab, setTab] = useState<'system_prompt'|'persona'|'model'|'languages'|'advanced'>('system_prompt');
   const [aiStatus, setAiStatus] = useState<any>(null);
   const [testingAI, setTestingAI] = useState(false);
   const [enablingAll, setEnablingAll] = useState(false);
@@ -139,9 +140,12 @@ export default function SettingsPage() {
     finally { setEnablingAll(false); }
   }, [api]);
 
-  // Load existing persona on mount — re-run when creator changes
+  // Load existing persona + system_prompt on mount — re-run when creator changes
   useEffect(() => {
-    fetch(withCreator(`${api}/ai/persona`)).then(r => r.json()).then(d => {
+    Promise.all([
+      fetch(withCreator(`${api}/ai/persona`)).then(r => r.json()),
+      fetch(withCreator(`${api}/config/system_prompt`)).then(r => r.json()).catch(() => ({ value: '' })),
+    ]).then(([d, sp]) => {
       if (d && typeof d === 'object' && Object.keys(d).length > 0) {
         if (typeof d.persona === 'string' && d.persona.trim()) setPersona(d.persona);
         if (typeof d.ai_enabled === 'boolean') setAiEnabled(d.ai_enabled);
@@ -150,17 +154,25 @@ export default function SettingsPage() {
         if (typeof d.model === 'string') setModel(d.model);
         if (Array.isArray(d.enabled_languages) && d.enabled_languages.length) setEnabledLanguages(d.enabled_languages);
       }
+      if (typeof sp?.value === 'string') setSystemPrompt(sp.value);
     }).catch(() => {}).finally(() => setLoading(false));
   }, [api, withCreator]);
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      await fetch(withCreator(`${api}/ai/persona`), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ persona, ai_enabled: aiEnabled, max_tokens: maxTokens, temperature, model, enabled_languages: enabledLanguages }),
-      });
+      await Promise.all([
+        fetch(withCreator(`${api}/ai/persona`), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ persona, ai_enabled: aiEnabled, max_tokens: maxTokens, temperature, model, enabled_languages: enabledLanguages }),
+        }),
+        fetch(withCreator(`${api}/config/system_prompt`), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(systemPrompt),
+        }),
+      ]);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch {}
@@ -211,10 +223,11 @@ export default function SettingsPage() {
   });
 
   const TABS = [
-    { key: 'persona'   as const, label: '🤖 Persona' },
-    { key: 'languages' as const, label: '🌍 Languages' },
-    { key: 'model'     as const, label: '⚙ Model' },
-    { key: 'advanced'  as const, label: '🔧 Advanced' },
+    { key: 'system_prompt' as const, label: '🛡 System Rules' },
+    { key: 'persona'       as const, label: '🤖 Persona' },
+    { key: 'languages'     as const, label: '🌍 Languages' },
+    { key: 'model'         as const, label: '⚙ Model' },
+    { key: 'advanced'      as const, label: '🔧 Advanced' },
   ];
 
   const toggleLang = (code: string) => {
@@ -269,6 +282,29 @@ export default function SettingsPage() {
         {jsonSuccess && <div style={{ padding: '8px 14px', borderRadius: '10px', marginBottom: '12px', background: 'rgba(48,209,88,0.08)', color: C.green, fontSize: '13px' }}>{jsonSuccess}</div>}
 
         {/* Tab content */}
+        {tab === 'system_prompt' && (
+          <div style={{ background: C.s1, borderRadius: '16px', padding: '18px', border: `1px solid ${C.sep}` }}>
+            <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>System Rules</div>
+            <div style={{ fontSize: '12px', color: C.t3, marginBottom: '8px', lineHeight: '1.6' }}>
+              Strict behavioral rules applied before everything else. These override the Persona.
+              Use plain text — one rule per line works best.
+            </div>
+            <div style={{ padding: '10px 14px', borderRadius: '10px', background: 'rgba(10,132,255,0.07)', border: '1px solid rgba(10,132,255,0.2)', fontSize: '11px', color: C.blue, marginBottom: '12px', lineHeight: '1.7' }}>
+              🛡 <strong>Highest priority.</strong> The backend prepends this block to every prompt. Claude sees it first and treats it as binding constraints — your Persona comes second.
+            </div>
+            <textarea
+              value={systemPrompt}
+              onChange={e => setSystemPrompt(e.target.value)}
+              rows={18}
+              placeholder={`Example rules:\n- Reply in maximum 2 sentences.\n- Use at most 1 emoji per message.\n- Never mention competitors.\n- Always stay in character as Nika.\n- If someone asks your age, say "old enough 😏".`}
+              style={{ ...inp(), resize: 'vertical', lineHeight: '1.6', fontFamily: '"SF Mono", "Fira Code", monospace', fontSize: '12px' }}
+            />
+            <div style={{ fontSize: '11px', color: C.t3, marginTop: '6px' }}>
+              Leave blank to use Persona alone. Changes take effect after Save.
+            </div>
+          </div>
+        )}
+
         {tab === 'persona' && (
           <div style={{ background: C.s1, borderRadius: '16px', padding: '18px', border: `1px solid ${C.sep}` }}>
             <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>System Prompt</div>

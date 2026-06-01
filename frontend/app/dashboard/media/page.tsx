@@ -682,24 +682,6 @@ export default function MediaPage() {
               )}
             </label>
 
-            {/* Description */}
-            <label style={{ display:'block', marginBottom:'13px' }}>
-              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Beschreibung</div>
-              <textarea value={editing.description} onChange={e => setEditing({ ...editing, description: e.target.value })}
-                placeholder="z.B. Exklusives Foto-Pack, 10 Bilder, hot & elegant"
-                rows={2}
-                style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', resize:'vertical', fontFamily:'inherit', boxSizing:'border-box' }} />
-            </label>
-
-            {/* Message to user */}
-            <label style={{ display:'block', marginBottom:'13px' }}>
-              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Nachricht an User <span style={{ color: C.teal }}>(wird mit der Datei gesendet)</span></div>
-              <textarea value={editing.message_to_user} onChange={e => setEditing({ ...editing, message_to_user: e.target.value })}
-                placeholder="z.B. Hier ist dein exklusiver Inhalt 🔥 Viel Spaß!"
-                rows={2}
-                style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', resize:'vertical', fontFamily:'inherit', boxSizing:'border-box' }} />
-            </label>
-
             {/* Price + payment link (hidden for Free) */}
             {editing.tag !== 'Free' && (
               <>
