@@ -1104,10 +1104,18 @@ class MessageProcessor:
                     pay_msg = (
                         f"✅ Perfekt! Du hast **{p_name}** gewählt.\n\n"
                         f"💰 Preis: {p_price}\n\n"
-                        f"👇 Hier ist dein persönlicher Zahlungslink:\n"
-                        f"{p_link}\n\n"
+                        f"Klick einfach auf den Button unten und du wirst direkt zur sicheren Zahlung weitergeleitet 🔐\n\n"
                         f"Sobald die Zahlung eingegangen ist, bekommst du sofort Zugang! 🎉"
                     )
+                    # Build inline keyboard button for the Stripe link
+                    from telethon.tl.types import (
+                        ReplyInlineMarkup, KeyboardButtonRow, KeyboardButtonUrl
+                    )
+                    pay_button = ReplyInlineMarkup(rows=[
+                        KeyboardButtonRow(buttons=[
+                            KeyboardButtonUrl(text=f"💳 Jetzt kaufen — {p_price}", url=p_link)
+                        ])
+                    ])
                     try:
                         from telethon.tl.functions.messages import SetTypingRequest
                         from telethon.tl.types import SendMessageTypingAction
@@ -1117,7 +1125,9 @@ class MessageProcessor:
                     except Exception:
                         pass
                     await asyncio.sleep(1.5)
-                    _pay_tg_id = await tg_client.send_message(telegram_id, pay_msg)
+                    _pay_tg_id = await tg_client.send_message(
+                        telegram_id, pay_msg, buttons=pay_button
+                    )
                     if _pay_tg_id:
                         async with db_manager.get_session() as _ps:
                             _ps.add(Message(
@@ -1167,10 +1177,17 @@ class MessageProcessor:
                     if _sel_link:
                         pay_msg2 = (
                             f"💳 Hier ist dein Zahlungslink für **{_sel_name}**:\n\n"
-                            f"{_sel_link}\n\n"
-                            f"💰 Preis: {_sel_price}\n"
-                            f"Klick einfach auf den Link und du wirst direkt zu Stripe weitergeleitet! 🔐"
+                            f"💰 Preis: {_sel_price}\n\n"
+                            f"Klick auf den Button unten — du wirst direkt zu Stripe weitergeleitet 🔐"
                         )
+                        from telethon.tl.types import (
+                            ReplyInlineMarkup, KeyboardButtonRow, KeyboardButtonUrl
+                        )
+                        pay_button2 = ReplyInlineMarkup(rows=[
+                            KeyboardButtonRow(buttons=[
+                                KeyboardButtonUrl(text=f"💳 Jetzt kaufen — {_sel_price}", url=_sel_link)
+                            ])
+                        ])
                         try:
                             from telethon.tl.functions.messages import SetTypingRequest
                             from telethon.tl.types import SendMessageTypingAction
@@ -1180,7 +1197,9 @@ class MessageProcessor:
                         except Exception:
                             pass
                         await asyncio.sleep(1.0)
-                        _pay2_tg_id = await tg_client.send_message(telegram_id, pay_msg2)
+                        _pay2_tg_id = await tg_client.send_message(
+                            telegram_id, pay_msg2, buttons=pay_button2
+                        )
                         if _pay2_tg_id:
                             async with db_manager.get_session() as _ps2:
                                 _ps2.add(Message(

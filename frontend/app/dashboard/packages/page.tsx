@@ -44,6 +44,7 @@ interface Package {
   price: string;
   currency: string;
   payment_link: string;
+  stripe_button_code: string;        // full <stripe-buy-button> embed code (stored for reference)
   banner_image_id: string;          // media item ID to use as banner
   media_files: PackageFile[];       // included files (used when dynamic=false)
   dynamic: boolean;                 // if true, files are picked by keyword at send time
@@ -58,7 +59,7 @@ interface Package {
 
 const BLANK: Package = {
   id: '', name: '', tagline: '', price: '', currency: '€',
-  payment_link: '', banner_image_id: '',
+  payment_link: '', stripe_button_code: '', banner_image_id: '',
   media_files: [], dynamic: false, dynamic_rules: { videos: 2, images: 8 },
   description: '', package_preview_description: '', package_text: '', keywords: '',
   send_after_messages: 0, active: true,
@@ -116,6 +117,7 @@ export default function PackagesPage() {
         dynamic: p.dynamic ?? false,
         dynamic_rules: p.dynamic_rules || { videos: 2, images: 8 },
         package_preview_description: p.package_preview_description || '',
+        stripe_button_code: p.stripe_button_code || '',
       }));
       setPackages(rawPkgs);
       setMediaLib(Array.isArray(libData.value) ? libData.value : []);
@@ -499,15 +501,30 @@ export default function PackagesPage() {
               </label>
             </div>
 
-            <label style={{ display:'block', marginBottom:'13px' }}>
-              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>
-                💳 Stripe Kauflink
-                <span style={{ fontSize:'10px', color:'#30a46c', marginLeft:'6px' }}>→ wird automatisch gesendet sobald User Paket wählt</span>
+            {/* Stripe payment fields */}
+            <div style={{ background:'rgba(48,164,108,0.06)', border:'1px solid rgba(48,164,108,0.2)', borderRadius:'12px', padding:'14px', marginBottom:'13px' }}>
+              <div style={{ fontSize:'11px', fontWeight:700, color:'#30a46c', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:'12px' }}>
+                💳 Stripe Zahlung — wird automatisch als Button in Telegram gesendet
               </div>
-              <input value={editing.payment_link} onChange={e => setEditing({ ...editing, payment_link: e.target.value })}
-                placeholder="https://buy.stripe.com/…"
-                style={{ width:'100%', background: C.s2, border:`1px solid rgba(48,164,108,0.4)`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }} />
-            </label>
+
+              <label style={{ display:'block', marginBottom:'10px' }}>
+                <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Kauflink (buy.stripe.com URL)</div>
+                <input value={editing.payment_link} onChange={e => setEditing({ ...editing, payment_link: e.target.value })}
+                  placeholder="https://buy.stripe.com/…"
+                  style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }} />
+              </label>
+
+              <label style={{ display:'block', marginBottom:'4px' }}>
+                <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Stripe Buy Button Code <span style={{ color: C.t3, fontWeight:400 }}>(optional — zum Speichern)</span></div>
+                <textarea value={editing.stripe_button_code} onChange={e => setEditing({ ...editing, stripe_button_code: e.target.value })}
+                  placeholder={'<stripe-buy-button\n  buy-button-id="buy_btn_…"\n  publishable-key="pk_live_…"\n></stripe-buy-button>'}
+                  rows={5}
+                  style={{ width:'100%', boxSizing:'border-box', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'11px', outline:'none', resize:'vertical', fontFamily:'monospace', lineHeight:1.5 }} />
+                <div style={{ fontSize:'10px', color: C.t3, marginTop:'4px' }}>
+                  💡 Telegram kann keinen HTML-Code rendern — der Bot sendet stattdessen einen nativen Inline-Button mit dem Kauflink oben.
+                </div>
+              </label>
+            </div>
 
             {/* Package pitch text */}
             <div style={{ marginBottom:'13px' }}>
