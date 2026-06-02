@@ -113,7 +113,11 @@ export default function SettingsPage() {
   const [jsonError, setJsonError] = useState('');
   const [jsonSuccess, setJsonSuccess] = useState('');
   const [systemPrompt, setSystemPrompt] = useState('');
-  const [tab, setTab] = useState<'system_prompt'|'persona'|'model'|'languages'|'advanced'>('system_prompt');
+  const [tab, setTab] = useState<'system_prompt'|'persona'|'model'|'languages'|'advanced'|'cash'>('system_prompt');
+  const [cashUsers, setCashUsers] = useState<string[]>(['FuegoFounder', 'rickjames999']);
+  const [cashInput, setCashInput] = useState('');
+  const [cashSaving, setCashSaving] = useState(false);
+  const [cashSaved, setCashSaved] = useState(false);
   const [aiStatus, setAiStatus] = useState<any>(null);
   const [testingAI, setTestingAI] = useState(false);
   const [enablingAll, setEnablingAll] = useState(false);
@@ -145,7 +149,8 @@ export default function SettingsPage() {
     Promise.all([
       fetch(withCreator(`${api}/ai/persona`)).then(r => r.json()),
       fetch(withCreator(`${api}/config/system_prompt`)).then(r => r.json()).catch(() => ({ value: '' })),
-    ]).then(([d, sp]) => {
+      fetch(withCreator(`${api}/config/cash_notify_users`)).then(r => r.json()).catch(() => ({ value: [] })),
+    ]).then(([d, sp, cu]) => {
       if (d && typeof d === 'object' && Object.keys(d).length > 0) {
         if (typeof d.persona === 'string' && d.persona.trim()) setPersona(d.persona);
         if (typeof d.ai_enabled === 'boolean') setAiEnabled(d.ai_enabled);
@@ -155,6 +160,7 @@ export default function SettingsPage() {
         if (Array.isArray(d.enabled_languages) && d.enabled_languages.length) setEnabledLanguages(d.enabled_languages);
       }
       if (typeof sp?.value === 'string') setSystemPrompt(sp.value);
+      if (Array.isArray(cu?.value) && cu.value.length > 0) setCashUsers(cu.value);
     }).catch(() => {}).finally(() => setLoading(false));
   }, [api, withCreator]);
 
@@ -222,11 +228,34 @@ export default function SettingsPage() {
     padding: '9px 12px', color: C.t1, fontSize: '13px', outline: 'none', ...style,
   });
 
+  const saveCashUsers = async () => {
+    setCashSaving(true);
+    try {
+      await fetch(withCreator(`${api}/config/cash_notify_users`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cashUsers),
+      });
+      setCashSaved(true);
+      setTimeout(() => setCashSaved(false), 3000);
+    } catch {}
+    setCashSaving(false);
+  };
+
+  const addCashUser = () => {
+    const u = cashInput.trim().replace(/^@/, '');
+    if (u && !cashUsers.includes(u)) {
+      setCashUsers(prev => [...prev, u]);
+    }
+    setCashInput('');
+  };
+
   const TABS = [
     { key: 'system_prompt' as const, label: '🛡 System Rules' },
     { key: 'persona'       as const, label: '🤖 Persona' },
     { key: 'languages'     as const, label: '🌍 Languages' },
     { key: 'model'         as const, label: '⚙ Model' },
+    { key: 'cash'          as const, label: '💵 Cash Alarm' },
     { key: 'advanced'      as const, label: '🔧 Advanced' },
   ];
 
@@ -388,6 +417,62 @@ export default function SettingsPage() {
               <input type="range" min={0} max={1} step={0.05} value={temperature} onChange={e => setTemperature(+e.target.value)} style={{ width: '100%', accentColor: C.blue }} />
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: C.t3, marginTop: '4px' }}><span>0 (precise)</span><span>1 (creative)</span></div>
             </label>
+          </div>
+        )}
+
+        {tab === 'cash' && (
+          <div style={{ background: C.s1, borderRadius: '16px', padding: '20px', border: `1px solid rgba(255,214,0,0.2)` }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+              <span style={{ fontSize: '28px' }}>💵</span>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: '16px', color: '#ffd60a' }}>Cash Alarm</div>
+                <div style={{ fontSize: '12px', color: C.t3, marginTop: '2px' }}>Wer bekommt eine Telegram-Nachricht wenn ein Kauf bestätigt wird?</div>
+              </div>
+            </div>
+
+            <div style={{ background: 'rgba(255,214,10,0.06)', border: '1px solid rgba(255,214,10,0.15)', borderRadius: '12px', padding: '14px', marginBottom: '16px', marginTop: '14px' }}>
+              <div style={{ fontSize: '12px', color: '#ffd60a', fontWeight: 600, marginBottom: '4px' }}>Was passiert beim Kauf:</div>
+              <div style={{ fontSize: '12px', color: C.t2, lineHeight: 1.8 }}>
+                1. User bestätigt Zahlung (Screenshot / Transaktions-Nr.)<br/>
+                2. Lead wird auf <span style={{ color: '#30d158', fontWeight: 600 }}>BUYER</span> gesetzt<br/>
+                3. Alle Nutzer unten erhalten sofort:<br/>
+                <span style={{ fontFamily: 'monospace', fontSize: '13px', color: '#ffd60a', marginLeft: '16px' }}>💵💵💵 $ CASH CASH CASH $ 💵💵💵</span>
+              </div>
+            </div>
+
+            {/* User list */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '14px' }}>
+              {cashUsers.map(u => (
+                <div key={u} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: C.s2, borderRadius: '10px', padding: '10px 14px' }}>
+                  <span style={{ fontWeight: 600, fontSize: '14px' }}>@{u}</span>
+                  <button onClick={() => setCashUsers(prev => prev.filter(x => x !== u))}
+                    style={{ background: 'none', border: 'none', color: '#ff453a', cursor: 'pointer', fontSize: '16px', padding: '0 4px', lineHeight: 1 }}>✕</button>
+                </div>
+              ))}
+              {cashUsers.length === 0 && (
+                <div style={{ textAlign: 'center', padding: '20px', color: C.t3, fontSize: '13px' }}>Noch keine Nutzer — füge einen hinzu</div>
+              )}
+            </div>
+
+            {/* Add user input */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+              <input
+                value={cashInput}
+                onChange={e => setCashInput(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addCashUser()}
+                placeholder="@username oder username"
+                style={{ flex: 1, background: C.s2, border: `1px solid ${C.sep}`, borderRadius: '10px', padding: '9px 12px', color: C.t1, fontSize: '13px', outline: 'none' }}
+              />
+              <button onClick={addCashUser}
+                style={{ padding: '9px 16px', borderRadius: '10px', background: '#ffd60a', border: 'none', color: '#000', fontWeight: 700, cursor: 'pointer', fontSize: '13px' }}>
+                + Add
+              </button>
+            </div>
+
+            <button onClick={saveCashUsers} disabled={cashSaving}
+              style={{ width: '100%', padding: '11px', borderRadius: '12px', background: cashSaved ? '#30d158' : '#ffd60a', border: 'none', color: '#000', fontWeight: 700, fontSize: '14px', cursor: 'pointer', opacity: cashSaving ? 0.6 : 1 }}>
+              {cashSaved ? '✓ Gespeichert!' : cashSaving ? 'Speichere…' : '💾 Cash Alarm speichern'}
+            </button>
           </div>
         )}
 

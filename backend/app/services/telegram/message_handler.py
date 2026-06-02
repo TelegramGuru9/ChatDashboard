@@ -893,6 +893,68 @@ class MessageProcessor:
         except Exception as e:
             logger.warning(f"[sales-flow] _save_selected_package error: {e}")
 
+    async def _handle_sale_completed(
+        self,
+        user_id: UUID,
+        creator_id: Optional[str],
+        buyer_telegram_id: int,
+    ) -> None:
+        """
+        Called when payment_confirmed is detected.
+        1. Tag the lead as BUYER in the DB.
+        2. Load cash_notify_users from config.
+        3. Send '$ CASH CASH CASH $' notification to each configured user.
+        """
+        try:
+            # 1. Tag as BUYER
+            async with db_manager.get_session() as session:
+                u_res = await session.execute(select(User).where(User.id == user_id))
+                u = u_res.scalars().first()
+                if u:
+                    extra = dict(u.extra_data or {})
+                    extra["lead_label"] = "BUYER"
+                    extra["sale_completed_at"] = _naive_utc().isoformat()
+                    u.extra_data = extra
+                    u.conversation_state = "customer"
+                    await session.commit()
+                    logger.info(f"[cash] Tagged user {user_id} as BUYER")
+
+                # 2. Load notify list
+                cfg_res = await session.execute(
+                    select(Config).where(Config.key == "cash_notify_users")
+                )
+                cfg = cfg_res.scalars().first()
+                notify_users: list = []
+                if cfg and isinstance(cfg.value, list):
+                    notify_users = cfg.value
+        except Exception as e:
+            logger.error(f"[cash] DB error in _handle_sale_completed: {e}")
+            return
+
+        if not notify_users:
+            logger.info("[cash] No cash notify users configured — skipping notification")
+            return
+
+        # 3. Send notification via the creator's Telegram client
+        try:
+            tg_client = self._resolve_tg_client(creator_id)
+            cash_msg = (
+                "💵💵💵 $ CASH CASH CASH $ 💵💵💵\n\n"
+                "🎉 Ein neuer Kauf wurde bestätigt!\n"
+                f"👤 Telegram ID: {buyer_telegram_id}"
+            )
+            for notify_username in notify_users:
+                try:
+                    uname = str(notify_username).lstrip("@").strip()
+                    if not uname:
+                        continue
+                    await tg_client.send_message(uname, cash_msg)
+                    logger.info(f"[cash] Sent cash notification to @{uname}")
+                except Exception as e:
+                    logger.warning(f"[cash] Failed to notify @{uname}: {e}")
+        except Exception as e:
+            logger.error(f"[cash] Error sending cash notifications: {e}")
+
     def _resolve_tg_client(self, creator_id: Optional[str]):
         """Return the right TelegramClientManager for this creator."""
         if creator_id:
@@ -1079,6 +1141,13 @@ class MessageProcessor:
                             extra_data={"source": "sales_flow", "intent": "ready_to_pay_no_selection"},
                             created_at=_naive_utc(),
                         ))
+                        # Tag as WARM — user received package list
+                        _u2r = await _s2.execute(select(User).where(User.id == user_id))
+                        _u2 = _u2r.scalars().first()
+                        if _u2:
+                            _ex2 = dict(_u2.extra_data or {})
+                            _ex2["lead_label"] = "WARM"
+                            _u2.extra_data = _ex2
                         await _s2.commit()
                     asyncio.create_task(self._update_lead_funnel(user_id, "price_inquiry"))
                     try:
@@ -1257,7 +1326,7 @@ class MessageProcessor:
                         )
                         logger.debug(f"[sales-flow] asking_details → injected preview description")
 
-            # ── payment_confirmed → acknowledge only, delivery is separate ───
+            # ── payment_confirmed → tag BUYER + fire cash notifications ────────
             elif _si == "payment_confirmed":
                 system_prompt += (
                     "\n\nPAYMENT CONFIRMED: The user says they have paid. "
@@ -1266,6 +1335,8 @@ class MessageProcessor:
                     "Do NOT send any files in this message — delivery is handled separately. "
                     "Sentence limit applies."
                 )
+                # Tag as BUYER and fire cash notification in background
+                asyncio.create_task(self._handle_sale_completed(user_id, creator_id, telegram_id))
 
             # Build Claude messages list
             claude_msgs: List[Dict[str, str]] = []
