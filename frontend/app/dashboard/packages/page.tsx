@@ -500,10 +500,13 @@ export default function PackagesPage() {
             </div>
 
             <label style={{ display:'block', marginBottom:'13px' }}>
-              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Kauflink</div>
+              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>
+                💳 Stripe Kauflink
+                <span style={{ fontSize:'10px', color:'#30a46c', marginLeft:'6px' }}>→ wird automatisch gesendet sobald User Paket wählt</span>
+              </div>
               <input value={editing.payment_link} onChange={e => setEditing({ ...editing, payment_link: e.target.value })}
                 placeholder="https://buy.stripe.com/…"
-                style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }} />
+                style={{ width:'100%', background: C.s2, border:`1px solid rgba(48,164,108,0.4)`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }} />
             </label>
 
             {/* Package pitch text */}

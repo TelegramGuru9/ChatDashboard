@@ -1091,7 +1091,7 @@ class MessageProcessor:
                         pass
                 return
 
-            # ── selecting_package → save selection, inject pitch instruction ─
+            # ── selecting_package → send Stripe link directly, skip Claude ────
             if _si == "selecting_package" and _si_pkg:
                 asyncio.create_task(
                     self._save_selected_package(user_id, str(_si_pkg.get("id", "")))
@@ -1099,38 +1099,114 @@ class MessageProcessor:
                 p_name  = _si_pkg.get("name", "")
                 p_price = f"{_si_pkg.get('price', '')} {_si_pkg.get('currency', '€')}".strip()
                 p_link  = _si_pkg.get("payment_link", "")
-                p_prev  = (
-                    _si_pkg.get("package_preview_description")
-                    or _si_pkg.get("description")
-                    or ""
-                )
-                _pkg_injection = (
-                    f"\n\nPACKAGE SELECTED — user chose '{p_name}' (MANDATORY):\n"
-                    f"1. Confirm their choice of '{p_name}' enthusiastically and in character.\n"
-                    f"2. State the price: {p_price}\n"
-                    f"3. Include the payment link verbatim: {p_link}\n"
-                )
-                if p_prev:
-                    _pkg_injection += f"4. You may briefly reference: {p_prev}\n"
-                _pkg_injection += (
-                    "Keep it short. Use your persona tone. Sentence limit applies. "
-                    "The payment link MUST appear in the reply."
-                )
-                system_prompt += _pkg_injection
-                logger.info(f"[sales-flow] selecting_package → injecting pitch for '{p_name}'")
 
-            # ── ready_to_pay WITH a selected package → inject payment reminder ─
+                if p_link:
+                    pay_msg = (
+                        f"✅ Perfekt! Du hast **{p_name}** gewählt.\n\n"
+                        f"💰 Preis: {p_price}\n\n"
+                        f"👇 Hier ist dein persönlicher Zahlungslink:\n"
+                        f"{p_link}\n\n"
+                        f"Sobald die Zahlung eingegangen ist, bekommst du sofort Zugang! 🎉"
+                    )
+                    try:
+                        from telethon.tl.functions.messages import SetTypingRequest
+                        from telethon.tl.types import SendMessageTypingAction
+                        await tg_client.client(
+                            SetTypingRequest(peer=telegram_id, action=SendMessageTypingAction())
+                        )
+                    except Exception:
+                        pass
+                    await asyncio.sleep(1.5)
+                    _pay_tg_id = await tg_client.send_message(telegram_id, pay_msg)
+                    if _pay_tg_id:
+                        async with db_manager.get_session() as _ps:
+                            _ps.add(Message(
+                                message_id=_pay_tg_id, user_id=user_id, text=pay_msg,
+                                direction="outgoing", has_media=False, is_ai_generated=True,
+                                extra_data={"source": "sales_flow", "intent": "payment_link_sent", "package": p_name},
+                                created_at=_naive_utc(),
+                            ))
+                            # Tag lead as HOT
+                            _ur = await _ps.execute(select(User).where(User.id == user_id))
+                            _u = _ur.scalars().first()
+                            if _u:
+                                _ex = dict(_u.extra_data or {})
+                                _ex["lead_label"] = "HOT"
+                                _u.extra_data = _ex
+                            await _ps.commit()
+                        asyncio.create_task(self._update_lead_funnel(user_id, "payment_link_sent"))
+                        try:
+                            import main as _main
+                            _main._broadcast_new_message(str(user_id), {
+                                "id": str(_pay_tg_id), "text": pay_msg,
+                                "direction": "outgoing", "is_ai_generated": True,
+                                "created_at": _naive_utc().isoformat(),
+                            })
+                        except Exception:
+                            pass
+                    logger.info(f"[sales-flow] selecting_package → sent Stripe link for '{p_name}'")
+                    return  # Payment link sent — no Claude call needed
+                else:
+                    # No Stripe link configured → fall through to Claude with injection
+                    system_prompt += (
+                        f"\n\nPACKAGE SELECTED: user chose '{p_name}' ({p_price}). "
+                        f"Confirm enthusiastically in persona. Sentence limit applies."
+                    )
+                    logger.info(f"[sales-flow] selecting_package → no payment link, using Claude for '{p_name}'")
+
+            # ── ready_to_pay WITH a selected package → send Stripe link directly ─
             elif _si == "ready_to_pay" and user_extra.get("selected_package_id"):
                 _sel = next(
-                    (p for p in _active_pkgs if p.get("id") == user_extra["selected_package_id"]),
+                    (p for p in _active_pkgs if str(p.get("id")) == str(user_extra["selected_package_id"])),
                     _si_pkg or (_active_pkgs[0] if _active_pkgs else None),
                 )
                 if _sel:
-                    system_prompt += (
-                        f"\n\nPAYMENT LINK REQUIRED: User wants to pay for '{_sel.get('name', '')}'. "
-                        f"MUST include this exact payment link in your reply: {_sel.get('payment_link', '')} "
-                        f"Price: {_sel.get('price', '')} {_sel.get('currency', '€')}. Keep it short."
-                    )
+                    _sel_link = _sel.get("payment_link", "")
+                    _sel_name = _sel.get("name", "")
+                    _sel_price = f"{_sel.get('price', '')} {_sel.get('currency', '€')}".strip()
+                    if _sel_link:
+                        pay_msg2 = (
+                            f"💳 Hier ist dein Zahlungslink für **{_sel_name}**:\n\n"
+                            f"{_sel_link}\n\n"
+                            f"💰 Preis: {_sel_price}\n"
+                            f"Klick einfach auf den Link und du wirst direkt zu Stripe weitergeleitet! 🔐"
+                        )
+                        try:
+                            from telethon.tl.functions.messages import SetTypingRequest
+                            from telethon.tl.types import SendMessageTypingAction
+                            await tg_client.client(
+                                SetTypingRequest(peer=telegram_id, action=SendMessageTypingAction())
+                            )
+                        except Exception:
+                            pass
+                        await asyncio.sleep(1.0)
+                        _pay2_tg_id = await tg_client.send_message(telegram_id, pay_msg2)
+                        if _pay2_tg_id:
+                            async with db_manager.get_session() as _ps2:
+                                _ps2.add(Message(
+                                    message_id=_pay2_tg_id, user_id=user_id, text=pay_msg2,
+                                    direction="outgoing", has_media=False, is_ai_generated=True,
+                                    extra_data={"source": "sales_flow", "intent": "payment_link_reminder"},
+                                    created_at=_naive_utc(),
+                                ))
+                                await _ps2.commit()
+                            asyncio.create_task(self._update_lead_funnel(user_id, "payment_link_sent"))
+                            try:
+                                import main as _main
+                                _main._broadcast_new_message(str(user_id), {
+                                    "id": str(_pay2_tg_id), "text": pay_msg2,
+                                    "direction": "outgoing", "is_ai_generated": True,
+                                    "created_at": _naive_utc().isoformat(),
+                                })
+                            except Exception:
+                                pass
+                        logger.info(f"[sales-flow] ready_to_pay → sent Stripe link for '{_sel_name}'")
+                        return
+                    else:
+                        system_prompt += (
+                            f"\n\nPAYMENT: User wants to pay for '{_sel_name}' ({_sel_price}). "
+                            f"No payment link configured — ask them to contact you directly."
+                        )
 
             # ── asking_details → ground Claude in the configured description ──
             # The bot MUST use only the admin-configured preview description.
