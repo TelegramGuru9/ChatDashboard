@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { useCreator } from '@/contexts/CreatorContext';
+import Script from 'next/script';
 
 const C = {
   bg:'#0a0a0a', s1:'#111113', s2:'#1c1c1e', s3:'#2c2c2e', s4:'#3a3a3c',
@@ -514,16 +515,27 @@ export default function PackagesPage() {
                   style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }} />
               </label>
 
-              <label style={{ display:'block', marginBottom:'4px' }}>
-                <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Stripe Buy Button Code <span style={{ color: C.t3, fontWeight:400 }}>(optional — zum Speichern)</span></div>
+              <div style={{ marginBottom:'4px' }}>
+                <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Stripe Buy Button Code</div>
                 <textarea value={editing.stripe_button_code} onChange={e => setEditing({ ...editing, stripe_button_code: e.target.value })}
                   placeholder={'<stripe-buy-button\n  buy-button-id="buy_btn_…"\n  publishable-key="pk_live_…"\n></stripe-buy-button>'}
-                  rows={5}
-                  style={{ width:'100%', boxSizing:'border-box', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'11px', outline:'none', resize:'vertical', fontFamily:'monospace', lineHeight:1.5 }} />
-                <div style={{ fontSize:'10px', color: C.t3, marginTop:'4px' }}>
-                  💡 Telegram kann keinen HTML-Code rendern — der Bot sendet stattdessen einen nativen Inline-Button mit dem Kauflink oben.
-                </div>
-              </label>
+                  rows={4}
+                  style={{ width:'100%', boxSizing:'border-box', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'11px', outline:'none', resize:'none', fontFamily:'monospace', lineHeight:1.5 }} />
+
+                {/* Live Stripe button preview */}
+                {editing.stripe_button_code && editing.stripe_button_code.includes('buy-button-id') && (
+                  <div style={{ marginTop:'12px' }}>
+                    <div style={{ fontSize:'10px', color: C.t3, marginBottom:'8px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Vorschau</div>
+                    <div style={{ background: C.s2, borderRadius:'10px', padding:'16px', display:'flex', justifyContent:'center', alignItems:'center', minHeight:'60px' }}>
+                      <Script src="https://js.stripe.com/v3/buy-button.js" strategy="lazyOnload" />
+                      <div dangerouslySetInnerHTML={{ __html: editing.stripe_button_code }} />
+                    </div>
+                    <div style={{ fontSize:'10px', color: C.t3, marginTop:'6px' }}>
+                      💡 Dieser Button ist für die Dashboard-Vorschau. Im Telegram-Chat wird ein nativer Inline-Button gesendet.
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Package pitch text */}
