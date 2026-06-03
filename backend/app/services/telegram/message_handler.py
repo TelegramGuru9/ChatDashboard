@@ -154,8 +154,11 @@ def _clean_response(text: str) -> str:
     ).strip()
     # If the separator "---" is still present at the top after stripping meta-text, remove it
     text = re.sub(r'^\s*---\s*', '', text).strip()
-    # Strip any remaining [PLACEHOLDER] tokens (e.g. [PACKAGE MENU], [BUY LINK])
-    text = re.sub(r'\[[A-Z][A-Z\s]{2,}\]', '', text).strip()
+    # Strip any remaining [PLACEHOLDER] tokens (e.g. [PACKAGE_MENU], [PACKAGE MENU], [BUY_LINK])
+    # Underscore + space variants both covered
+    text = re.sub(r'\[[A-Z][A-Z\s_]{2,}\]', '', text).strip()
+    # Also catch lowercase variants like [package_menu]
+    text = re.sub(r'\[[a-z][a-z\s_]{2,}\]', '', text).strip()
 
     # Em dash and en dash → ellipsis (feels more natural in casual texting)
     text = text.replace("—", "...")
@@ -783,42 +786,45 @@ class MessageProcessor:
 
     def _build_package_menu_text(self, packages: list) -> str:
         """
-        Build a clean German package menu message from the real package config.
-        Falls back gracefully if fields are missing.
-        """
-        lines = ["hier sind meine aktuellen angebote 🔥\n"]
-        for pkg in packages:
-            name   = pkg.get("name", "")
-            price  = pkg.get("price", "")
-            curr   = pkg.get("currency", "€")
-            desc   = pkg.get("description", "") or pkg.get("tagline", "")
-            link   = pkg.get("payment_link", "")
-            # files summary
-            files  = pkg.get("media_files", [])
-            file_summary = ""
-            if files:
-                imgs   = sum(1 for f in files if str(f.get("type","")).startswith("image"))
-                vids   = sum(1 for f in files if str(f.get("type","")).startswith("video"))
-                parts  = []
-                if vids:  parts.append(f"{vids} video{'s' if vids>1 else ''}")
-                if imgs:  parts.append(f"{imgs} bild{'er' if imgs>1 else ''}")
-                if parts: file_summary = f" ({', '.join(parts)})"
+        Build the package menu message from the real package config.
+        Format (exact):
 
+            Here is my current list:
+
+            🔞 Package 1
+            {package_preview_description} → €{price}
+
+            🔞 Package 2
+            ...
+
+            Just tell me what I can do to turn you on and I send you a secure payment link 💦
+        """
+        blocks: list[str] = []
+        for pkg in packages:
+            name  = pkg.get("name", "")
+            price = pkg.get("price", "")
+            curr  = pkg.get("currency", "€")
+            # Use the most descriptive short text available
+            desc  = (
+                pkg.get("package_preview_description", "").strip()
+                or pkg.get("description", "").strip()
+                or pkg.get("tagline", "").strip()
+            )
             price_str = f"{price} {curr}".strip() if price else ""
 
-            block = f"📦 *{name}*"
-            if desc:
+            block = f"🔞 {name}"
+            if desc and price_str:
+                block += f"\n{desc} → {price_str}"
+            elif desc:
                 block += f"\n{desc}"
-            if file_summary:
-                block += f"\ninhalt:{file_summary}"
-            if price_str:
-                block += f"\n💰 {price_str}"
-            if link:
-                block += f"\n🔗 {link}"
-            lines.append(block)
+            elif price_str:
+                block += f"\n{price_str}"
+            blocks.append(block)
 
-        lines.append("\nwelches interessiert dich? 😊")
-        return "\n\n".join(lines)
+        menu = "Here is my current list:\n\n"
+        menu += "\n\n".join(blocks)
+        menu += "\n\nJust tell me what I can do to turn you on and I send you a secure payment link 💦"
+        return menu
 
     async def _send_free_teaser(self, user_id: UUID, telegram_id: int, creator_id: Optional[str] = None) -> bool:
         """
@@ -1166,9 +1172,13 @@ class MessageProcessor:
             system_prompt = (
                 "OUTPUT RULE (absolute, non-negotiable): "
                 "Your reply is the EXACT text that will be sent to a real person on Telegram. "
-                "Output ONLY the chat message. "
+                "Output ONLY the chat message — nothing else. "
                 "NEVER include: internal summaries, reasoning blocks, meta-commentary, "
-                "section headers, separator lines (---), or placeholder tokens like [PACKAGE MENU] or [BUY LINK]. "
+                "section headers, separator lines (---), or ANY placeholder token. "
+                "Forbidden tokens (never write these): [PACKAGE_MENU], [PACKAGE MENU], "
+                "[BUY_LINK], [BUY LINK], [PAYMENT_LINK], [MENU], or any other [WORD] in brackets. "
+                "The package menu is sent separately by the system — you must NEVER reference it "
+                "or write any placeholder for it. "
                 "Do not write 'Internal Summary:', 'Action:', 'Language:', or any similar prefix. "
                 "Start directly with the conversational message text.\n\n"
                 + system_prompt
