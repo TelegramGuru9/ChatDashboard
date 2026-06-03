@@ -55,10 +55,18 @@ const MODELS = [
   {
     id: 'claude-opus-4-6',
     label: 'Opus 4.6',
-    tag: 'Best',
+    tag: 'Premium',
     tagColor: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
     icon: <Sparkles className="h-4 w-4 text-purple-400" />,
-    desc: 'Highest quality replies. Best for nuanced conversations and closing sales. Slower & more expensive.',
+    desc: 'High quality replies. Great for nuanced conversations and closing sales.',
+  },
+  {
+    id: 'claude-opus-4-8',
+    label: 'Opus 4.8',
+    tag: 'Best',
+    tagColor: 'bg-pink-500/10 text-pink-400 border-pink-500/20',
+    icon: <Sparkles className="h-4 w-4 text-pink-400" />,
+    desc: 'Latest & most capable Opus. Strongest reasoning, most honest, best at long conversations. Recommended for highest quality results.',
   },
 ];
 
