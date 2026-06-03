@@ -870,6 +870,92 @@ async def stream_messages():
     )
 
 
+@telegram_router.post("/test-cash-alarm")
+async def test_cash_alarm(
+    payload: Dict[str, Any] = Body(default={}),
+    creator_id: Optional[str] = Query(None),
+):
+    """
+    Simulate a sale — send the Cash Alarm message to all configured cash_notify_users.
+    Used for testing the workflow from the dashboard.
+    """
+    from app.services.telegram.client import telegram_client
+    from app.services.telegram.client import creator_pool as creator_client_pool
+
+    amount       = str(payload.get("amount", "")).strip()
+    package_name = str(payload.get("package_name", "")).strip()
+
+    # Build the notification message
+    cash_msg = "💵💵💵 $ CASH CASH CASH $ 💵💵💵\n\n🎉 TEST — Kauf simuliert!"
+    if package_name:
+        cash_msg += f"\n📦 Paket: {package_name}"
+    if amount:
+        cash_msg += f"\n💰 Betrag: €{amount}"
+
+    # Load notify users from DB (scoped to creator if provided)
+    notify_users: list = []
+    try:
+        async with db_manager.get_session() as session:
+            from sqlalchemy import select as sa_select
+            q = sa_select(Config).where(Config.key == "cash_notify_users")
+            if creator_id:
+                q = q.where(Config.creator_id == creator_id)
+            cfg_res = await session.execute(q)
+            cfg = cfg_res.scalars().first()
+            if cfg and isinstance(cfg.value, list):
+                notify_users = cfg.value
+    except Exception as e:
+        logger.error(f"[test-cash] DB error loading notify users: {e}")
+        raise HTTPException(status_code=500, detail=f"DB error: {e}")
+
+    if not notify_users:
+        raise HTTPException(
+            status_code=400,
+            detail="No cash_notify_users configured — add users in the Cash Alarm page first.",
+        )
+
+    # Resolve Telegram client (creator-scoped or global fallback)
+    tg = None
+    if creator_id:
+        try:
+            mgr = creator_client_pool.get_client(creator_id)
+            if mgr and mgr.is_connected:
+                tg = mgr.client
+        except Exception:
+            pass
+    if tg is None:
+        if not telegram_client.is_connected:
+            raise HTTPException(status_code=503, detail="Telegram not connected.")
+        tg = telegram_client.client
+
+    sent, failed, errors = 0, 0, []
+    for raw_user in notify_users:
+        uname = str(raw_user).lstrip("@").strip()
+        if not uname:
+            continue
+        try:
+            await tg.send_message(uname, cash_msg)
+            sent += 1
+            logger.info(f"[test-cash] ✓ Sent to @{uname}")
+        except Exception as e:
+            failed += 1
+            errors.append(f"@{uname}: {e}")
+            logger.warning(f"[test-cash] ✗ Failed @{uname}: {e}")
+
+    if sent == 0:
+        raise HTTPException(
+            status_code=500,
+            detail=f"All sends failed. Errors: {'; '.join(errors)}",
+        )
+
+    return {
+        "status": "ok",
+        "sent_to": sent,
+        "failed": failed,
+        "errors": errors,
+    }
+
+
 @telegram_router.post("/reconnect")
 async def reconnect_telegram():
     """Attempt to reconnect the Telegram session — re-runs full connect() from scratch."""
