@@ -8,8 +8,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import {
-  MessageSquare, Users, Target, Bot, Wifi, WifiOff,
-  LayoutDashboard, BarChart3, Image, Package, ArrowRight,
+  MessageSquare, Users, Target, Bot, WifiOff,
+  BarChart3, Image, Package, ArrowRight, Flame, Hash,
 } from 'lucide-react';
 
 const apiBase = () => {
@@ -50,13 +50,15 @@ function BigToggle({ on, loading, onChange }: { on: boolean; loading: boolean; o
 
 export default function DashboardPage() {
   const { withCreator } = useCreator();
-  const [health,     setHealth]    = useState<any>(null);
-  const [tg,         setTg]        = useState<any>(null);
-  const [stats,      setStats]     = useState({ messages: 0, users: 0, leads: 0 });
-  const [autopilot,  setAutopilot] = useState(false);
-  const [apLoading,  setApLoading] = useState(true);
-  const [apToggling, setApToggling] = useState(false);
-  const [apStatus,   setApStatus]  = useState('');
+  const [health,       setHealth]      = useState<any>(null);
+  const [tg,           setTg]          = useState<any>(null);
+  const [stats,        setStats]       = useState({ messages: 0, users: 0, leads: 0 });
+  const [hotCount,     setHotCount]    = useState(0);
+  const [orderCount,   setOrderCount]  = useState(0);
+  const [autopilot,    setAutopilot]   = useState(false);
+  const [apLoading,    setApLoading]   = useState(true);
+  const [apToggling,   setApToggling]  = useState(false);
+  const [apStatus,     setApStatus]    = useState('');
 
   const base = apiBase();
   const api  = `${base}/api/v1`;
@@ -68,7 +70,9 @@ export default function DashboardPage() {
       fetch(withCreator(`${api}/messages?limit=1`)).then(r => r.json()),
       fetch(withCreator(`${api}/users?limit=1`)).then(r => r.json()),
       fetch(withCreator(`${api}/leads?limit=1`)).then(r => r.json()),
-    ]).then(([h, t, m, u, l]) => {
+      fetch(withCreator(`${api}/analytics/summary?days=365`)).then(r => r.json()),
+      fetch(withCreator(`${api}/config/order_counter`)).then(r => r.json()),
+    ]).then(([h, t, m, u, l, analytics, orderCfg]) => {
       if (h.status === 'fulfilled') setHealth(h.value);
       if (t.status === 'fulfilled') setTg(t.value);
       setStats({
@@ -76,6 +80,12 @@ export default function DashboardPage() {
         users:    u.status === 'fulfilled' ? (u.value?.total ?? 0) : 0,
         leads:    l.status === 'fulfilled' ? (l.value?.total ?? 0) : 0,
       });
+      if (analytics.status === 'fulfilled') {
+        setHotCount(analytics.value?.totals?.hot_label_count ?? 0);
+      }
+      if (orderCfg.status === 'fulfilled') {
+        setOrderCount(typeof orderCfg.value?.value === 'number' ? orderCfg.value.value : 0);
+      }
     });
 
     try {
@@ -126,10 +136,10 @@ export default function DashboardPage() {
   const tgName    = tg?.account?.name || tg?.account?.username;
 
   const KPIS = [
-    { label: 'Nachrichten', value: stats.messages.toLocaleString(), icon: MessageSquare, color: 'text-blue-400',   border: 'border-t-blue-400' },
-    { label: 'Nutzer',      value: stats.users.toLocaleString(),    icon: Users,         color: 'text-purple-400', border: 'border-t-purple-400' },
-    { label: 'Leads',       value: stats.leads.toLocaleString(),    icon: Target,        color: 'text-green-400',  border: 'border-t-green-400' },
-    { label: 'Autopilot',   value: autopilot ? 'Aktiv' : 'Aus',    icon: Bot,           color: autopilot ? 'text-green-400' : 'text-muted-foreground', border: autopilot ? 'border-t-green-400' : 'border-t-muted' },
+    { label: 'Nachrichten', value: stats.messages.toLocaleString(), icon: MessageSquare, color: 'text-blue-400',    border: 'border-t-blue-400' },
+    { label: 'Nutzer',      value: stats.users.toLocaleString(),    icon: Users,         color: 'text-purple-400',  border: 'border-t-purple-400' },
+    { label: 'HOT Leads',   value: hotCount.toLocaleString(),       icon: Flame,         color: 'text-orange-400',  border: 'border-t-orange-400' },
+    { label: 'Bestellungen',value: `#${String(orderCount).padStart(6, '0')}`, icon: Hash, color: 'text-yellow-400', border: 'border-t-yellow-400' },
   ];
 
   return (

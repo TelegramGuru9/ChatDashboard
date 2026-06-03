@@ -484,7 +484,9 @@ async def analytics_summary(
                 (SELECT COUNT(*) FROM users WHERE lead_score >= 70 {cfilter}) AS hot_leads,
                 (SELECT COUNT(*) FROM users WHERE lead_score >= 40 AND lead_score < 70 {cfilter}) AS warm_leads,
                 (SELECT COUNT(*) FROM users WHERE (lead_score < 40 OR lead_score IS NULL) {cfilter}) AS cold_leads,
-                (SELECT COUNT(*) FROM users WHERE ai_enabled = true {cfilter}) AS ai_enabled_count
+                (SELECT COUNT(*) FROM users WHERE ai_enabled = true {cfilter}) AS ai_enabled_count,
+                (SELECT COUNT(*) FROM users WHERE (is_bot = false OR is_bot IS NULL)
+                    AND extra_data->>'lead_label' = 'HOT' {cfilter}) AS hot_label_count
         """), cparams)
         row = raw.fetchone()
 
@@ -572,6 +574,7 @@ async def analytics_summary(
                 "warm_leads": row.warm_leads or 0,
                 "cold_leads": row.cold_leads or 0,
                 "ai_enabled": row.ai_enabled_count or 0,
+                "hot_label_count": row.hot_label_count or 0,
             },
             "daily_messages": [{"date": str(r.date), "count": r.count} for r in daily_rows],
             "lead_stages": [{"stage": r.stage, "count": r.count} for r in stage_rows],
@@ -1220,6 +1223,34 @@ async def save_config(key: str, creator_id: Optional[str] = Query(None), payload
     except Exception as e:
         logger.error(f"Error saving config {key}: {e}")
         raise HTTPException(status_code=500, detail="Failed to save config")
+
+
+@config_router.post("/order_counter/increment")
+async def increment_order_counter(creator_id: Optional[str] = Query(None)):
+    """
+    Atomically increment and return the per-creator order counter.
+    Returns the NEW counter value as an integer (e.g. 1, 2, 3 …).
+    """
+    try:
+        default_id = await _get_default_creator_id()
+        scoped = _scoped_key("order_counter", creator_id, default_id)
+        async with db_manager.get_session() as session:
+            result = await session.execute(select(Config).where(Config.key == scoped))
+            cfg = result.scalars().first()
+            if cfg is None:
+                new_val = 1
+                cfg = Config(key=scoped, value=new_val)
+                session.add(cfg)
+            else:
+                current = cfg.value if isinstance(cfg.value, int) else 0
+                new_val = current + 1
+                cfg.value = new_val
+                cfg.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            await session.commit()
+        return {"counter": new_val, "formatted": f"#{new_val:06d}"}
+    except Exception as e:
+        logger.error(f"increment_order_counter error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @config_router.get("")

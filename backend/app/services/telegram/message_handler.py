@@ -955,6 +955,50 @@ class MessageProcessor:
         except Exception as e:
             logger.error(f"[cash] Error sending cash notifications: {e}")
 
+    async def _next_order_number(self, creator_id: Optional[str]) -> str:
+        """
+        Atomically increment the per-creator order counter stored in Config
+        and return a zero-padded formatted string like '#000001'.
+        """
+        try:
+            from app.db.models import Config as CfgModel
+            # Determine scoped key
+            default_id: Optional[str] = None
+            try:
+                from app.db.models import Creator as CrModel
+                async with db_manager.get_session() as _s:
+                    _cr = await _s.execute(select(CrModel).where(CrModel.is_default == True))
+                    _c = _cr.scalars().first()
+                    if _c:
+                        default_id = str(_c.id)
+            except Exception:
+                pass
+
+            if creator_id and creator_id != default_id:
+                counter_key = f"creator:{creator_id}:order_counter"
+            else:
+                counter_key = "order_counter"
+
+            async with db_manager.get_session() as sess:
+                res = await sess.execute(select(CfgModel).where(CfgModel.key == counter_key))
+                cfg = res.scalars().first()
+                if cfg is None:
+                    new_val = 1
+                    cfg = CfgModel(key=counter_key, value=new_val)
+                    sess.add(cfg)
+                else:
+                    current = cfg.value if isinstance(cfg.value, int) else 0
+                    new_val = current + 1
+                    cfg.value = new_val
+                    from datetime import datetime as _dt
+                    cfg.updated_at = _dt.utcnow()
+                await sess.commit()
+            return f"#{new_val:06d}"
+        except Exception as e:
+            logger.warning(f"[order-counter] failed: {e}")
+            import random
+            return f"#{random.randint(1, 999999):06d}"
+
     def _resolve_tg_client(self, creator_id: Optional[str]):
         """Return the right TelegramClientManager for this creator."""
         if creator_id:
@@ -1092,14 +1136,14 @@ class MessageProcessor:
                     f"Count carefully. If you are about to write more, stop after sentence {max_sents_cfg}."
                 )
 
-            # ── PayPal guard: don't ask again if already asked ──────────────
-            if user_extra.get("paypal_asked"):
-                system_prompt += (
-                    "\n\nPAYMENT RULE (mandatory): You already asked for their payment details "
-                    "(PayPal / payment address) in a previous message. Do NOT ask for it again. "
-                    "If they haven't provided it, mention the payment link only — do not ask "
-                    "for any email or address."
-                )
+            # ── Hard payment rule: NEVER ask for email or PayPal address ──────
+            system_prompt += (
+                "\n\nPAYMENT RULE (non-negotiable, always applies): "
+                "NEVER ask the user for their email address, PayPal address, or any contact details. "
+                "Payment is handled entirely via the payment button/link — just direct them to click it. "
+                "Do NOT mention email, PayPal, bank transfer, or any manual payment method. "
+                "If the user asks how to pay, tell them to use the button/link provided."
+            )
 
             # ── Recent-replies context: inject last 3 bot messages so Claude ──
             # can self-check and avoid repetition
@@ -1170,13 +1214,16 @@ class MessageProcessor:
                 p_link  = _si_pkg.get("payment_link", "")
 
                 if p_link:
+                    # Get atomic order number for this creator
+                    _order_num = await self._next_order_number(creator_id)
                     pay_msg = (
-                        f"✅ Perfekt! Du hast **{p_name}** gewählt.\n\n"
+                        f"🧾 Bestellung {_order_num}\n\n"
+                        f"✅ Du hast **{p_name}** gewählt.\n\n"
                         f"💰 Preis: {p_price}\n\n"
-                        f"Klick einfach auf den Button unten und du wirst direkt zur sicheren Zahlung weitergeleitet 🔐\n\n"
+                        f"Klick auf den Button unten — du wirst direkt zur sicheren Zahlung weitergeleitet 🔐\n\n"
                         f"Sobald die Zahlung eingegangen ist, bekommst du sofort Zugang! 🎉"
                     )
-                    # Build inline keyboard button for the Stripe link
+                    # Build inline keyboard button for the payment link
                     from telethon.tl.types import (
                         ReplyInlineMarkup, KeyboardButtonRow, KeyboardButtonUrl
                     )
@@ -1244,10 +1291,12 @@ class MessageProcessor:
                     _sel_name = _sel.get("name", "")
                     _sel_price = f"{_sel.get('price', '')} {_sel.get('currency', '€')}".strip()
                     if _sel_link:
+                        _order_num2 = await self._next_order_number(creator_id)
                         pay_msg2 = (
+                            f"🧾 Bestellung {_order_num2}\n\n"
                             f"💳 Hier ist dein Zahlungslink für **{_sel_name}**:\n\n"
                             f"💰 Preis: {_sel_price}\n\n"
-                            f"Klick auf den Button unten — du wirst direkt zu Stripe weitergeleitet 🔐"
+                            f"Klick auf den Button unten — du wirst direkt zur sicheren Zahlung weitergeleitet 🔐"
                         )
                         from telethon.tl.types import (
                             ReplyInlineMarkup, KeyboardButtonRow, KeyboardButtonUrl
