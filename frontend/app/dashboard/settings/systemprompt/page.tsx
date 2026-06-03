@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { useCreator } from '@/contexts/CreatorContext';
 import { cn } from '@/lib/utils';
-import { Shield, ChevronLeft } from 'lucide-react';
+import { Shield, ChevronLeft, Zap, Brain, Sparkles } from 'lucide-react';
 import Link from 'next/link';
 
 const getApi = () => (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/api\/v1\/?$/, '') + '/api/v1';
@@ -35,23 +35,56 @@ const TOGGLES = [
   { key: 'never_send_paid_media',     label: 'Never send paid media',         desc: 'Safety rule — autopilot never sends paid content automatically' },
 ];
 
+const MODELS = [
+  {
+    id: 'claude-haiku-4-5-20251001',
+    label: 'Haiku 4.5',
+    tag: 'Fast',
+    tagColor: 'bg-green-500/10 text-green-400 border-green-500/20',
+    icon: <Zap className="h-4 w-4 text-green-400" />,
+    desc: 'Fastest replies, lowest cost. Best for high-volume casual chats.',
+  },
+  {
+    id: 'claude-sonnet-4-6',
+    label: 'Sonnet 4.6',
+    tag: 'Balanced',
+    tagColor: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+    icon: <Brain className="h-4 w-4 text-blue-400" />,
+    desc: 'Smart and fast. Great balance of quality and speed for most conversations.',
+  },
+  {
+    id: 'claude-opus-4-6',
+    label: 'Opus 4.6',
+    tag: 'Best',
+    tagColor: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
+    icon: <Sparkles className="h-4 w-4 text-purple-400" />,
+    desc: 'Highest quality replies. Best for nuanced conversations and closing sales. Slower & more expensive.',
+  },
+];
+
 export default function SystemPromptPage() {
   const { withCreator } = useCreator();
   const api = getApi();
 
   const [systemPrompt, setSystemPrompt] = useState('');
-  const [settings, setSettings] = useState(DEFAULT_SYSTEM_SETTINGS);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [settings, setSettings]         = useState(DEFAULT_SYSTEM_SETTINGS);
+  const [model, setModel]               = useState('claude-haiku-4-5-20251001');
+  const [loading, setLoading]           = useState(true);
+  const [saving, setSaving]             = useState(false);
+  const [saved, setSaved]               = useState(false);
 
   useEffect(() => {
     Promise.all([
       fetch(withCreator(`${api}/config/system_prompt`)).then(r => r.json()).catch(() => ({ value: '' })),
       fetch(withCreator(`${api}/config/system_settings`)).then(r => r.json()).catch(() => ({ value: null })),
-    ]).then(([sp, ss]) => {
+      fetch(withCreator(`${api}/ai/persona`)).then(r => r.json()).catch(() => null),
+    ]).then(([sp, ss, persona]) => {
       if (typeof sp.value === 'string') setSystemPrompt(sp.value);
       if (ss.value && typeof ss.value === 'object') setSettings({ ...DEFAULT_SYSTEM_SETTINGS, ...ss.value });
+      if (persona && typeof persona === 'object') {
+        const m = persona.model;
+        if (m && MODELS.some(x => x.id === m)) setModel(m);
+      }
       setLoading(false);
     });
   }, [api, withCreator]);
@@ -59,6 +92,7 @@ export default function SystemPromptPage() {
   const save = async () => {
     setSaving(true);
     try {
+      // Save system prompt + settings
       await Promise.all([
         fetch(withCreator(`${api}/config/system_prompt`), {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -69,6 +103,17 @@ export default function SystemPromptPage() {
           body: JSON.stringify(settings),
         }),
       ]);
+
+      // Patch model into the persona config
+      const personaRes = await fetch(withCreator(`${api}/ai/persona`)).catch(() => null);
+      if (personaRes?.ok) {
+        const currentPersona = await personaRes.json().catch(() => ({}));
+        await fetch(withCreator(`${api}/ai/persona`), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...currentPersona, model }),
+        });
+      }
+
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch {}
@@ -98,7 +143,63 @@ export default function SystemPromptPage() {
           </div>
         </div>
 
-        {/* System Settings Toggles */}
+        {/* ── Model picker ─────────────────────────────────────────────────── */}
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          <div className="px-4 py-3 border-b border-border">
+            <div className="font-semibold text-sm">AI Model</div>
+            <div className="text-xs text-muted-foreground mt-0.5">Choose the Claude model used for all auto-replies</div>
+          </div>
+          <div className="p-4 grid gap-2.5">
+            {MODELS.map(m => (
+              <button
+                key={m.id}
+                onClick={() => setModel(m.id)}
+                className={cn(
+                  'w-full flex items-center gap-3 px-4 py-3 rounded-xl border text-left transition-all',
+                  model === m.id
+                    ? 'border-primary bg-primary/8 ring-1 ring-primary/30'
+                    : 'border-border hover:border-muted-foreground/40 hover:bg-accent/40'
+                )}
+              >
+                <div className={cn(
+                  'w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0',
+                  model === m.id ? 'bg-primary/10' : 'bg-muted'
+                )}>
+                  {m.icon}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-semibold">{m.label}</span>
+                    <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-bold border', m.tagColor)}>
+                      {m.tag}
+                    </span>
+                    {model === m.id && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/10 text-primary border border-primary/20">
+                        Active
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{m.desc}</div>
+                </div>
+                <div className={cn(
+                  'w-4 h-4 rounded-full border-2 flex-shrink-0 transition-all',
+                  model === m.id ? 'border-primary bg-primary' : 'border-muted-foreground/30'
+                )}>
+                  {model === m.id && (
+                    <div className="w-full h-full rounded-full bg-white scale-[0.45] block" />
+                  )}
+                </div>
+              </button>
+            ))}
+          </div>
+          <div className="px-4 py-2.5 border-t border-border bg-muted/30">
+            <p className="text-[10px] text-muted-foreground">
+              Model ID: <span className="font-mono text-foreground">{model}</span>
+            </p>
+          </div>
+        </div>
+
+        {/* ── Autopilot toggles ─────────────────────────────────────────────── */}
         <div className="rounded-xl border border-border bg-card overflow-hidden">
           <div className="px-4 py-3 border-b border-border">
             <div className="font-semibold text-sm">Autopilot Behavior</div>
@@ -119,14 +220,17 @@ export default function SystemPromptPage() {
                     settings[t.key as keyof typeof settings] ? 'bg-primary' : 'bg-muted-foreground/25'
                   )}
                 >
-                  <div className={cn('absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all', settings[t.key as keyof typeof settings] ? 'left-5' : 'left-0.5')} />
+                  <div className={cn(
+                    'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all',
+                    settings[t.key as keyof typeof settings] ? 'left-5' : 'left-0.5'
+                  )} />
                 </button>
               </div>
             ))}
           </div>
         </div>
 
-        {/* System Prompt Textarea */}
+        {/* ── System prompt textarea ────────────────────────────────────────── */}
         <div className="rounded-xl border border-border bg-card overflow-hidden">
           <div className="px-4 py-3 border-b border-border">
             <div className="font-semibold text-sm">System Prompt</div>
@@ -155,7 +259,7 @@ export default function SystemPromptPage() {
             saved ? 'bg-green-500 text-white' : 'bg-primary text-primary-foreground hover:bg-primary/90'
           )}
         >
-          {saved ? '✓ Saved' : saving ? 'Saving…' : 'Save System Prompt & Settings'}
+          {saved ? '✓ Saved' : saving ? 'Saving…' : 'Save Settings'}
         </button>
 
       </div>
