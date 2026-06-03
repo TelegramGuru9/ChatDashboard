@@ -446,6 +446,53 @@ async def reset_user_conversation(
         raise HTTPException(status_code=500, detail="Failed to delete user")
 
 
+@user_router.get("/hot/list")
+async def list_hot_users(
+    creator_id: Optional[str] = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    session: AsyncSession = Depends(get_db),
+):
+    """Return users with lead_label=HOT or conversation_state containing hot — for the HOT inbox."""
+    try:
+        import uuid as _uuid
+        q = select(User).where(
+            or_(
+                User.extra_data["lead_label"].astext == "HOT",
+                User.conversation_state.in_(["hot", "lead_hot"]),
+            )
+        )
+        if creator_id:
+            try:
+                q = q.where(User.creator_id == _uuid.UUID(creator_id))
+            except Exception:
+                pass
+        q = q.order_by(User.last_message_at.desc().nullslast()).offset(skip).limit(limit)
+        res = await session.execute(q)
+        users = res.scalars().all()
+
+        items = []
+        for u in users:
+            extra = u.extra_data or {}
+            items.append({
+                "id": str(u.id),
+                "telegram_id": u.user_id,
+                "name": f"{u.first_name or ''} {u.last_name or ''}".strip() or "Unknown",
+                "username": u.username,
+                "lead_label": extra.get("lead_label", ""),
+                "conversation_state": u.conversation_state,
+                "lead_score": u.lead_score,
+                "last_message_at": u.last_message_at.isoformat() if u.last_message_at else None,
+                "ai_enabled": u.ai_enabled,
+                "selected_package": extra.get("selected_package_name", ""),
+                "offer_number": extra.get("last_offer_number", ""),
+            })
+        return {"items": items, "total": len(items)}
+    except Exception as e:
+        logger.error(f"list_hot_users error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ==================== ANALYTICS ====================
 
 analytics_router = APIRouter(prefix="/analytics", tags=["Analytics"])
@@ -1329,6 +1376,8 @@ async def list_creators():
                     "emoji": r.emoji or "🎭",
                     "telegram_phone": r.telegram_phone,
                     "has_session": bool(r.telegram_session),
+                    "has_bot_token": bool(getattr(r, "telegram_bot_token", None)),
+                    "offer_prefix": getattr(r, "offer_prefix", None),
                     "is_active": r.is_active,
                     "is_default": r.is_default,
                     "is_connected": is_connected,
@@ -1382,12 +1431,14 @@ async def update_creator(cid: str, payload: Dict[str, Any] = Body(...)):
             c = res.scalars().first()
             if not c:
                 raise HTTPException(status_code=404, detail="Creator not found")
-            for field in ("name", "display_name", "color", "emoji", "telegram_phone", "is_active"):
+            for field in ("name", "display_name", "color", "emoji", "telegram_phone", "is_active", "offer_prefix"):
                 if field in payload:
                     setattr(c, field, payload[field])
-            # Only update session if explicitly provided and non-empty
+            # Only update session/token if explicitly provided and non-empty
             if payload.get("telegram_session"):
                 c.telegram_session = payload["telegram_session"]
+            if payload.get("telegram_bot_token") is not None:
+                c.telegram_bot_token = payload["telegram_bot_token"] or None
             await session.commit()
             return {"status": "updated", "id": str(c.id)}
     except HTTPException:

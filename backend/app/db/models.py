@@ -43,8 +43,10 @@ class Creator(Base):
     display_name = Column(String(255), nullable=True)           # shown in UI
     color        = Column(String(20),  default="#0a84ff")       # avatar accent color
     emoji        = Column(String(10),  default="🎭")            # avatar emoji
-    telegram_phone   = Column(String(50), nullable=True)
-    telegram_session = Column(Text, nullable=True)              # Telethon StringSession
+    telegram_phone     = Column(String(50), nullable=True)
+    telegram_session   = Column(Text, nullable=True)              # Telethon StringSession
+    telegram_bot_token = Column(Text, nullable=True)              # Bot API token (optional)
+    offer_prefix       = Column(String(20), nullable=True)        # e.g. "NIKA" → NIKA-000001
     is_active    = Column(Boolean, default=True,  nullable=False)
     is_default   = Column(Boolean, default=False, nullable=False)  # the original account
     created_at   = Column(DateTime, default=get_utc_now, nullable=False)

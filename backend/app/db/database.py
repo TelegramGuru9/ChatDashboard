@@ -119,6 +119,19 @@ class DatabaseManager:
                         END IF;
                     END $$;
                     """,
+                    # Add telegram_bot_token + offer_prefix to creators
+                    """
+                    DO $$ BEGIN
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                            WHERE table_name='creators' AND column_name='telegram_bot_token') THEN
+                            ALTER TABLE creators ADD COLUMN telegram_bot_token TEXT;
+                        END IF;
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                            WHERE table_name='creators' AND column_name='offer_prefix') THEN
+                            ALTER TABLE creators ADD COLUMN offer_prefix VARCHAR(20);
+                        END IF;
+                    END $$;
+                    """,
                 ]:
                     await conn.execute(text(migration_sql))
 

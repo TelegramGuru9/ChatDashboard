@@ -993,11 +993,29 @@ class MessageProcessor:
                     from datetime import datetime as _dt
                     cfg.updated_at = _dt.utcnow()
                 await sess.commit()
-            return f"#{new_val:06d}"
+
+            # Build offer number with creator prefix
+            prefix = "OFFER"
+            try:
+                from app.db.models import Creator as CrModel2
+                async with db_manager.get_session() as _s2:
+                    if creator_id:
+                        import uuid as _uuid2
+                        _cr2 = await _s2.execute(select(CrModel2).where(CrModel2.id == _uuid2.UUID(creator_id)))
+                    else:
+                        _cr2 = await _s2.execute(select(CrModel2).where(CrModel2.is_default == True))
+                    _c2 = _cr2.scalars().first()
+                    if _c2:
+                        raw_prefix = getattr(_c2, "offer_prefix", None) or _c2.name
+                        # Auto-generate prefix from name: take first 4 uppercase letters/digits
+                        prefix = "".join(c for c in raw_prefix.upper() if c.isalnum())[:6] or "OFFER"
+            except Exception:
+                pass
+            return f"{prefix}-{new_val:06d}"
         except Exception as e:
             logger.warning(f"[order-counter] failed: {e}")
             import random
-            return f"#{random.randint(1, 999999):06d}"
+            return f"OFFER-{random.randint(1, 999999):06d}"
 
     def _resolve_tg_client(self, creator_id: Optional[str]):
         """Return the right TelegramClientManager for this creator."""
