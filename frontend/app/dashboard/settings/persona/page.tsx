@@ -10,23 +10,49 @@ import Link from 'next/link';
 const getApi = () => (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/api\/v1\/?$/, '') + '/api/v1';
 
 function PersonaCard({ data }: { data: Record<string, any> }) {
-  const personal = data.personal || {};
-  const personality = data.personality || {};
-  const texting = data.texting_habits || {};
+  // Support both new schema (identity/appearance) and legacy schema (personal)
+  const id       = data.identity   || data.personal || {};
+  const pers     = data.personality || {};
+  const look     = data.appearance  || {};
+  const texting  = data.texting_habits || {};
+
+  const arr = (v: any) => Array.isArray(v) ? v.join(', ') : (v ? String(v) : null);
+  const val = (...vs: any[]) => vs.map(v => v || null).find(v => v != null) ?? null;
 
   const rows = [
-    { label: 'Name',         value: personal.name || data.name || data.creator_name },
-    { label: 'Age',          value: personal.age },
-    { label: 'Location',     value: personal.location },
-    { label: 'Languages',    value: Array.isArray(personal.languages) ? personal.languages.join(', ') : personal.languages },
-    { label: 'Tone',         value: personality.communication_style || data.tone },
-    { label: 'Traits',       value: Array.isArray(personality.traits) ? personality.traits.slice(0, 5).join(', ') : null },
-    { label: 'Content style',value: data.content_style || data.niche },
-    { label: 'Chat style',   value: texting.typical_message_length || data.chat_style },
-    { label: 'Sales style',  value: data.sales_style || data.selling_style },
-    { label: 'Boundaries',   value: data.boundaries ? (Array.isArray(data.boundaries) ? data.boundaries.slice(0,3).join(' · ') : String(data.boundaries).slice(0,100)) : null },
-    { label: 'Never say',    value: data.never_say ? (Array.isArray(data.never_say) ? data.never_say.slice(0,3).join(', ') : String(data.never_say).slice(0,100)) : null },
+    { label: 'Name',         value: val(id.name, data.name, data.creator_name) },
+    { label: 'Age',          value: val(id.age) },
+    { label: 'Location',     value: val(id.location, id.residence) },
+    { label: 'Nationality',  value: val(id.nationality) },
+    { label: 'Status',       value: val(id.relationship_status) },
+    { label: 'Languages',    value: arr(id.languages) },
+    { label: 'Summary',      value: val(data.persona_summary) },
+    { label: 'Interests',    value: Array.isArray(data.interests) ? data.interests.slice(0, 6).join(', ') : null },
+    // Appearance
+    { label: 'Style',        value: val(look.style) },
+    { label: 'Body',         value: look.height || look.body_type ? [look.height, look.body_type].filter(Boolean).join(' · ') : null },
+    { label: 'Hair / Eyes',  value: look.hair_color || look.eye_color ? [look.hair_color, look.eye_color].filter(Boolean).join(' / ') : null },
+    { label: 'Features',     value: arr(look.features) },
+    { label: 'Outfits',      value: Array.isArray(look.typical_outfits) ? look.typical_outfits.slice(0, 3).join(', ') : null },
+    // Personality
+    { label: 'Traits',       value: Array.isArray(pers.traits) ? pers.traits.slice(0, 5).join(', ') : arr(pers.traits) },
+    { label: 'Tone',         value: val(pers.communication_style, data.tone) },
+    { label: 'Private side', value: val(pers.private_side) },
+    { label: 'Likes',        value: arr(pers.likes) },
+    { label: 'Boundaries',   value: arr(pers.boundaries) || (data.boundaries ? arr(data.boundaries) : null) },
+    // Texting / bot
+    { label: 'Chat style',   value: val(texting.typical_message_length, data.chat_style) },
   ].filter(r => r.value);
+
+  // Group sections for cleaner display
+  const sections = [
+    { title: 'Identity',     keys: ['Name','Age','Location','Nationality','Status','Languages','Summary','Interests'] },
+    { title: 'Appearance',   keys: ['Style','Body','Hair / Eyes','Features','Outfits'] },
+    { title: 'Personality',  keys: ['Traits','Tone','Private side','Likes','Boundaries'] },
+    { title: 'Chat Behaviour', keys: ['Chat style'] },
+  ];
+
+  const rowMap = Object.fromEntries(rows.map(r => [r.label, r.value]));
 
   return (
     <div className="rounded-xl border border-purple-500/20 bg-purple-500/5 overflow-hidden">
@@ -35,19 +61,32 @@ function PersonaCard({ data }: { data: Record<string, any> }) {
         <span className="font-semibold text-sm text-purple-400">Persona Overview</span>
         <span className="ml-auto text-xs text-muted-foreground">What the LLM knows about this creator</span>
       </div>
-      <div className="divide-y divide-border/40">
-        {rows.map(r => (
-          <div key={r.label} className="flex gap-4 px-4 py-2.5">
-            <span className="text-xs text-muted-foreground w-24 flex-shrink-0 mt-0.5">{r.label}</span>
-            <span className="text-xs text-foreground leading-relaxed">{String(r.value)}</span>
-          </div>
-        ))}
-        {rows.length === 0 && (
-          <div className="px-4 py-4 text-xs text-muted-foreground text-center">
-            Upload a persona JSON to see the overview
-          </div>
-        )}
-      </div>
+
+      {rows.length === 0 ? (
+        <div className="px-4 py-6 text-xs text-muted-foreground text-center">
+          Upload a persona JSON to see the overview
+        </div>
+      ) : (
+        sections.map(sec => {
+          const secRows = sec.keys.filter(k => rowMap[k]);
+          if (secRows.length === 0) return null;
+          return (
+            <div key={sec.title}>
+              <div className="px-4 py-1.5 bg-purple-500/10 border-y border-purple-500/10">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-purple-400/70">{sec.title}</span>
+              </div>
+              <div className="divide-y divide-border/30">
+                {secRows.map(label => (
+                  <div key={label} className="flex gap-4 px-4 py-2">
+                    <span className="text-xs text-muted-foreground w-24 flex-shrink-0 mt-0.5">{label}</span>
+                    <span className="text-xs text-foreground leading-relaxed">{String(rowMap[label])}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })
+      )}
     </div>
   );
 }
@@ -190,7 +229,7 @@ export default function PersonaPage() {
               value={personaText}
               onChange={e => handleTextChange(e.target.value)}
               rows={24}
-              placeholder={'{\n  "personal": {\n    "name": "Nika",\n    "age": "28",\n    "location": "Saarbrücken"\n  },\n  "personality": {\n    "communication_style": "warm, flirty, teasing"\n  }\n}'}
+              placeholder={'{\n  "identity": {\n    "name": "Nika White",\n    "age": 28,\n    "nationality": "German",\n    "location": "Cologne, Germany",\n    "relationship_status": "single"\n  },\n  "persona_summary": "...",\n  "personality": {\n    "traits": ["confident", "teasing", "playful"],\n    "boundaries": ["selective", "never cheap"]\n  },\n  "bot_general_prompt": "...",\n  "bot_message_style": "..."\n}'}
               className={cn(inputCls, 'resize-y font-mono text-xs leading-relaxed')}
             />
           </div>

@@ -45,13 +45,13 @@ def _build_system_prompt(persona_data: dict) -> str:
     if persona_data.get("prompt"):
         return str(persona_data["prompt"])
 
-    # Structured Nika JSON format
+    # Structured Nika JSON format (supports both "personal" and "identity" keys)
     if persona_data.get("bot_general_prompt"):
-        p = persona_data.get("personal", {})
+        p = persona_data.get("identity", persona_data.get("personal", {}))
         name = p.get("name", "Nika")
         age = p.get("age", "28")
         languages = p.get("languages", ["German", "English"])
-        lang_str = " and ".join(languages)
+        lang_str = " and ".join(languages) if languages else "German and English"
 
         personality = persona_data.get("personality", {})
         comm_style = personality.get("communication_style", "teasing, warm, casual")
