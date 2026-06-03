@@ -143,6 +143,20 @@ def _clean_response(text: str) -> str:
     Post-process AI response to enforce no-dash rule, limit emojis, and clean up formatting.
     Acts as a safety net in case Claude ignores the system prompt instruction.
     """
+    # ── Strip internal reasoning / summary blocks that should NEVER reach the user ──
+    # Pattern: "Internal Summary: ... ---" or "Internal Summary: ... \n\n"
+    # Also strip any [PLACEHOLDER] tokens like [PACKAGE MENU]
+    text = re.sub(
+        r'(?i)^.*?internal\s+summary\s*:.*?(?:---|\n\n)',
+        '',
+        text,
+        flags=re.DOTALL,
+    ).strip()
+    # If the separator "---" is still present at the top after stripping meta-text, remove it
+    text = re.sub(r'^\s*---\s*', '', text).strip()
+    # Strip any remaining [PLACEHOLDER] tokens (e.g. [PACKAGE MENU], [BUY LINK])
+    text = re.sub(r'\[[A-Z][A-Z\s]{2,}\]', '', text).strip()
+
     # Em dash and en dash → ellipsis (feels more natural in casual texting)
     text = text.replace("—", "...")
     text = text.replace("–", "...")
@@ -1144,6 +1158,20 @@ class MessageProcessor:
                     if p.get("active", True) and p.get("name")
                 ]
                 sales_intent = _detect_sales_intent(incoming_text, _active_pkgs, user_extra)
+
+            # ── ABSOLUTE OUTPUT RULE — injected first, before everything else ──
+            # This prevents internal reasoning / placeholder tokens from leaking
+            # into the actual Telegram message sent to the user.
+            system_prompt = (
+                "OUTPUT RULE (absolute, non-negotiable): "
+                "Your reply is the EXACT text that will be sent to a real person on Telegram. "
+                "Output ONLY the chat message. "
+                "NEVER include: internal summaries, reasoning blocks, meta-commentary, "
+                "section headers, separator lines (---), or placeholder tokens like [PACKAGE MENU] or [BUY LINK]. "
+                "Do not write 'Internal Summary:', 'Action:', 'Language:', or any similar prefix. "
+                "Start directly with the conversational message text.\n\n"
+                + system_prompt
+            )
 
             # ── Sentence-limit rule: inject into prompt so Claude obeys upfront ─
             max_sents_cfg = int(persona_data.get("max_sentences", 3))
