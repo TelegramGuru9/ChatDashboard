@@ -92,21 +92,45 @@ const LANGUAGES = [
   { code: 'ru', flag: '🇷🇺', label: 'Russian',   hint: 'Ника отвечает по-русски, когда кто-то пишет по-русски' },
 ];
 
+const TONE_OPTIONS = [
+  { value: 'casual',   label: 'Casual',   desc: 'Relaxed & natural, like texting a friend' },
+  { value: 'balanced', label: 'Balanced', desc: 'Mix of friendly and professional' },
+  { value: 'formal',   label: 'Formal',   desc: 'Professional and precise language' },
+];
+
 const getApi = () => {
   const raw = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   return raw.replace(/\/api\/v1\/?$/, '') + '/api/v1';
 };
 
-type TabKey = 'system_prompt' | 'persona' | 'model' | 'languages' | 'advanced' | 'cash';
+type TabKey = 'system_prompt' | 'persona' | 'reply' | 'languages' | 'model' | 'advanced';
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'system_prompt', label: '🛡 System Rules' },
   { key: 'persona',       label: '🤖 Persona' },
+  { key: 'reply',         label: '✍️ Reply Settings' },
   { key: 'languages',     label: '🌍 Languages' },
   { key: 'model',         label: '⚙ Model' },
-  { key: 'cash',          label: '💵 Cash Alarm' },
   { key: 'advanced',      label: '🔧 Advanced' },
 ];
+
+interface ReplySettings {
+  max_sentences: number;
+  max_words: number;
+  max_emojis: number;
+  tone: string;
+  forbidden_openers: string;
+  custom_instructions: string;
+}
+
+const DEFAULT_REPLY: ReplySettings = {
+  max_sentences: 2,
+  max_words: 80,
+  max_emojis: 2,
+  tone: 'casual',
+  forbidden_openers: '',
+  custom_instructions: '',
+};
 
 export default function SettingsPage() {
   const [persona,          setPersona]         = useState(NIKA_PERSONA);
@@ -122,15 +146,16 @@ export default function SettingsPage() {
   const [jsonSuccess,      setJsonSuccess]     = useState('');
   const [systemPrompt,     setSystemPrompt]    = useState('');
   const [tab,              setTab]             = useState<TabKey>('system_prompt');
-  const [cashUsers,        setCashUsers]       = useState<string[]>(['FuegoFounder', 'rickjames999']);
-  const [cashInput,        setCashInput]       = useState('');
-  const [cashSaving,       setCashSaving]      = useState(false);
-  const [cashSaved,        setCashSaved]       = useState(false);
   const [aiStatus,         setAiStatus]        = useState<any>(null);
   const [testingAI,        setTestingAI]       = useState(false);
   const [enablingAll,      setEnablingAll]     = useState(false);
-  const jsonRef = useRef<HTMLInputElement>(null);
 
+  // Reply settings state
+  const [reply, setReply] = useState<ReplySettings>(DEFAULT_REPLY);
+  const [replySaving, setReplySaving]   = useState(false);
+  const [replySaved,  setReplySaved]    = useState(false);
+
+  const jsonRef = useRef<HTMLInputElement>(null);
   const api = getApi();
   const { withCreator } = useCreator();
 
@@ -154,8 +179,8 @@ export default function SettingsPage() {
     Promise.all([
       fetch(withCreator(`${api}/ai/persona`)).then(r => r.json()),
       fetch(withCreator(`${api}/config/system_prompt`)).then(r => r.json()).catch(() => ({ value: '' })),
-      fetch(withCreator(`${api}/config/cash_notify_users`)).then(r => r.json()).catch(() => ({ value: [] })),
-    ]).then(([d, sp, cu]) => {
+      fetch(withCreator(`${api}/config/reply_settings`)).then(r => r.json()).catch(() => ({ value: null })),
+    ]).then(([d, sp, rs]) => {
       if (d && typeof d === 'object' && Object.keys(d).length > 0) {
         if (typeof d.persona === 'string' && d.persona.trim()) setPersona(d.persona);
         if (typeof d.ai_enabled === 'boolean') setAiEnabled(d.ai_enabled);
@@ -165,7 +190,9 @@ export default function SettingsPage() {
         if (Array.isArray(d.enabled_languages) && d.enabled_languages.length) setEnabledLanguages(d.enabled_languages);
       }
       if (typeof sp?.value === 'string') setSystemPrompt(sp.value);
-      if (Array.isArray(cu?.value) && cu.value.length > 0) setCashUsers(cu.value);
+      if (rs?.value && typeof rs.value === 'object') {
+        setReply({ ...DEFAULT_REPLY, ...rs.value });
+      }
     }).catch(() => {}).finally(() => setLoading(false));
   }, [api, withCreator]);
 
@@ -185,6 +212,18 @@ export default function SettingsPage() {
       setSaved(true); setTimeout(() => setSaved(false), 3000);
     } catch {}
     setSaving(false);
+  };
+
+  const saveReplySettings = async () => {
+    setReplySaving(true);
+    try {
+      await fetch(withCreator(`${api}/config/reply_settings`), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(reply),
+      });
+      setReplySaved(true); setTimeout(() => setReplySaved(false), 3000);
+    } catch {}
+    setReplySaving(false);
   };
 
   const handleJsonUpload = (file: File) => {
@@ -214,25 +253,25 @@ export default function SettingsPage() {
     URL.revokeObjectURL(url);
   };
 
-  const saveCashUsers = async () => {
-    setCashSaving(true);
-    try {
-      await fetch(withCreator(`${api}/config/cash_notify_users`), {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cashUsers),
-      });
-      setCashSaved(true); setTimeout(() => setCashSaved(false), 3000);
-    } catch {}
-    setCashSaving(false);
-  };
-
-  const addCashUser = () => {
-    const u = cashInput.trim().replace(/^@/, '');
-    if (u && !cashUsers.includes(u)) setCashUsers(prev => [...prev, u]);
-    setCashInput('');
-  };
-
   const inputCls = "w-full bg-muted border border-border rounded-xl px-3 py-2 text-sm outline-none";
+
+  const SliderRow = ({
+    label, value, min, max, step = 1, onChange, leftLabel, rightLabel,
+  }: { label: string; value: number; min: number; max: number; step?: number; onChange: (v: number) => void; leftLabel?: string; rightLabel?: string }) => (
+    <div>
+      <div className="flex justify-between items-center mb-1.5">
+        <span className="text-xs text-muted-foreground">{label}</span>
+        <span className="text-sm font-bold text-primary tabular-nums">{value}</span>
+      </div>
+      <input type="range" min={min} max={max} step={step} value={value}
+        onChange={e => onChange(Number(e.target.value))} className="w-full accent-primary" />
+      {(leftLabel || rightLabel) && (
+        <div className="flex justify-between text-[10px] text-muted-foreground mt-0.5">
+          <span>{leftLabel}</span><span>{rightLabel}</span>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <DashboardLayout>
@@ -307,10 +346,123 @@ export default function SettingsPage() {
             <CardContent className="pt-4 pb-5 space-y-3">
               <div>
                 <div className="font-semibold text-sm">System Prompt</div>
-                <div className="text-xs text-muted-foreground mt-0.5">Nika's complete personality, rules, and sales logic.</div>
+                <div className="text-xs text-muted-foreground mt-0.5">Nika's complete personality, rules, and sales logic. Switch creator to load a different persona.</div>
+              </div>
+              <div className="px-3 py-2.5 rounded-xl bg-blue-500/8 border border-blue-500/20 text-xs text-blue-400 leading-relaxed">
+                🤖 <strong>Creator-scoped.</strong> This persona is specific to the currently selected creator. Switching creators loads their own persona automatically.
               </div>
               <textarea value={persona} onChange={e => setPersona(e.target.value)} rows={22}
                 className={cn(inputCls, "resize-y leading-relaxed font-mono text-xs")} />
+            </CardContent>
+          </Card>
+        )}
+
+        {tab === 'reply' && (
+          <Card>
+            <CardContent className="pt-4 pb-5 space-y-5">
+              <div>
+                <div className="font-semibold text-sm">Reply Settings</div>
+                <div className="text-xs text-muted-foreground mt-0.5">Fine-tune exactly how the AI formats and styles its responses. These rules are injected into every reply.</div>
+              </div>
+
+              {/* Message length */}
+              <div className="space-y-4 p-4 rounded-xl bg-muted/40 border border-border">
+                <div className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">Message Length</div>
+                <SliderRow
+                  label="Max sentences per reply"
+                  value={reply.max_sentences} min={1} max={5}
+                  onChange={v => setReply(r => ({ ...r, max_sentences: v }))}
+                  leftLabel="1 (very short)" rightLabel="5 (detailed)"
+                />
+                <SliderRow
+                  label="Max words per reply"
+                  value={reply.max_words} min={20} max={300} step={10}
+                  onChange={v => setReply(r => ({ ...r, max_words: v }))}
+                  leftLabel="20 (snappy)" rightLabel="300 (long)"
+                />
+              </div>
+
+              {/* Emoji control */}
+              <div className="space-y-3 p-4 rounded-xl bg-muted/40 border border-border">
+                <div className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">Emoji Control</div>
+                <SliderRow
+                  label="Max emojis per message"
+                  value={reply.max_emojis} min={0} max={5}
+                  onChange={v => setReply(r => ({ ...r, max_emojis: v }))}
+                  leftLabel="0 (no emojis)" rightLabel="5 (expressive)"
+                />
+              </div>
+
+              {/* Tone */}
+              <div className="space-y-3 p-4 rounded-xl bg-muted/40 border border-border">
+                <div className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">Response Tone</div>
+                <div className="grid grid-cols-3 gap-2">
+                  {TONE_OPTIONS.map(t => (
+                    <button
+                      key={t.value}
+                      onClick={() => setReply(r => ({ ...r, tone: t.value }))}
+                      className={cn(
+                        "p-3 rounded-xl border text-left transition-all",
+                        reply.tone === t.value
+                          ? "border-primary/50 bg-primary/10 text-foreground"
+                          : "border-border bg-muted/30 text-muted-foreground hover:border-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      <div className="font-semibold text-xs mb-1">{t.label}</div>
+                      <div className="text-[10px] leading-snug">{t.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Forbidden openers */}
+              <div className="space-y-2 p-4 rounded-xl bg-muted/40 border border-border">
+                <div className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">Forbidden Opening Words</div>
+                <div className="text-xs text-muted-foreground">AI will never start a message with these words. Comma-separated.</div>
+                <input
+                  type="text"
+                  value={reply.forbidden_openers}
+                  onChange={e => setReply(r => ({ ...r, forbidden_openers: e.target.value }))}
+                  placeholder="Hey, Hi, Hello, Sure, Of course, ..."
+                  className={inputCls}
+                />
+              </div>
+
+              {/* Custom instructions */}
+              <div className="space-y-2 p-4 rounded-xl bg-muted/40 border border-border">
+                <div className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">Custom Reply Instructions</div>
+                <div className="text-xs text-muted-foreground">Additional rules appended to every AI prompt. Be specific.</div>
+                <textarea
+                  rows={5}
+                  value={reply.custom_instructions}
+                  onChange={e => setReply(r => ({ ...r, custom_instructions: e.target.value }))}
+                  placeholder={`Examples:\n- Always end with a soft call to action.\n- Never mention pricing first — let the user ask.\n- Mirror the user's energy level.`}
+                  className={cn(inputCls, "resize-y font-mono text-xs leading-relaxed")}
+                />
+              </div>
+
+              {/* Preview */}
+              <div className="px-4 py-3.5 rounded-xl bg-primary/6 border border-primary/15 text-xs leading-relaxed space-y-1.5">
+                <div className="font-semibold text-primary mb-2">📋 Active Rules Preview</div>
+                <div className="text-muted-foreground">• Max <span className="text-foreground font-semibold">{reply.max_sentences}</span> sentence{reply.max_sentences !== 1 ? 's' : ''} per reply</div>
+                <div className="text-muted-foreground">• Max <span className="text-foreground font-semibold">{reply.max_words}</span> words per reply</div>
+                <div className="text-muted-foreground">• Max <span className="text-foreground font-semibold">{reply.max_emojis}</span> emoji{reply.max_emojis !== 1 ? 's' : ''} per message</div>
+                <div className="text-muted-foreground">• Tone: <span className="text-foreground font-semibold capitalize">{reply.tone}</span></div>
+                {reply.forbidden_openers && (
+                  <div className="text-muted-foreground">• Never start with: <span className="text-red-400 font-mono">{reply.forbidden_openers}</span></div>
+                )}
+                {reply.custom_instructions && (
+                  <div className="text-muted-foreground">• Custom: <span className="text-foreground">{reply.custom_instructions.slice(0, 80)}{reply.custom_instructions.length > 80 ? '…' : ''}</span></div>
+                )}
+              </div>
+
+              <Button
+                onClick={saveReplySettings}
+                disabled={replySaving}
+                className={cn("w-full py-4 font-semibold transition-colors", replySaved ? "bg-green-500 hover:bg-green-500" : "")}
+              >
+                {replySaved ? '✓ Reply Settings Saved' : replySaving ? 'Saving…' : '💾 Save Reply Settings'}
+              </Button>
             </CardContent>
           </Card>
         )}
@@ -373,46 +525,6 @@ export default function SettingsPage() {
           </Card>
         )}
 
-        {tab === 'cash' && (
-          <Card className="border-yellow-400/20">
-            <CardContent className="pt-4 pb-5 space-y-4">
-              <div className="flex items-center gap-3">
-                <span className="text-3xl">💵</span>
-                <div>
-                  <div className="font-bold text-base text-yellow-400">Cash Alarm</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">Wer bekommt eine Telegram-Nachricht wenn ein Kauf bestätigt wird?</div>
-                </div>
-              </div>
-              <div className="px-4 py-3.5 rounded-xl bg-yellow-400/6 border border-yellow-400/15 text-sm leading-relaxed">
-                <div className="text-yellow-400 font-semibold text-xs mb-2">Was passiert beim Kauf:</div>
-                <div className="text-muted-foreground space-y-1 text-xs">
-                  <div>1. User bestätigt Zahlung (Screenshot / Transaktions-Nr.)</div>
-                  <div>2. Lead wird auf <span className="text-green-400 font-semibold">BUYER</span> gesetzt</div>
-                  <div>3. Alle Nutzer unten erhalten: <span className="font-mono text-yellow-400">💵💵💵 $ CASH CASH CASH $ 💵💵💵</span></div>
-                </div>
-              </div>
-              <div className="space-y-2">
-                {cashUsers.map(u => (
-                  <div key={u} className="flex items-center justify-between bg-muted rounded-xl px-3.5 py-2.5">
-                    <span className="font-semibold text-sm">@{u}</span>
-                    <button onClick={() => setCashUsers(prev => prev.filter(x => x !== u))} className="text-red-400 hover:text-red-300 text-lg px-1 leading-none">✕</button>
-                  </div>
-                ))}
-                {cashUsers.length === 0 && <div className="text-center py-4 text-muted-foreground text-sm">Noch keine Nutzer</div>}
-              </div>
-              <div className="flex gap-2">
-                <input value={cashInput} onChange={e => setCashInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && addCashUser()}
-                  placeholder="@username" className={cn(inputCls, "flex-1")} />
-                <button onClick={addCashUser} className="px-4 py-2 rounded-xl bg-yellow-400 text-black font-bold text-sm hover:bg-yellow-300 transition-colors">+ Add</button>
-              </div>
-              <button onClick={saveCashUsers} disabled={cashSaving}
-                className={cn("w-full py-2.5 rounded-xl font-bold text-sm text-black transition-colors", cashSaved ? "bg-green-400" : "bg-yellow-400 hover:bg-yellow-300", cashSaving && "opacity-60")}>
-                {cashSaved ? '✓ Gespeichert!' : cashSaving ? 'Speichere…' : '💾 Cash Alarm speichern'}
-              </button>
-            </CardContent>
-          </Card>
-        )}
-
         {tab === 'advanced' && (
           <Card>
             <CardContent className="pt-4 pb-4">
@@ -424,6 +536,7 @@ export default function SettingsPage() {
                   'Conversation history (last 30 msgs) is always included as context',
                   'Media files are sent based on keywords defined in the Media library',
                   'Packages are pitched based on keywords + message count triggers',
+                  'Reply Settings (max sentences, emojis, tone) are injected at the top of every AI prompt',
                 ].map((item, i) => <div key={i}>• {item}</div>)}
               </div>
             </CardContent>
@@ -468,7 +581,7 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
-        {/* Save */}
+        {/* Save (persona/system/model/language) */}
         <Button
           onClick={handleSave}
           disabled={saving || loading}

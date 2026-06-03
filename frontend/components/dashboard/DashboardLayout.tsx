@@ -10,7 +10,7 @@ import { Separator } from '@/components/ui/separator';
 import {
   LayoutDashboard, MessageSquare, Users, BarChart3,
   Image, Package, UserCog, Settings, ChevronLeft,
-  ChevronRight, Menu, X, ChevronsUpDown, Check, Bot,
+  ChevronRight, Menu, X, ChevronsUpDown, Check, Bot, DollarSign,
 } from 'lucide-react';
 
 interface DashboardLayoutProps { children: React.ReactNode; }
@@ -22,6 +22,7 @@ const NAV = [
   { label: 'Analytics',  href: '/dashboard/analytics',   icon: BarChart3 },
   { label: 'Media',      href: '/dashboard/media',       icon: Image },
   { label: 'Packages',   href: '/dashboard/packages',    icon: Package },
+  { label: 'Cash Alarm', href: '/dashboard/cash',         icon: DollarSign },
   { label: 'Creators',   href: '/dashboard/creators',    icon: UserCog },
   { label: 'Settings',   href: '/dashboard/settings',    icon: Settings },
 ];
