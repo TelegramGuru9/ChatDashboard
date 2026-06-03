@@ -47,7 +47,13 @@ class TelegramClientManager:
 
     async def connect(self) -> bool:
         """Connect using env-var credentials (default creator / legacy mode)."""
+        self._last_error: str = ""
         try:
+            if not settings.TELEGRAM_API_ID or not settings.TELEGRAM_API_HASH:
+                self._last_error = "TELEGRAM_API_ID or TELEGRAM_API_HASH not set in Railway env vars"
+                logger.error(self._last_error)
+                return False
+
             if settings.TELEGRAM_SESSION_STRING:
                 session = StringSession(settings.TELEGRAM_SESSION_STRING)
                 logger.info("Using StringSession for Telegram auth")
@@ -68,6 +74,12 @@ class TelegramClientManager:
 
             if settings.TELEGRAM_SESSION_STRING:
                 await self.client.connect()
+                # Verify session is actually authorized
+                if not await self.client.is_user_authorized():
+                    self._last_error = "Session string is not authorized — generate a new TELEGRAM_SESSION_STRING"
+                    logger.error(self._last_error)
+                    await self.client.disconnect()
+                    return False
             else:
                 await self.client.start(
                     phone=settings.TELEGRAM_PHONE,
@@ -83,13 +95,16 @@ class TelegramClientManager:
             return True
 
         except SessionPasswordNeededError:
-            logger.error("2FA password needed")
+            self._last_error = "2FA required — add TELEGRAM_2FA_PASSWORD to Railway env vars"
+            logger.error(self._last_error)
             return False
         except AuthKeyUnregisteredError:
-            logger.error("Session key unregistered — delete session and reconnect")
+            self._last_error = "Session key invalid or expired — generate a new TELEGRAM_SESSION_STRING"
+            logger.error(self._last_error)
             return False
         except Exception as e:
-            logger.error(f"Failed to connect to Telegram: {e}")
+            self._last_error = str(e)
+            logger.error(f"Failed to connect to Telegram: {e}", exc_info=True)
             return False
 
     async def connect_with_session(

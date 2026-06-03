@@ -273,9 +273,20 @@ function InboxContent() {
   const reconnect = async () => {
     setReconnecting(true); setSyncStatus('Attempting reconnect…');
     try {
-      const d = await fetch(`${api}/telegram/reconnect`, { method:'POST' }).then(r => r.json());
-      if (d.status === 'reconnected') { setTgConnected(true); setTgAccount(d.account || ''); setSyncStatus('✓ Reconnected — syncing chats…'); await sync(); }
-      else { setSyncStatus(`⚠ Reconnect failed: ${d.detail}`); }
+      const d = await fetch(`${api}/telegram/reconnect`, { method: 'POST' }).then(r => r.json());
+      if (d.status === 'reconnected') {
+        setTgConnected(true); setTgAccount(d.account || '');
+        setSyncStatus('✓ Reconnected — syncing chats…');
+        await sync();
+      } else {
+        const detail = d.detail || 'Unknown error';
+        const isSession = /session|unauthorized|auth_key/i.test(detail);
+        const isConfig  = /api_id|api_hash|env var/i.test(detail);
+        const hint = isSession ? ' → Generate a new TELEGRAM_SESSION_STRING in Railway'
+                   : isConfig  ? ' → Check Railway → Variables'
+                   : ' → Check Railway → Logs for full stack trace';
+        setSyncStatus(`⚠ ${detail}${hint}`);
+      }
     } catch (e: any) { setSyncStatus(`⚠ ${e.message}`); }
     finally { setReconnecting(false); }
   };

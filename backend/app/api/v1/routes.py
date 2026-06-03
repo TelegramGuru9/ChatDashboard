@@ -964,13 +964,14 @@ async def reconnect_telegram():
     """Attempt to reconnect the Telegram session — re-runs full connect() from scratch."""
     from app.services.telegram.client import telegram_client
     try:
-        # Always run the full connect() so it works even when client is None
         success = await telegram_client.connect()
         if success:
             me = await telegram_client.client.get_me()
             name = f"{me.first_name or ''} {me.last_name or ''}".strip()
             return {"status": "reconnected", "account": f"{name} (@{me.username})"}
-        return {"status": "failed", "detail": "connect() returned False — check Railway logs for the error"}
+        # Surface the actual error reason stored by connect()
+        reason = getattr(telegram_client, "_last_error", "") or "Unknown error — check Railway logs"
+        return {"status": "failed", "detail": reason}
     except Exception as e:
         logger.error(f"Reconnect error: {e}", exc_info=True)
         return {"status": "failed", "detail": str(e)}
@@ -978,7 +979,7 @@ async def reconnect_telegram():
 
 @telegram_router.get("/status")
 async def telegram_status():
-    """Check Telegram connection status."""
+    """Check Telegram connection status + surface env-var diagnostic info."""
     from app.services.telegram.client import telegram_client
     connected = telegram_client.is_connected
     me = None
@@ -992,7 +993,27 @@ async def telegram_status():
             }
         except Exception:
             pass
-    return {"connected": connected, "account": me}
+
+    # Diagnostic: surface config issues even before reconnect attempt
+    diag: dict = {}
+    if not connected:
+        has_api_id    = bool(settings.TELEGRAM_API_ID)
+        has_api_hash  = bool(settings.TELEGRAM_API_HASH)
+        has_session   = bool(settings.TELEGRAM_SESSION_STRING)
+        last_err      = getattr(telegram_client, "_last_error", "")
+        if not has_api_id or not has_api_hash:
+            diag["config_error"] = "TELEGRAM_API_ID or TELEGRAM_API_HASH missing in Railway env vars"
+        elif not has_session:
+            diag["config_error"] = "TELEGRAM_SESSION_STRING missing in Railway env vars"
+        elif last_err:
+            diag["last_error"] = last_err
+        diag["env_check"] = {
+            "api_id_set": has_api_id,
+            "api_hash_set": has_api_hash,
+            "session_string_set": has_session,
+        }
+
+    return {"connected": connected, "account": me, **diag}
 
 
 # ==================== AI / PERSONA ROUTES ====================
