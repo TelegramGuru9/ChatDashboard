@@ -10,24 +10,61 @@ import {
   LayoutDashboard, MessageSquare, Users, BarChart3,
   Image, Package, UserCog, Settings, ChevronLeft,
   ChevronRight, Menu, X, ChevronsUpDown, Check,
-  DollarSign, Zap,
+  DollarSign,
 } from 'lucide-react';
 
 interface DashboardLayoutProps { children: React.ReactNode; }
 
-const NAV = [
-  { label: 'Overview',    href: '/dashboard',            icon: LayoutDashboard, exact: true },
-  { label: 'Inbox',       href: '/dashboard/inbox',      icon: MessageSquare },
-  { label: 'Leads',       href: '/dashboard/leads',      icon: Users },
-  { label: 'Analytics',   href: '/dashboard/analytics',  icon: BarChart3 },
-  { label: 'Media',       href: '/dashboard/media',      icon: Image },
-  { label: 'Packages',    href: '/dashboard/packages',   icon: Package },
-  { label: 'Cash Alarm',  href: '/dashboard/cash',       icon: DollarSign },
-  { label: 'Creators',    href: '/dashboard/creators',   icon: UserCog },
-  { label: 'Settings',    href: '/dashboard/settings',   icon: Settings },
+const NAV_GROUPS = [
+  {
+    label: 'Main',
+    items: [
+      { label: 'Overview',   href: '/dashboard',           icon: LayoutDashboard, exact: true },
+      { label: 'Inbox',      href: '/dashboard/inbox',     icon: MessageSquare },
+      { label: 'Leads',      href: '/dashboard/leads',     icon: Users },
+      { label: 'Analytics',  href: '/dashboard/analytics', icon: BarChart3 },
+    ],
+  },
+  {
+    label: 'Content',
+    items: [
+      { label: 'Media',      href: '/dashboard/media',     icon: Image },
+      { label: 'Packages',   href: '/dashboard/packages',  icon: Package },
+      { label: 'Cash Alarm', href: '/dashboard/cash',      icon: DollarSign },
+    ],
+  },
+  {
+    label: 'Account',
+    items: [
+      { label: 'Creators',   href: '/dashboard/creators',  icon: UserCog },
+      { label: 'Settings',   href: '/dashboard/settings',  icon: Settings },
+    ],
+  },
 ];
 
-// ── Creator Switcher ─────────────────────────────────────────────────────────
+// ── WishperME Logo ────────────────────────────────────────────────────────────
+function WishperMELogo({ collapsed }: { collapsed: boolean }) {
+  return (
+    <div className={cn(
+      'flex items-center gap-2.5 px-4 h-14 border-b border-border flex-shrink-0',
+      collapsed && 'justify-center px-3'
+    )}>
+      <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center flex-shrink-0 shadow-sm">
+        <svg width="16" height="16" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M9 1.5C5.134 1.5 2 4.41 2 8C2 9.8 2.78 11.42 4.04 12.57L3 16.5L7.18 14.87C7.76 15.01 8.37 15.08 9 15.08C12.866 15.08 16 12.17 16 8.58C16 4.99 12.866 1.5 9 1.5Z" fill="white"/>
+        </svg>
+      </div>
+      {!collapsed && (
+        <div className="min-w-0">
+          <div className="font-bold text-sm tracking-tight leading-tight">WishperME</div>
+          <div className="text-[10px] text-muted-foreground leading-tight">Telegram API Dashboard</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Creator Switcher ──────────────────────────────────────────────────────────
 function CreatorSwitcher({ collapsed }: { collapsed: boolean }) {
   const { creators, selected, switchCreator } = useCreator();
   const [open, setOpen] = useState(false);
@@ -38,13 +75,13 @@ function CreatorSwitcher({ collapsed }: { collapsed: boolean }) {
       <button
         onClick={() => setOpen(o => !o)}
         className={cn(
-          "w-full flex items-center gap-2.5 rounded-md border border-border bg-background",
-          "hover:bg-accent transition-colors text-sm px-3 py-2",
-          collapsed && "justify-center px-2"
+          'w-full flex items-center gap-2.5 rounded-lg border border-border bg-background/50',
+          'hover:bg-accent transition-colors text-sm px-3 py-2',
+          collapsed && 'justify-center px-2'
         )}
       >
         <div
-          className="w-6 h-6 rounded-md flex items-center justify-center text-sm flex-shrink-0 font-bold text-white"
+          className="w-6 h-6 rounded-md flex items-center justify-center text-xs flex-shrink-0 font-bold text-white"
           style={{ background: selected?.color || '#3b82f6' }}
         >
           {selected?.emoji || '🎭'}
@@ -62,14 +99,14 @@ function CreatorSwitcher({ collapsed }: { collapsed: boolean }) {
       {open && (
         <>
           <div onClick={() => setOpen(false)} className="fixed inset-0 z-40" />
-          <div className="absolute top-full left-3 right-3 mt-1 bg-popover border border-border rounded-md shadow-lg z-50 overflow-hidden">
+          <div className="absolute top-full left-3 right-3 mt-1 bg-popover border border-border rounded-lg shadow-xl z-50 overflow-hidden">
             {creators.map(c => (
               <button
                 key={c.id}
                 onClick={() => { switchCreator(c.id); setOpen(false); }}
                 className={cn(
-                  "w-full flex items-center gap-2.5 px-3 py-2.5 text-sm hover:bg-accent transition-colors",
-                  c.id === selected?.id && "bg-accent"
+                  'w-full flex items-center gap-2.5 px-3 py-2.5 text-sm hover:bg-accent transition-colors',
+                  c.id === selected?.id && 'bg-accent'
                 )}
               >
                 <div className="w-7 h-7 rounded-md flex items-center justify-center text-sm flex-shrink-0 font-bold text-white"
@@ -97,7 +134,7 @@ function CreatorSwitcher({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-// ── Inner layout ─────────────────────────────────────────────────────────────
+// ── Inner layout ──────────────────────────────────────────────────────────────
 function DashboardInner({ children }: DashboardLayoutProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobile, setMobile] = useState(false);
@@ -111,81 +148,70 @@ function DashboardInner({ children }: DashboardLayoutProps) {
     return () => window.removeEventListener('resize', check);
   }, []);
 
-  const isActive = (item: typeof NAV[0]) =>
+  const isActive = (item: { href: string; exact?: boolean }) =>
     item.exact ? pathname === item.href : pathname.startsWith(item.href);
 
-  const NavList = ({ onNav }: { onNav?: () => void }) => (
-    <nav className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5">
-      {NAV.map(item => {
-        const active = isActive(item);
-        const Icon = item.icon;
-        return (
-          <Link key={item.href} href={item.href} onClick={onNav}>
-            <div className={cn(
-              "flex items-center rounded-md px-3 py-2 text-sm font-medium transition-colors",
-              collapsed && !mobile ? "justify-center px-2" : "gap-3",
-              active
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-            )}>
-              <Icon className="flex-shrink-0 h-4 w-4" />
-              {(!collapsed || mobile) && (
-                <span className="leading-none">{item.label}</span>
-              )}
+  const NavContent = ({ onNav }: { onNav?: () => void }) => (
+    <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
+      {NAV_GROUPS.map(group => (
+        <div key={group.label}>
+          {!collapsed && (
+            <div className="px-2 mb-1 text-[10px] font-semibold text-muted-foreground/50 uppercase tracking-widest select-none">
+              {group.label}
             </div>
-          </Link>
-        );
-      })}
+          )}
+          <div className="space-y-0.5">
+            {group.items.map(item => {
+              const active = isActive(item);
+              const Icon = item.icon;
+              return (
+                <Link key={item.href} href={item.href} onClick={onNav}>
+                  <div className={cn(
+                    'flex items-center rounded-lg px-2.5 py-2 text-sm font-medium transition-all duration-150',
+                    collapsed ? 'justify-center' : 'gap-3',
+                    active
+                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                  )}>
+                    <Icon className="flex-shrink-0 h-4 w-4" />
+                    {!collapsed && <span className="leading-none">{item.label}</span>}
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </nav>
   );
 
   const SidebarContent = ({ isMobile = false }: { isMobile?: boolean }) => (
-    <>
-      {/* Logo */}
-      <div className={cn(
-        "flex items-center gap-2.5 px-4 h-14 border-b border-border flex-shrink-0",
-        collapsed && !isMobile && "justify-center px-2"
-      )}>
-        <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
-          <Zap size={16} className="text-primary-foreground" />
-        </div>
-        {(!collapsed || isMobile) && (
-          <div className="min-w-0">
-            <div className="font-bold text-sm tracking-tight leading-tight truncate">WishperME</div>
-            <div className="text-[10px] text-muted-foreground leading-tight truncate">Telegram API Dashboard</div>
-          </div>
-        )}
+    <div className="flex flex-col h-full">
+      <WishperMELogo collapsed={collapsed && !isMobile} />
+      <div className="py-1.5">
+        <CreatorSwitcher collapsed={collapsed && !isMobile} />
       </div>
-
-      {/* Creator switcher */}
-      <CreatorSwitcher collapsed={collapsed && !isMobile} />
-      <Separator className="mx-3" style={{ width: 'auto' }} />
-
-      {/* Nav */}
-      <NavList onNav={isMobile ? () => setDrawer(false) : undefined} />
-
-      {/* Collapse toggle (desktop only) */}
+      <Separator />
+      <NavContent onNav={isMobile ? () => setDrawer(false) : undefined} />
+      <Separator />
       {!isMobile && (
-        <>
-          <Separator className="mx-3" style={{ width: 'auto' }} />
-          <div className="p-2">
-            <button
-              onClick={() => setCollapsed(c => !c)}
-              className={cn(
-                "w-full flex items-center gap-2 rounded-md px-3 py-2 text-xs text-muted-foreground",
-                "hover:bg-accent hover:text-accent-foreground transition-colors",
-                collapsed ? "justify-center" : ""
-              )}
-            >
-              {collapsed
-                ? <ChevronRight size={14} />
-                : <><ChevronLeft size={14} /><span>Collapse</span></>
-              }
-            </button>
-          </div>
-        </>
+        <div className="p-3">
+          <button
+            onClick={() => setCollapsed(c => !c)}
+            className={cn(
+              'w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-muted-foreground',
+              'hover:bg-accent hover:text-foreground transition-colors',
+              collapsed ? 'justify-center' : ''
+            )}
+          >
+            {collapsed
+              ? <ChevronRight size={14} />
+              : <><ChevronLeft size={14} /><span className="font-medium">Collapse</span></>
+            }
+          </button>
+        </div>
       )}
-    </>
+    </div>
   );
 
   return (
@@ -194,9 +220,9 @@ function DashboardInner({ children }: DashboardLayoutProps) {
       {/* Desktop sidebar */}
       {!mobile && (
         <aside className={cn(
-          "flex flex-col flex-shrink-0 bg-card border-r border-border",
-          "sticky top-0 h-screen transition-all duration-200 overflow-hidden",
-          collapsed ? "w-[56px]" : "w-[220px]"
+          'flex flex-col flex-shrink-0 bg-card border-r border-border',
+          'sticky top-0 h-screen transition-all duration-200 overflow-hidden',
+          collapsed ? 'w-[56px]' : 'w-[224px]'
         )}>
           <SidebarContent />
         </aside>
@@ -210,12 +236,12 @@ function DashboardInner({ children }: DashboardLayoutProps) {
             {drawer ? <X size={18} /> : <Menu size={18} />}
           </button>
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-md bg-primary flex items-center justify-center">
-              <Zap size={14} className="text-primary-foreground" />
+            <div className="w-7 h-7 rounded-lg bg-primary flex items-center justify-center">
+              <svg width="13" height="13" viewBox="0 0 18 18" fill="none">
+                <path d="M9 1.5C5.134 1.5 2 4.41 2 8C2 9.8 2.78 11.42 4.04 12.57L3 16.5L7.18 14.87C7.76 15.01 8.37 15.08 9 15.08C12.866 15.08 16 12.17 16 8.58C16 4.99 12.866 1.5 9 1.5Z" fill="white"/>
+              </svg>
             </div>
-            <div>
-              <span className="font-bold text-sm">WishperME</span>
-            </div>
+            <span className="font-bold text-sm">WishperME</span>
           </div>
         </div>
       )}
@@ -225,14 +251,14 @@ function DashboardInner({ children }: DashboardLayoutProps) {
         <>
           <div onClick={() => setDrawer(false)}
             className="fixed inset-0 bg-black/50 z-50" />
-          <aside className="fixed top-0 left-0 bottom-0 z-[60] w-[220px] flex flex-col bg-card border-r border-border slide-in-from-left">
+          <aside className="fixed top-0 left-0 bottom-0 z-[60] w-[224px] flex flex-col bg-card border-r border-border slide-in-from-left">
             <SidebarContent isMobile />
           </aside>
         </>
       )}
 
       {/* Main content */}
-      <main className={cn("flex-1 min-w-0 overflow-x-hidden", mobile && "mt-14")}>
+      <main className={cn('flex-1 min-w-0 overflow-x-hidden', mobile && 'mt-14')}>
         {children}
       </main>
     </div>

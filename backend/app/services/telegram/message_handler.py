@@ -1216,13 +1216,20 @@ class MessageProcessor:
                 if p_link:
                     # Get atomic order number for this creator
                     _order_num = await self._next_order_number(creator_id)
-                    pay_msg = (
-                        f"🧾 Bestellung {_order_num}\n\n"
-                        f"✅ Du hast **{p_name}** gewählt.\n\n"
-                        f"💰 Preis: {p_price}\n\n"
-                        f"Klick auf den Button unten — du wirst direkt zur sicheren Zahlung weitergeleitet 🔐\n\n"
-                        f"Sobald die Zahlung eingegangen ist, bekommst du sofort Zugang! 🎉"
+                    # Use package-configured bot message if set, otherwise minimal fallback
+                    _pkg_text = (
+                        _si_pkg.get("package_text", "").strip()
+                        or _si_pkg.get("package_preview_description", "").strip()
+                        or _si_pkg.get("description", "").strip()
                     )
+                    if _pkg_text:
+                        pay_msg = f"🧾 {_order_num}\n\n{_pkg_text}"
+                    else:
+                        pay_msg = (
+                            f"🧾 {_order_num} — {p_name}\n\n"
+                            f"💰 {p_price}\n\n"
+                            f"Klick auf den Button um sicher zu bezahlen 🔐"
+                        )
                     # Build inline keyboard button for the payment link
                     from telethon.tl.types import (
                         ReplyInlineMarkup, KeyboardButtonRow, KeyboardButtonUrl
@@ -1292,12 +1299,19 @@ class MessageProcessor:
                     _sel_price = f"{_sel.get('price', '')} {_sel.get('currency', '€')}".strip()
                     if _sel_link:
                         _order_num2 = await self._next_order_number(creator_id)
-                        pay_msg2 = (
-                            f"🧾 Bestellung {_order_num2}\n\n"
-                            f"💳 Hier ist dein Zahlungslink für **{_sel_name}**:\n\n"
-                            f"💰 Preis: {_sel_price}\n\n"
-                            f"Klick auf den Button unten — du wirst direkt zur sicheren Zahlung weitergeleitet 🔐"
+                        _sel_pkg_text = (
+                            _sel.get("package_text", "").strip()
+                            or _sel.get("package_preview_description", "").strip()
+                            or _sel.get("description", "").strip()
                         )
+                        if _sel_pkg_text:
+                            pay_msg2 = f"🧾 {_order_num2}\n\n{_sel_pkg_text}"
+                        else:
+                            pay_msg2 = (
+                                f"🧾 {_order_num2} — {_sel_name}\n\n"
+                                f"💰 {_sel_price}\n\n"
+                                f"Klick auf den Button um sicher zu bezahlen 🔐"
+                            )
                         from telethon.tl.types import (
                             ReplyInlineMarkup, KeyboardButtonRow, KeyboardButtonUrl
                         )

@@ -154,6 +154,7 @@ export default function SettingsPage() {
   const [reply, setReply] = useState<ReplySettings>(DEFAULT_REPLY);
   const [replySaving, setReplySaving]   = useState(false);
   const [replySaved,  setReplySaved]    = useState(false);
+  const [applyAllStatus, setApplyAllStatus] = useState<'idle'|'saving'|'done'|'error'>('idle');
 
   const jsonRef = useRef<HTMLInputElement>(null);
   const api = getApi();
@@ -195,6 +196,30 @@ export default function SettingsPage() {
       }
     }).catch(() => {}).finally(() => setLoading(false));
   }, [api, withCreator]);
+
+  const applySystemPromptToAll = async () => {
+    if (!systemPrompt.trim()) return;
+    setApplyAllStatus('saving');
+    try {
+      const creatorsRes = await fetch(`${api}/creators`);
+      const creatorsData = await creatorsRes.json();
+      const allCreators: { id: string }[] = Array.isArray(creatorsData) ? creatorsData : (creatorsData.creators ?? []);
+      await Promise.all(
+        allCreators.map((c) =>
+          fetch(`${api}/config/system_prompt?creator_id=${c.id}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(systemPrompt),
+          })
+        )
+      );
+      setApplyAllStatus('done');
+      setTimeout(() => setApplyAllStatus('idle'), 3000);
+    } catch {
+      setApplyAllStatus('error');
+      setTimeout(() => setApplyAllStatus('idle'), 3000);
+    }
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -336,7 +361,24 @@ export default function SettingsPage() {
               <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)} rows={18}
                 placeholder={`Example rules:\n- Reply in maximum 2 sentences.\n- Use at most 1 emoji per message.\n- Never mention competitors.\n- Always stay in character as Nika.`}
                 className={cn(inputCls, "resize-y leading-relaxed font-mono text-xs")} />
-              <div className="text-xs text-muted-foreground">Leave blank to use Persona alone.</div>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="text-xs text-muted-foreground">Leave blank to use Persona alone.</div>
+                <button
+                  onClick={applySystemPromptToAll}
+                  disabled={applyAllStatus === 'saving' || !systemPrompt.trim()}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors",
+                    applyAllStatus === 'done'  ? "bg-green-500/15 border-green-500/30 text-green-400" :
+                    applyAllStatus === 'error' ? "bg-red-500/15 border-red-500/30 text-red-400" :
+                    "bg-primary/10 border-primary/30 text-primary hover:bg-primary/20"
+                  )}
+                >
+                  {applyAllStatus === 'saving' ? '…Applying' :
+                   applyAllStatus === 'done'   ? '✓ Applied to all creators' :
+                   applyAllStatus === 'error'  ? '✗ Error — try again' :
+                   '⚡ Set for ALL creators'}
+                </button>
+              </div>
             </CardContent>
           </Card>
         )}
