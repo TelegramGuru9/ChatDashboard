@@ -3,33 +3,29 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { useCreator } from '@/contexts/CreatorContext';
-
-const C = {
-  bg:'#0a0a0a', s1:'#111113', s2:'#1c1c1e', s3:'#2c2c2e', s4:'#3a3a3c',
-  sep:'rgba(255,255,255,0.07)', t1:'#fff', t2:'rgba(235,235,245,0.65)', t3:'rgba(235,235,245,0.35)',
-  blue:'#0a84ff', green:'#30d158', red:'#ff453a', orange:'#ff9f0a', purple:'#bf5af2', teal:'#5ac8fa',
-};
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
+import { Upload, ChevronDown, X } from 'lucide-react';
 
 interface MediaItem {
   id: string;
   name: string;
   type: string;
   size: number;
-  dataUrl?: string;   // base64 preview — only kept in memory for small files
-  fileUrl?: string;   // server URL (/media/files/…) for files uploaded via multipart
-  tag: string;        // "Free" | user-defined category name
+  dataUrl?: string;
+  fileUrl?: string;
+  tag: string;
   keywords: string;
   action: string;
   description: string;
-  message_to_user: string;  // text sent alongside this file
-  price: string;            // e.g. "29.99"
-  payment_link: string;     // URL
+  message_to_user: string;
+  price: string;
+  payment_link: string;
   addedAt: string;
 }
 
-interface MediaSettings {
-  no_repeat: boolean;
-}
+interface MediaSettings { no_repeat: boolean; }
 
 const ACTIONS = [
   { value: 'send_file',        label: '📤 Datei direkt senden' },
@@ -50,25 +46,32 @@ function iconFor(type: string) {
   if (type.startsWith('audio')) return '🎵';
   return '📎';
 }
-const CAT_PALETTE = [C.blue, C.purple, C.orange, C.teal, '#ff2d55', '#ffd60a', '#34c759', '#5e5ce6'];
-function catColor(name: string, categories: string[]) {
-  if (name === 'Free') return C.green;
+
+const CAT_COLORS = ['text-blue-400', 'text-purple-400', 'text-orange-400', 'text-cyan-400', 'text-pink-400', 'text-yellow-400', 'text-emerald-400', 'text-indigo-400'];
+const CAT_BG     = ['bg-blue-400/10', 'bg-purple-400/10', 'bg-orange-400/10', 'bg-cyan-400/10', 'bg-pink-400/10', 'bg-yellow-400/10', 'bg-emerald-400/10', 'bg-indigo-400/10'];
+const CAT_BORDER = ['border-blue-400/30', 'border-purple-400/30', 'border-orange-400/30', 'border-cyan-400/30', 'border-pink-400/30', 'border-yellow-400/30', 'border-emerald-400/30', 'border-indigo-400/30'];
+
+function catClasses(name: string, categories: string[]) {
+  if (name === 'Free') return { text: 'text-green-400', bg: 'bg-green-400/10', border: 'border-green-400/30' };
   const idx = categories.indexOf(name);
-  return CAT_PALETTE[idx % CAT_PALETTE.length] ?? C.t3;
+  const i   = idx < 0 ? 0 : idx % CAT_COLORS.length;
+  return { text: CAT_COLORS[i], bg: CAT_BG[i], border: CAT_BORDER[i] };
 }
 
 function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
   return (
-    <div onClick={() => onChange(!on)} style={{
-      width:'44px', height:'24px', borderRadius:'12px', background: on ? C.green : C.s3,
-      cursor:'pointer', position:'relative', flexShrink:0, transition:'background 0.2s',
-    }}>
-      <div style={{
-        position:'absolute', top:'3px', left: on ? '23px' : '3px',
-        width:'18px', height:'18px', borderRadius:'50%', background:'#fff',
-        transition:'left 0.2s', boxShadow:'0 1px 4px rgba(0,0,0,0.4)',
-      }} />
-    </div>
+    <button
+      onClick={() => onChange(!on)}
+      className={cn(
+        "relative w-11 h-6 rounded-full flex-shrink-0 cursor-pointer transition-colors duration-200",
+        on ? "bg-green-500" : "bg-muted"
+      )}
+    >
+      <div className={cn(
+        "absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-all duration-200",
+        on ? "left-6" : "left-1"
+      )} />
+    </button>
   );
 }
 
@@ -90,7 +93,7 @@ function emptyItem(overrides?: Partial<MediaItem>): MediaItem {
 export default function MediaPage() {
   const [items,      setItems]      = useState<MediaItem[]>([]);
   const [settings,   setSettings]   = useState<MediaSettings>({ no_repeat: true });
-  const [categories, setCategories] = useState<string[]>([]);  // user-defined (no "Free")
+  const [categories, setCategories] = useState<string[]>([]);
   const [loading,    setLoading]    = useState(true);
   const [filter,     setFilter]     = useState('All');
   const [dragging,   setDragging]   = useState(false);
@@ -107,27 +110,18 @@ export default function MediaPage() {
 
   const toast = (msg: string) => { setStatus(msg); setTimeout(() => setStatus(''), 2800); };
 
-  // Files larger than this threshold are uploaded to the server as multipart
-  // instead of being stored as base64 inside the PostgreSQL config JSON.
-  const LARGE_FILE_THRESHOLD = 500 * 1024; // 500 KB
+  const LARGE_FILE_THRESHOLD = 500 * 1024;
 
   const uploadFileToServer = async (file: File): Promise<{ url: string; filename: string } | null> => {
     try {
       const form = new FormData();
       form.append('file', file);
       const res = await fetch(`${api}/media/upload/file`, { method: 'POST', body: form });
-      if (!res.ok) {
-        const err = await res.text().catch(() => res.status.toString());
-        throw new Error(err);
-      }
+      if (!res.ok) throw new Error(await res.text().catch(() => res.status.toString()));
       return await res.json();
-    } catch (e) {
-      console.warn(`[media-upload] ${e}`);
-      return null;
-    }
+    } catch (e) { console.warn(`[media-upload] ${e}`); return null; }
   };
 
-  // ── Load ──────────────────────────────────────────────────────────────────
   const load = useCallback(async () => {
     try {
       const [libRes, setRes, catRes] = await Promise.all([
@@ -138,10 +132,8 @@ export default function MediaPage() {
       const lib = await libRes.json();
       const set = await setRes.json();
       const cat = await catRes.json();
-      // Migrate old items that may lack new fields
       const rawItems: MediaItem[] = (Array.isArray(lib.value) ? lib.value : []).map((i: any) => ({
-        message_to_user: '', price: '', payment_link: '',
-        ...i,
+        message_to_user: '', price: '', payment_link: '', ...i,
       }));
       setItems(rawItems);
       if (set.value && typeof set.value === 'object') setSettings({ no_repeat: set.value.no_repeat !== false });
@@ -152,34 +144,25 @@ export default function MediaPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  // ── Save helpers ──────────────────────────────────────────────────────────
   const saveLib = async (updated: MediaItem[]) => {
     setSaving(true);
     try {
-      // Strip base64 dataUrl from items that have a server fileUrl,
-      // so the DB payload stays small (avoids 413 / timeout on large videos).
-      const forDb = updated.map(item =>
-        item.fileUrl ? { ...item, dataUrl: undefined } : item
-      );
+      const forDb = updated.map(item => item.fileUrl ? { ...item, dataUrl: undefined } : item);
       const res = await fetch(withCreator(`${api}/config/media_library`), {
-        method:'POST', headers:{'Content-Type':'application/json'},
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(forDb),
       });
-      if (!res.ok) {
-        const err = await res.text().catch(() => res.status.toString());
-        throw new Error(err);
-      }
-      setItems(updated); // keep dataUrl in memory for instant display this session
+      if (!res.ok) throw new Error(await res.text().catch(() => res.status.toString()));
+      setItems(updated);
     } catch (e) {
       toast(`⚠ Fehler beim Speichern: ${e instanceof Error ? e.message : e}`);
-    }
-    finally { setSaving(false); }
+    } finally { setSaving(false); }
   };
 
   const saveSettings = async (updated: MediaSettings) => {
     setSettings(updated);
     fetch(withCreator(`${api}/config/media_settings`), {
-      method:'POST', headers:{'Content-Type':'application/json'},
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updated),
     }).catch(() => {});
   };
@@ -187,193 +170,163 @@ export default function MediaPage() {
   const saveCategories = async (updated: string[]) => {
     setCategories(updated);
     fetch(withCreator(`${api}/config/media_categories`), {
-      method:'POST', headers:{'Content-Type':'application/json'},
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updated),
     }).catch(() => {});
   };
 
-  // ── File upload ───────────────────────────────────────────────────────────
   const addFiles = (files: FileList | null) => {
     if (!files) return;
     Array.from(files).forEach(f => {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const isMedia = f.type.startsWith('image') || f.type.startsWith('video');
-
       if (isMedia && f.size > LARGE_FILE_THRESHOLD) {
-        // Large file: upload to server — don't store base64 in DB
         toast('⏳ Datei wird hochgeladen…');
         uploadFileToServer(f).then(result => {
-          if (!result) { toast('⚠ Upload fehlgeschlagen — Datei zu groß oder Server-Fehler'); return; }
-          const defaultTag = f.type.startsWith('video') ? (categories[0] || 'Free') : 'Free';
-          const defaultAction = f.type.startsWith('video') ? 'send_file' : 'send_teaser';
-          setEditing(emptyItem({
-            id, name: f.name, type: f.type, size: f.size,
-            fileUrl: result.url,
-            dataUrl: undefined,
-            tag: defaultTag, action: defaultAction,
-          }));
+          if (!result) { toast('⚠ Upload fehlgeschlagen'); return; }
+          setEditing(emptyItem({ id, name: f.name, type: f.type, size: f.size, fileUrl: result.url }));
           toast('✓ Datei hochgeladen — Details ausfüllen & speichern');
         });
       } else if (isMedia) {
-        // Small file: read as base64 (fine for DB storage)
         const reader = new FileReader();
-        reader.onload = e => {
-          setEditing(emptyItem({
-            id, name: f.name, type: f.type, size: f.size,
-            dataUrl: e.target?.result as string,
-            tag: 'Free', action: 'send_teaser',
-          }));
-        };
+        reader.onload = e => setEditing(emptyItem({ id, name: f.name, type: f.type, size: f.size, dataUrl: e.target?.result as string }));
         reader.readAsDataURL(f);
       } else {
-        setEditing(emptyItem({
-          id, name: f.name, type: f.type, size: f.size,
-          tag: categories[0] || 'Free', action: 'send_file',
-        }));
+        setEditing(emptyItem({ id, name: f.name, type: f.type, size: f.size, tag: categories[0] || 'Free', action: 'send_file' }));
       }
     });
   };
 
-  // ── Category management ───────────────────────────────────────────────────
   const addCategory = () => {
     const name = catInput.trim();
     if (!name || name.toLowerCase() === 'free' || categories.includes(name)) return;
-    const updated = [...categories, name];
-    saveCategories(updated);
-    setCatInput('');
-    toast(`✓ Kategorie "${name}" erstellt`);
+    saveCategories([...categories, name]);
+    setCatInput(''); toast(`✓ Kategorie "${name}" erstellt`);
   };
 
   const deleteCategory = (name: string) => {
-    if (!confirm(`Kategorie "${name}" löschen? Dateien dieser Kategorie werden zu "Free" verschoben.`)) return;
-    const newCats = categories.filter(c => c !== name);
-    const newItems = items.map(i => i.tag === name ? { ...i, tag: 'Free' } : i);
-    saveCategories(newCats);
-    saveLib(newItems);
+    if (!confirm(`Kategorie "${name}" löschen?`)) return;
+    saveCategories(categories.filter(c => c !== name));
+    saveLib(items.map(i => i.tag === name ? { ...i, tag: 'Free' } : i));
     if (filter === name) setFilter('All');
     toast(`✓ "${name}" gelöscht`);
   };
 
-  // ── Confirm edit / delete ─────────────────────────────────────────────────
   const confirmEdit = () => {
     if (!editing) return;
     const updated = items.some(i => i.id === editing.id)
       ? items.map(i => i.id === editing.id ? editing : i)
       : [...items, editing];
-    saveLib(updated);
-    setEditing(null);
-    toast('✓ Gespeichert');
+    saveLib(updated); setEditing(null); toast('✓ Gespeichert');
   };
 
   const deleteItem = (id: string) => {
     if (!confirm('Datei löschen?')) return;
-    // Also delete the server-side file if it was uploaded via multipart
     const target = items.find(i => i.id === id);
     if (target?.fileUrl) {
       const filename = target.fileUrl.split('/').pop();
-      if (filename) {
-        fetch(`${api}/media/files/${filename}`, { method: 'DELETE' }).catch(() => {});
-      }
+      if (filename) fetch(`${api}/media/files/${filename}`, { method: 'DELETE' }).catch(() => {});
     }
-    saveLib(items.filter(i => i.id !== id));
-    setPreviewing(null);
-    toast('✓ Gelöscht');
+    saveLib(items.filter(i => i.id !== id)); setPreviewing(null); toast('✓ Gelöscht');
   };
 
-  // ── Derived ───────────────────────────────────────────────────────────────
   const allTags   = ['Free', ...categories];
   const freeItems = items.filter(i => i.tag === 'Free');
   const visible   = filter === 'All' ? items : items.filter(i => i.tag === filter);
 
+  const getMediaSrc = (item: MediaItem) => {
+    if (item.fileUrl) {
+      const base = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace('/api/v1', '');
+      return `${base}${item.fileUrl}`;
+    }
+    return item.dataUrl;
+  };
+
   return (
     <DashboardLayout>
-      <div style={{ padding:'28px 24px', maxWidth:'1080px', color: C.t1 }}>
+      <div className="p-6 max-w-5xl space-y-4">
 
         {/* Header */}
-        <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom:'22px', flexWrap:'wrap', gap:'12px' }}>
+        <div className="flex items-start justify-between flex-wrap gap-3">
           <div>
-            <h1 style={{ fontSize:'26px', fontWeight:700, margin:0, letterSpacing:'-0.03em' }}>Media Library</h1>
-            <p style={{ color: C.t2, fontSize:'14px', margin:'4px 0 0' }}>{items.length} Dateien · {freeItems.length} Gratis-Teaser</p>
+            <h1 className="text-2xl font-bold tracking-tight">Media Library</h1>
+            <p className="text-sm text-muted-foreground mt-1">{items.length} Dateien · {freeItems.length} Gratis-Teaser</p>
           </div>
-          <button onClick={() => fileInputRef.current?.click()} style={{
-            padding:'10px 18px', borderRadius:'12px', background: C.blue, border:'none',
-            color:'#fff', fontSize:'13px', fontWeight:600, cursor:'pointer',
-          }}>+ Datei hochladen</button>
+          <Button onClick={() => fileInputRef.current?.click()}>
+            <Upload size={14} className="mr-1.5" />
+            Datei hochladen
+          </Button>
         </div>
 
         {/* Free teaser banner */}
-        <div style={{
-          background:'rgba(48,209,88,0.06)', border:`1px solid rgba(48,209,88,0.18)`,
-          borderRadius:'16px', padding:'18px 20px', marginBottom:'16px',
-          display:'flex', alignItems:'center', justifyContent:'space-between', gap:'16px', flexWrap:'wrap',
-        }}>
-          <div style={{ display:'flex', alignItems:'center', gap:'14px' }}>
-            <span style={{ fontSize:'30px' }}>🎁</span>
-            <div>
-              <div style={{ fontWeight:700, fontSize:'14px', color: C.green }}>Gratis-Teaser</div>
-              <div style={{ fontSize:'12px', color: C.t2, marginTop:'2px' }}>
-                {freeItems.length === 0
-                  ? 'Noch keine Teaser — Bot schickt keinen Teaser vor dem Paket-Pitch'
-                  : `${freeItems.length} Teaser verfügbar — Bot wählt einen zufällig als Teaser (kein Kauflink!)` }
+        <Card className="border-green-500/20 bg-green-500/5">
+          <CardContent className="pt-4 pb-4">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div className="flex items-center gap-4">
+                <span className="text-3xl">🎁</span>
+                <div>
+                  <div className="font-bold text-sm text-green-400">Gratis-Teaser</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    {freeItems.length === 0
+                      ? 'Noch keine Teaser — Bot schickt keinen Teaser vor dem Paket-Pitch'
+                      : `${freeItems.length} Teaser verfügbar — Bot wählt einen zufällig`}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 bg-card border border-border rounded-xl px-3 py-2">
+                <div>
+                  <div className="text-xs font-semibold">Nie zweimal dasselbe</div>
+                  <div className="text-[10px] text-muted-foreground">Pro Kontakt jeden Teaser nur einmal</div>
+                </div>
+                <Toggle on={settings.no_repeat} onChange={v => saveSettings({ ...settings, no_repeat: v })} />
               </div>
             </div>
-          </div>
-          <div style={{ display:'flex', alignItems:'center', gap:'10px', background: C.s2, padding:'10px 14px', borderRadius:'12px', border:`1px solid ${C.sep}` }}>
-            <div>
-              <div style={{ fontSize:'12px', fontWeight:600, marginBottom:'1px' }}>Nie zweimal dasselbe</div>
-              <div style={{ fontSize:'10px', color: C.t3 }}>Pro Kontakt jeden Teaser nur einmal</div>
-            </div>
-            <Toggle on={settings.no_repeat} onChange={v => saveSettings({ ...settings, no_repeat: v })} />
-          </div>
-        </div>
+          </CardContent>
+        </Card>
 
         {/* Category manager */}
-        <div style={{ background: C.s1, border:`1px solid ${C.sep}`, borderRadius:'14px', marginBottom:'16px', overflow:'hidden' }}>
-          <button onClick={() => setCatOpen(v => !v)} style={{
-            width:'100%', padding:'12px 16px', background:'none', border:'none', cursor:'pointer',
-            display:'flex', alignItems:'center', justifyContent:'space-between', color: C.t1,
-          }}>
-            <span style={{ fontSize:'13px', fontWeight:600 }}>🗂 Kategorien verwalten ({categories.length} benutzerdefiniert)</span>
-            <span style={{ fontSize:'16px', color: C.t3, transform: catOpen ? 'rotate(180deg)' : 'none', transition:'transform 0.2s' }}>⌄</span>
+        <Card>
+          <button
+            onClick={() => setCatOpen(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold hover:bg-muted/50 transition-colors rounded-xl"
+          >
+            <span>🗂 Kategorien verwalten ({categories.length} benutzerdefiniert)</span>
+            <ChevronDown size={16} className={cn("text-muted-foreground transition-transform", catOpen && "rotate-180")} />
           </button>
           {catOpen && (
-            <div style={{ padding:'0 16px 16px', borderTop:`1px solid ${C.sep}` }}>
-              {/* Existing categories */}
-              <div style={{ display:'flex', gap:'6px', flexWrap:'wrap', marginTop:'14px', marginBottom:'14px' }}>
-                <span style={{ fontSize:'11px', padding:'4px 10px', borderRadius:'20px', background:'rgba(48,209,88,0.12)', color: C.green, border:'1px solid rgba(48,209,88,0.25)', fontWeight:600 }}>
-                  🎁 Free (fest)
-                </span>
-                {categories.map(cat => (
-                  <div key={cat} style={{ display:'flex', alignItems:'center', gap:'4px', padding:'3px 8px 3px 10px', borderRadius:'20px', background:`${catColor(cat, categories)}14`, border:`1px solid ${catColor(cat, categories)}40`, fontSize:'11px', fontWeight:600, color: catColor(cat, categories) }}>
-                    {cat}
-                    <button onClick={() => deleteCategory(cat)} style={{ background:'none', border:'none', cursor:'pointer', color:'rgba(255,255,255,0.3)', fontSize:'12px', padding:'0 0 0 2px', lineHeight:1 }}>×</button>
-                  </div>
-                ))}
+            <CardContent className="pt-0 pb-4 border-t border-border">
+              <div className="flex gap-2 flex-wrap mt-3 mb-3">
+                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-green-400/10 text-green-400 border border-green-400/30">🎁 Free (fest)</span>
+                {categories.map(cat => {
+                  const cls = catClasses(cat, categories);
+                  return (
+                    <div key={cat} className={cn("flex items-center gap-1 px-2.5 py-1 rounded-full border text-xs font-semibold", cls.bg, cls.border, cls.text)}>
+                      {cat}
+                      <button onClick={() => deleteCategory(cat)} className="text-muted-foreground hover:text-foreground ml-0.5 leading-none text-xs">×</button>
+                    </div>
+                  );
+                })}
               </div>
-              {/* Add category */}
-              <div style={{ display:'flex', gap:'8px' }}>
+              <div className="flex gap-2">
                 <input
                   value={catInput}
                   onChange={e => setCatInput(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && addCategory()}
-                  placeholder="Neue Kategorie (z.B. VIP, Outdoor, Lingerie…)"
-                  style={{ flex:1, background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'8px 12px', color: C.t1, fontSize:'13px', outline:'none' }}
+                  placeholder="Neue Kategorie (z.B. VIP, Outdoor…)"
+                  className="flex-1 bg-muted border border-border rounded-xl px-3 py-2 text-sm outline-none"
                 />
-                <button onClick={addCategory} style={{ padding:'8px 16px', borderRadius:'10px', background: C.blue, border:'none', color:'#fff', fontSize:'13px', fontWeight:600, cursor:'pointer' }}>
-                  + Hinzufügen
-                </button>
+                <Button size="sm" onClick={addCategory}>+ Hinzufügen</Button>
               </div>
-            </div>
+            </CardContent>
           )}
-        </div>
+        </Card>
 
         {/* Status toast */}
         {status && (
-          <div style={{ padding:'8px 14px', borderRadius:'10px', marginBottom:'14px', fontSize:'13px',
-            background: status.startsWith('✓') ? 'rgba(48,209,88,0.1)' : 'rgba(255,149,10,0.1)',
-            color: status.startsWith('✓') ? C.green : C.orange,
-            border:`1px solid ${status.startsWith('✓') ? 'rgba(48,209,88,0.2)' : 'rgba(255,149,10,0.2)'}`,
-          }}>{status}</div>
+          <div className={cn(
+            "px-3.5 py-2.5 rounded-xl text-sm border",
+            status.startsWith('✓') ? "bg-green-500/10 border-green-500/20 text-green-400" : "bg-orange-500/10 border-orange-500/20 text-orange-400"
+          )}>{status}</div>
         )}
 
         {/* Drop zone */}
@@ -382,161 +335,117 @@ export default function MediaPage() {
           onDragLeave={() => setDragging(false)}
           onDrop={e => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files); }}
           onClick={() => fileInputRef.current?.click()}
-          style={{
-            border:`2px dashed ${dragging ? C.green : C.sep}`, borderRadius:'16px',
-            padding:'24px 20px', textAlign:'center', cursor:'pointer', marginBottom:'18px',
-            background: dragging ? 'rgba(48,209,88,0.05)' : C.s1, transition:'all 0.15s',
-          }}
+          className={cn(
+            "border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all",
+            dragging ? "border-green-500 bg-green-500/5" : "border-border hover:border-primary/50 bg-card"
+          )}
         >
-          <div style={{ fontSize:'26px', marginBottom:'6px' }}>📁</div>
-          <div style={{ fontWeight:600, fontSize:'14px', marginBottom:'3px' }}>Dateien ablegen oder klicken</div>
-          <div style={{ fontSize:'12px', color: C.t3 }}>Bilder & Videos → Standard: Gratis-Teaser · Sonstige → erste Kategorie</div>
+          <div className="text-3xl mb-2">📁</div>
+          <div className="font-semibold text-sm mb-1">Dateien ablegen oder klicken</div>
+          <div className="text-xs text-muted-foreground">Bilder & Videos → Standard: Gratis-Teaser</div>
         </div>
 
-        <input ref={fileInputRef} type="file" multiple accept="image/*,video/*,application/pdf,audio/*" style={{ display:'none' }} onChange={e => addFiles(e.target.files)} />
+        <input ref={fileInputRef} type="file" multiple accept="image/*,video/*,application/pdf,audio/*" className="hidden" onChange={e => addFiles(e.target.files)} />
 
         {/* Filter tabs */}
-        <div style={{ display:'flex', gap:'6px', marginBottom:'18px', flexWrap:'wrap', overflowX:'auto' }}>
+        <div className="flex gap-2 flex-wrap">
           {['All', ...allTags].map(t => {
-            const count = t === 'All' ? items.length : items.filter(i => i.tag === t).length;
+            const count  = t === 'All' ? items.length : items.filter(i => i.tag === t).length;
             const active = filter === t;
-            const col = catColor(t, categories);
+            const cls    = catClasses(t, categories);
             return (
-              <button key={t} onClick={() => setFilter(t)} style={{
-                padding:'6px 14px', borderRadius:'20px', fontSize:'12px', fontWeight:600,
-                cursor:'pointer', border:'1px solid', flexShrink:0, transition:'all 0.15s',
-                background: active ? `${col}20` : 'transparent',
-                borderColor: active ? col : C.sep,
-                color: active ? col : C.t2,
-              }}>
+              <button key={t} onClick={() => setFilter(t)} className={cn(
+                "px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all flex-shrink-0",
+                active ? cn(cls.bg, cls.border, cls.text) : "border-border text-muted-foreground hover:border-muted-foreground"
+              )}>
                 {t === 'Free' ? '🎁 ' : ''}{t} ({count})
               </button>
             );
           })}
         </div>
 
-        {/* Items grid */}
+        {/* Grid */}
         {loading ? (
-          <div style={{ textAlign:'center', padding:'60px', color: C.t3 }}>Lade…</div>
+          <div className="text-center py-16 text-muted-foreground">Lade…</div>
         ) : visible.length === 0 ? (
-          <div style={{ textAlign:'center', padding:'60px', color: C.t3 }}>
-            <div style={{ fontSize:'44px', marginBottom:'12px' }}>📂</div>
-            <div style={{ fontSize:'15px', fontWeight:600, marginBottom:'6px', color: C.t2 }}>
-              {filter === 'Free' ? 'Noch keine Gratis-Teaser' : `Keine Dateien in "${filter}"`}
-            </div>
-            <div style={{ fontSize:'13px' }}>Lade Dateien hoch um sie hier zu sehen</div>
+          <div className="text-center py-16">
+            <div className="text-5xl mb-3">📂</div>
+            <div className="font-semibold mb-1">{filter === 'Free' ? 'Noch keine Gratis-Teaser' : `Keine Dateien in "${filter}"`}</div>
+            <div className="text-sm text-muted-foreground">Lade Dateien hoch um sie hier zu sehen</div>
           </div>
         ) : (
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(200px, 1fr))', gap:'12px' }}>
+          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>
             {visible.map(item => {
-              const col = catColor(item.tag, categories);
-              const isFree = item.tag === 'Free';
-              const isVideo = item.type.startsWith('video');
-              const isImage = item.type.startsWith('image');
-              // Use server URL if available (large files), fall back to base64
-              const mediaSrc = item.fileUrl
-                ? `${process.env.NEXT_PUBLIC_API_URL?.replace('/api/v1', '') || 'http://localhost:8000'}${item.fileUrl}`
-                : item.dataUrl;
-              const hasMedia = !!mediaSrc && (isVideo || isImage);
+              const isFree   = item.tag === 'Free';
+              const isVideo  = item.type.startsWith('video');
+              const isImage  = item.type.startsWith('image');
+              const mediaSrc = getMediaSrc(item);
+              const cls      = catClasses(item.tag, categories);
               return (
-                <div key={item.id} style={{
-                  background: C.s1, borderRadius:'14px',
-                  border:`1px solid ${isFree ? 'rgba(48,209,88,0.25)' : C.sep}`,
-                  overflow:'hidden', display:'flex', flexDirection:'column',
-                  transition:'transform 0.1s, border-color 0.15s',
-                }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform='translateY(-2px)'; (e.currentTarget as HTMLElement).style.borderColor=isFree?'rgba(48,209,88,0.5)':C.blue; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform=''; (e.currentTarget as HTMLElement).style.borderColor=isFree?'rgba(48,209,88,0.25)':C.sep; }}
-                >
-                  {/* ── Thumbnail — always visible ── */}
+                <Card key={item.id} className={cn(
+                  "overflow-hidden transition-all duration-150 hover:-translate-y-0.5",
+                  isFree ? "border-green-500/25 hover:border-green-500/50" : "hover:border-primary/40"
+                )}>
+                  {/* Thumbnail */}
                   <div
                     onClick={() => setPreviewing(item)}
-                    style={{ height:'150px', background: C.s2, display:'flex', alignItems:'center', justifyContent:'center', position:'relative', cursor:'pointer', overflow:'hidden' }}
+                    className="relative h-36 bg-muted flex items-center justify-center cursor-pointer overflow-hidden"
                   >
                     {isImage && mediaSrc ? (
-                      <img src={mediaSrc} alt={item.name} style={{ width:'100%', height:'100%', objectFit:'cover' }} />
+                      <img src={mediaSrc} alt={item.name} className="w-full h-full object-cover" />
                     ) : isVideo && mediaSrc ? (
                       <>
-                        {/* video element as thumbnail frame */}
-                        <video
-                          src={mediaSrc}
-                          style={{ width:'100%', height:'100%', objectFit:'cover' }}
-                          muted playsInline preload="metadata"
-                        />
-                        {/* Play button overlay — always visible on video */}
-                        <div style={{
-                          position:'absolute', inset:0,
-                          background:'rgba(0,0,0,0.28)',
-                          display:'flex', alignItems:'center', justifyContent:'center',
-                        }}>
-                          <div style={{
-                            width:'44px', height:'44px', borderRadius:'50%',
-                            background:'rgba(255,255,255,0.9)',
-                            display:'flex', alignItems:'center', justifyContent:'center',
-                            boxShadow:'0 2px 12px rgba(0,0,0,0.4)',
-                          }}>
-                            <span style={{ fontSize:'18px', marginLeft:'3px' }}>▶</span>
+                        <video src={mediaSrc} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                        <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
+                          <div className="w-10 h-10 rounded-full bg-white/90 flex items-center justify-center shadow-lg">
+                            <span className="text-base ml-0.5">▶</span>
                           </div>
                         </div>
                       </>
                     ) : (
-                      <div style={{ textAlign:'center' }}>
-                        <div style={{ fontSize:'44px' }}>{iconFor(item.type)}</div>
-                        <div style={{ fontSize:'10px', color:C.t3, marginTop:'4px' }}>{item.type.split('/')[1]?.toUpperCase() || 'FILE'}</div>
+                      <div className="text-center">
+                        <div className="text-4xl">{iconFor(item.type)}</div>
+                        <div className="text-[10px] text-muted-foreground mt-1">{item.type.split('/')[1]?.toUpperCase() || 'FILE'}</div>
                       </div>
                     )}
-
                     {/* Tag badge */}
-                    <span style={{
-                      position:'absolute', top:'8px', left:'8px', fontSize:'10px', fontWeight:700,
-                      padding:'2px 8px', borderRadius:'8px',
-                      background: isFree ? 'rgba(48,209,88,0.92)' : 'rgba(0,0,0,0.65)',
-                      color: isFree ? '#000' : '#fff',
-                      backdropFilter: 'blur(4px)',
-                    }}>
+                    <span className={cn(
+                      "absolute top-2 left-2 text-[10px] font-bold px-2 py-0.5 rounded-lg backdrop-blur",
+                      isFree ? "bg-green-400/90 text-black" : "bg-black/65 text-white"
+                    )}>
                       {isFree ? '🎁 Free' : item.tag}
                     </span>
-
-                    {/* Price badge */}
                     {item.price && !isFree && (
-                      <span style={{ position:'absolute', bottom:'8px', right:'8px', fontSize:'11px', fontWeight:700, padding:'2px 8px', borderRadius:'8px', background:'rgba(0,0,0,0.75)', color: C.orange }}>
+                      <span className="absolute bottom-2 right-2 text-xs font-bold px-2 py-0.5 rounded-lg bg-black/75 text-orange-400">
                         {item.price.includes('€') ? item.price : `${item.price} €`}
                       </span>
-                    )}
-
-                    {/* Fullscreen hint on image hover */}
-                    {isImage && (
-                      <div className="img-hover-hint" style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0)', display:'flex', alignItems:'center', justifyContent:'center', opacity:0, transition:'all 0.15s' }}
-                        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity='1'; (e.currentTarget as HTMLElement).style.background='rgba(0,0,0,0.3)'; }}
-                        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity='0'; (e.currentTarget as HTMLElement).style.background='rgba(0,0,0,0)'; }}>
-                        <div style={{ width:'36px', height:'36px', borderRadius:'50%', background:'rgba(255,255,255,0.85)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'16px' }}>⛶</div>
-                      </div>
                     )}
                   </div>
 
                   {/* Info */}
-                  <div style={{ padding:'10px 12px', flex:1, display:'flex', flexDirection:'column' }}>
-                    <div style={{ fontWeight:600, fontSize:'12px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', marginBottom:'2px' }}>{item.name}</div>
-                    <div style={{ fontSize:'10px', color: C.t3, marginBottom: item.description ? '4px' : 0 }}>
+                  <CardContent className="pt-2.5 pb-3">
+                    <div className="font-semibold text-xs truncate mb-0.5">{item.name}</div>
+                    <div className="text-[10px] text-muted-foreground mb-2">
                       {isVideo ? '🎬 Video' : isImage ? '🖼️ Bild' : '📄 Datei'} · {fmt(item.size)}
                     </div>
-                    {item.description && (
-                      <div style={{ fontSize:'11px', color: C.t2, overflow:'hidden', display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', lineHeight:1.4 }}>
-                        {item.description}
-                      </div>
-                    )}
-                    <div style={{ marginTop:'auto', paddingTop:'8px', display:'flex', gap:'5px' }}>
+                    <div className="flex gap-1.5">
                       <button
                         onClick={() => setPreviewing(item)}
-                        style={{ flex:1, padding:'5px', borderRadius:'7px', background: C.blue + '20', border:`1px solid ${C.blue}40`, color: C.blue, fontSize:'11px', fontWeight:600, cursor:'pointer' }}
+                        className="flex-1 py-1 rounded-lg bg-primary/10 border border-primary/20 text-primary text-[11px] font-semibold hover:bg-primary/20 transition-colors"
                       >
                         {isVideo ? '▶ Abspielen' : isImage ? '🔍 Ansehen' : '👁 Details'}
                       </button>
-                      <button onClick={() => setEditing({ ...item })} style={{ padding:'5px 8px', borderRadius:'7px', background: C.s3, border:'none', color: C.t2, fontSize:'11px', cursor:'pointer' }}>✏</button>
-                      <button onClick={() => deleteItem(item.id)} style={{ padding:'5px 8px', borderRadius:'7px', background:'rgba(255,69,58,0.1)', border:'1px solid rgba(255,69,58,0.2)', color: C.red, fontSize:'11px', cursor:'pointer' }}>🗑</button>
+                      <button
+                        onClick={() => setEditing({ ...item })}
+                        className="px-2 py-1 rounded-lg bg-muted text-muted-foreground text-[11px] hover:text-foreground transition-colors"
+                      >✏</button>
+                      <button
+                        onClick={() => deleteItem(item.id)}
+                        className="px-2 py-1 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-[11px] hover:bg-red-500/20 transition-colors"
+                      >🗑</button>
                     </div>
-                  </div>
-                </div>
+                  </CardContent>
+                </Card>
               );
             })}
           </div>
@@ -544,90 +453,60 @@ export default function MediaPage() {
 
         {/* Stats footer */}
         {items.length > 0 && (
-          <div style={{ marginTop:'24px', padding:'12px 18px', borderRadius:'12px', background: C.s1, border:`1px solid ${C.sep}`, display:'flex', gap:'20px', flexWrap:'wrap' }}>
-            <span style={{ fontSize:'12px', color: C.t3 }}><span style={{ color: C.green, fontWeight:700 }}>{freeItems.length}</span> Gratis-Teaser</span>
-            <span style={{ fontSize:'12px', color: C.t3 }}><span style={{ color: C.blue, fontWeight:700 }}>{items.filter(i => i.tag !== 'Free').length}</span> andere Dateien</span>
-            <span style={{ fontSize:'12px', color: C.t3 }}>Wiederholungsschutz: <span style={{ color: settings.no_repeat ? C.green : C.orange, fontWeight:600 }}>{settings.no_repeat ? 'An' : 'Aus'}</span></span>
-          </div>
+          <Card>
+            <CardContent className="py-3 px-4">
+              <div className="flex gap-5 flex-wrap text-xs text-muted-foreground">
+                <span><span className="text-green-400 font-bold">{freeItems.length}</span> Gratis-Teaser</span>
+                <span><span className="text-primary font-bold">{items.filter(i => i.tag !== 'Free').length}</span> andere Dateien</span>
+                <span>Wiederholungsschutz: <span className={cn("font-semibold", settings.no_repeat ? "text-green-400" : "text-orange-400")}>{settings.no_repeat ? 'An' : 'Aus'}</span></span>
+              </div>
+            </CardContent>
+          </Card>
         )}
       </div>
 
-      {/* ── Preview Modal — fullscreen ─────────────────────────────────────────── */}
+      {/* Preview Modal */}
       {previewing && (() => {
         const isVid = previewing.type.startsWith('video');
         const isImg = previewing.type.startsWith('image');
-        const col   = catColor(previewing.tag, categories);
-        const apiBase2 = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace('/api/v1', '');
-        const previewSrc = previewing.fileUrl ? `${apiBase2}${previewing.fileUrl}` : previewing.dataUrl;
+        const previewSrc = getMediaSrc(previewing);
+        const cls = catClasses(previewing.tag, categories);
         return (
-          <div
-            style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.95)', zIndex:1200, display:'flex', flexDirection:'column' }}
-            onKeyDown={e => e.key === 'Escape' && setPreviewing(null)}
-          >
-            {/* Top bar */}
-            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'12px 18px', flexShrink:0, borderBottom:`1px solid rgba(255,255,255,0.08)` }}>
+          <div className="fixed inset-0 bg-black/95 z-[1200] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 flex-shrink-0">
               <div>
-                <span style={{ fontWeight:700, fontSize:'15px', color:C.t1 }}>{previewing.name}</span>
-                <span style={{ fontSize:'11px', color:C.t3, marginLeft:'10px' }}>{fmt(previewing.size)} · {isVid ? 'Video' : isImg ? 'Bild' : previewing.type}</span>
+                <span className="font-bold text-sm">{previewing.name}</span>
+                <span className="text-[11px] text-muted-foreground ml-3">{fmt(previewing.size)}</span>
               </div>
-              <div style={{ display:'flex', gap:'8px' }}>
-                <button
-                  onClick={() => { setPreviewing(null); setEditing({ ...previewing }); }}
-                  style={{ padding:'7px 14px', borderRadius:'10px', background:C.s2, border:`1px solid ${C.sep}`, color:C.t2, fontSize:'12px', fontWeight:600, cursor:'pointer' }}
-                >✏ Bearbeiten</button>
-                <button
-                  onClick={() => setPreviewing(null)}
-                  style={{ width:'34px', height:'34px', borderRadius:'10px', background:C.s2, border:`1px solid ${C.sep}`, color:C.t2, fontSize:'18px', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}
-                >✕</button>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => { setPreviewing(null); setEditing({ ...previewing }); }}>✏ Bearbeiten</Button>
+                <Button variant="ghost" size="icon" onClick={() => setPreviewing(null)}><X size={16} /></Button>
               </div>
             </div>
-
-            {/* Media area — takes all remaining height */}
-            <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden', position:'relative', minHeight:0 }}
-              onClick={e => { if (e.target === e.currentTarget) setPreviewing(null); }}
-            >
+            <div className="flex-1 flex items-center justify-center overflow-hidden min-h-0"
+              onClick={e => { if (e.target === e.currentTarget) setPreviewing(null); }}>
               {isImg && previewSrc ? (
-                <img
-                  src={previewSrc}
-                  alt={previewing.name}
-                  style={{ maxWidth:'100%', maxHeight:'100%', objectFit:'contain', userSelect:'none' }}
-                />
+                <img src={previewSrc} alt={previewing.name} className="max-w-full max-h-full object-contain select-none" />
               ) : isVid && previewSrc ? (
-                <video
-                  src={previewSrc}
-                  controls
-                  autoPlay
-                  style={{ maxWidth:'100%', maxHeight:'100%', outline:'none' }}
-                />
+                <video src={previewSrc} controls autoPlay className="max-w-full max-h-full outline-none" />
               ) : (
-                <div style={{ textAlign:'center' }}>
-                  <div style={{ fontSize:'72px', marginBottom:'16px' }}>{iconFor(previewing.type)}</div>
-                  <div style={{ fontSize:'16px', color:C.t2 }}>{previewing.name}</div>
-                  <div style={{ fontSize:'12px', color:C.t3, marginTop:'6px' }}>{fmt(previewing.size)}</div>
+                <div className="text-center">
+                  <div className="text-7xl mb-4">{iconFor(previewing.type)}</div>
+                  <div className="text-base text-muted-foreground">{previewing.name}</div>
+                  <div className="text-xs text-muted-foreground mt-1">{fmt(previewing.size)}</div>
                 </div>
               )}
             </div>
-
-            {/* Bottom info strip */}
-            <div style={{ flexShrink:0, padding:'12px 18px', borderTop:`1px solid rgba(255,255,255,0.08)`, display:'flex', gap:'12px', alignItems:'center', flexWrap:'wrap', background:'rgba(0,0,0,0.5)' }}>
-              <span style={{ fontSize:'12px', padding:'3px 10px', borderRadius:'20px', background:`${col}20`, color:col, border:`1px solid ${col}40`, fontWeight:600 }}>
+            <div className="flex-shrink-0 px-4 py-3 border-t border-white/10 bg-black/50 flex gap-3 items-center flex-wrap">
+              <span className={cn("text-xs font-semibold px-2.5 py-1 rounded-full border", cls.bg, cls.border, cls.text)}>
                 {previewing.tag === 'Free' ? '🎁 ' : ''}{previewing.tag}
               </span>
               {previewing.price && previewing.tag !== 'Free' && (
-                <span style={{ fontSize:'12px', fontWeight:700, color:C.orange }}>💰 {previewing.price.includes('€') ? previewing.price : `${previewing.price} €`}</span>
-              )}
-              {previewing.tag === 'Free' && (
-                <span style={{ fontSize:'11px', color:C.green }}>Kein Kauflink — frei gesendet</span>
-              )}
-              {previewing.description && (
-                <span style={{ fontSize:'12px', color:C.t2, flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{previewing.description}</span>
-              )}
-              {previewing.message_to_user && (
-                <span style={{ fontSize:'12px', color:C.teal }}>💬 {previewing.message_to_user}</span>
+                <span className="text-xs font-bold text-orange-400">💰 {previewing.price.includes('€') ? previewing.price : `${previewing.price} €`}</span>
               )}
               {previewing.payment_link && previewing.tag !== 'Free' && (
                 <a href={previewing.payment_link} target="_blank" rel="noreferrer"
-                  style={{ fontSize:'12px', color:C.blue, fontWeight:600, textDecoration:'none', marginLeft:'auto' }}>
+                  className="ml-auto text-xs text-primary font-semibold hover:underline">
                   🔗 Kaufen →
                 </a>
               )}
@@ -636,29 +515,30 @@ export default function MediaPage() {
         );
       })()}
 
-      {/* ── Edit Modal ─────────────────────────────────────────────────────────── */}
+      {/* Edit Modal */}
       {editing && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', zIndex:1100, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}
-          onClick={e => { if (e.target === e.currentTarget) setEditing(null); }}>
-          <div style={{ background: C.s1, borderRadius:'20px', padding:'24px', width:'100%', maxWidth:'500px', border:`1px solid ${C.sep}`, maxHeight:'92vh', overflowY:'auto' }}>
-            <h3 style={{ margin:'0 0 18px', fontSize:'17px', fontWeight:700 }}>
+        <div
+          className="fixed inset-0 bg-black/75 z-[1100] flex items-center justify-center p-5"
+          onClick={e => { if (e.target === e.currentTarget) setEditing(null); }}
+        >
+          <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-md max-h-[92vh] overflow-y-auto">
+            <h3 className="font-bold text-base mb-4">
               {items.some(i => i.id === editing.id) ? 'Datei bearbeiten' : 'Neue Datei konfigurieren'}
             </h3>
 
             {/* Inline preview */}
             {(() => {
-              const base3 = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace('/api/v1', '');
-              const editSrc = editing.fileUrl ? `${base3}${editing.fileUrl}` : editing.dataUrl;
+              const editSrc = getMediaSrc(editing);
               return (
                 <>
                   {editSrc && editing.type.startsWith('image') && (
-                    <div style={{ marginBottom:'16px', borderRadius:'12px', overflow:'hidden', height:'150px', background: C.bg }}>
-                      <img src={editSrc} alt={editing.name} style={{ width:'100%', height:'100%', objectFit:'cover' }} />
+                    <div className="mb-4 rounded-xl overflow-hidden h-36 bg-muted">
+                      <img src={editSrc} alt={editing.name} className="w-full h-full object-cover" />
                     </div>
                   )}
                   {editSrc && editing.type.startsWith('video') && (
-                    <div style={{ marginBottom:'16px', borderRadius:'12px', overflow:'hidden', height:'150px', background: C.bg }}>
-                      <video src={editSrc} style={{ width:'100%', height:'100%', objectFit:'cover' }} muted />
+                    <div className="mb-4 rounded-xl overflow-hidden h-36 bg-muted">
+                      <video src={editSrc} className="w-full h-full object-cover" muted />
                     </div>
                   )}
                 </>
@@ -666,45 +546,44 @@ export default function MediaPage() {
             })()}
 
             {/* Category */}
-            <label style={{ display:'block', marginBottom:'13px' }}>
-              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Kategorie</div>
+            <label className="block mb-3">
+              <div className="text-xs text-muted-foreground mb-1">Kategorie</div>
               <select
                 value={editing.tag}
-                onChange={e => setEditing({ ...editing, tag: e.target.value, action: e.target.value === 'Free' ? 'send_teaser' : (editing.action === 'send_teaser' ? 'send_file' : editing.action) })}
-                style={{ width:'100%', background: C.s2, border:`1px solid ${editing.tag === 'Free' ? 'rgba(48,209,88,0.4)' : C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none' }}
+                onChange={e => setEditing({ ...editing, tag: e.target.value })}
+                className={cn(
+                  "w-full bg-muted border rounded-xl px-3 py-2 text-sm outline-none cursor-pointer",
+                  editing.tag === 'Free' ? "border-green-500/40" : "border-border"
+                )}
               >
                 {allTags.map(t => <option key={t} value={t}>{t === 'Free' ? '🎁 Free (Gratis-Teaser)' : t}</option>)}
               </select>
               {editing.tag === 'Free' && (
-                <div style={{ fontSize:'11px', color: C.green, marginTop:'4px' }}>
-                  🎁 Wird als Teaser gesendet — kein Kauflink, keine Kosten für den Fan
-                </div>
+                <div className="text-[11px] text-green-400 mt-1">🎁 Wird als Teaser gesendet — kein Kauflink</div>
               )}
             </label>
 
-            {/* Price + payment link (hidden for Free) */}
+            {/* Price + link (not for Free) */}
             {editing.tag !== 'Free' && (
               <>
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'13px' }}>
+                <div className="grid grid-cols-2 gap-2.5 mb-3">
                   <label>
-                    <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Preis</div>
+                    <div className="text-xs text-muted-foreground mb-1">Preis</div>
                     <input value={editing.price} onChange={e => setEditing({ ...editing, price: e.target.value })}
                       placeholder="z.B. 29.99"
-                      style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }} />
+                      className="w-full bg-muted border border-border rounded-xl px-3 py-2 text-sm outline-none" />
                   </label>
                   <label>
-                    <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Kauflink</div>
+                    <div className="text-xs text-muted-foreground mb-1">Kauflink</div>
                     <input value={editing.payment_link} onChange={e => setEditing({ ...editing, payment_link: e.target.value })}
                       placeholder="https://…"
-                      style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }} />
+                      className="w-full bg-muted border border-border rounded-xl px-3 py-2 text-sm outline-none" />
                   </label>
                 </div>
-
-                {/* Action */}
-                <label style={{ display:'block', marginBottom:'13px' }}>
-                  <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Bot-Aktion</div>
+                <label className="block mb-3">
+                  <div className="text-xs text-muted-foreground mb-1">Bot-Aktion</div>
                   <select value={editing.action} onChange={e => setEditing({ ...editing, action: e.target.value })}
-                    style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none' }}>
+                    className="w-full bg-muted border border-border rounded-xl px-3 py-2 text-sm outline-none cursor-pointer">
                     {ACTIONS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
                   </select>
                 </label>
@@ -712,35 +591,22 @@ export default function MediaPage() {
             )}
 
             {/* Keywords */}
-            <label style={{ display:'block', marginBottom:'18px' }}>
-              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Keywords <span style={{ fontWeight:400 }}>(kommagetrennt, optional)</span></div>
+            <label className="block mb-5">
+              <div className="text-xs text-muted-foreground mb-1">Keywords <span className="font-normal">(kommagetrennt, optional)</span></div>
               <input value={editing.keywords} onChange={e => setEditing({ ...editing, keywords: e.target.value })}
                 placeholder="z.B. foto, content, zeig mir"
-                style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }} />
-              <div style={{ fontSize:'11px', color: C.t3, marginTop:'3px' }}>
-                {editing.tag === 'Free' ? 'Teaser werden automatisch gesendet — Keywords optional' : 'KI sendet diese Datei wenn Wörter im Chat erscheinen'}
-              </div>
+                className="w-full bg-muted border border-border rounded-xl px-3 py-2 text-sm outline-none" />
             </label>
 
-            <div style={{ display:'flex', gap:'10px' }}>
-              <button onClick={() => setEditing(null)} style={{ flex:1, padding:'11px', borderRadius:'12px', background: C.s3, border:'none', color: C.t2, fontSize:'14px', cursor:'pointer' }}>
-                Abbrechen
-              </button>
-              <button onClick={confirmEdit} disabled={saving} style={{
-                flex:2, padding:'11px', borderRadius:'12px', border:'none', color:'#fff',
-                background: editing.tag === 'Free' ? C.green : C.blue,
-                fontSize:'14px', fontWeight:600, cursor:'pointer', opacity:saving?0.6:1,
-              }}>
+            <div className="flex gap-2.5">
+              <Button variant="outline" className="flex-1" onClick={() => setEditing(null)}>Abbrechen</Button>
+              <Button className="flex-[2]" onClick={confirmEdit} disabled={saving}>
                 {saving ? 'Speichern…' : 'Datei speichern'}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
       )}
-
-      <style>{`
-        @media(max-width:640px) { div[style*="minmax(210px"]{grid-template-columns:repeat(2,1fr)!important} }
-      `}</style>
     </DashboardLayout>
   );
 }

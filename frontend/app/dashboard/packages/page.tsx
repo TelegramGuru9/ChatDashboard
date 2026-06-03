@@ -1,61 +1,27 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { useCreator } from '@/contexts/CreatorContext';
 import Script from 'next/script';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/utils';
+import { X } from 'lucide-react';
 
-const C = {
-  bg:'#0a0a0a', s1:'#111113', s2:'#1c1c1e', s3:'#2c2c2e', s4:'#3a3a3c',
-  sep:'rgba(255,255,255,0.07)', t1:'#fff', t2:'rgba(235,235,245,0.65)', t3:'rgba(235,235,245,0.35)',
-  blue:'#0a84ff', green:'#30d158', red:'#ff453a', orange:'#ff9f0a', purple:'#bf5af2', teal:'#5ac8fa',
-};
-
-// Matches MediaItem from media page
 interface MediaItem {
-  id: string;
-  name: string;
-  type: string;
-  size: number;
-  dataUrl?: string;
-  tag: string;
-  description: string;
-  price: string;
-  payment_link: string;
-  message_to_user: string;
-  addedAt: string;
+  id: string; name: string; type: string; size: number; dataUrl?: string; fileUrl?: string;
+  tag: string; description: string; price: string; payment_link: string; message_to_user: string; addedAt: string;
 }
-
-interface PackageFile {
-  media_id: string;
-  name: string;
-  type: string;
-  duration?: string; // e.g. "2:34"
-}
-
-interface DynamicRules {
-  videos: number;
-  images: number;
-}
-
+interface PackageFile { media_id: string; name: string; type: string; duration?: string; }
+interface DynamicRules { videos: number; images: number; }
 interface Package {
-  id: string;
-  name: string;
-  tagline: string;
-  price: string;
-  currency: string;
-  payment_link: string;
-  stripe_button_code: string;        // full <stripe-buy-button> embed code (stored for reference)
-  banner_image_id: string;          // media item ID to use as banner
-  media_files: PackageFile[];       // included files (used when dynamic=false)
-  dynamic: boolean;                 // if true, files are picked by keyword at send time
-  dynamic_rules: DynamicRules;      // how many videos/images to pick for dynamic packages
-  description: string;              // internal notes / admin summary
-  package_preview_description: string; // what the buyer will see — used by bot to answer questions
-  package_text: string;             // full pitch text for the bot
-  keywords: string;
-  send_after_messages: number;
-  active: boolean;
+  id: string; name: string; tagline: string; price: string; currency: string;
+  payment_link: string; stripe_button_code: string; banner_image_id: string;
+  media_files: PackageFile[]; dynamic: boolean; dynamic_rules: DynamicRules;
+  description: string; package_preview_description: string; package_text: string;
+  keywords: string; send_after_messages: number; active: boolean;
 }
 
 const BLANK: Package = {
@@ -67,8 +33,8 @@ const BLANK: Package = {
 };
 
 function fmt(bytes: number) {
-  if (bytes > 1e6) return `${(bytes / 1e6).toFixed(1)} MB`;
-  if (bytes > 1e3) return `${(bytes / 1e3).toFixed(0)} KB`;
+  if (bytes > 1e6) return `${(bytes/1e6).toFixed(1)} MB`;
+  if (bytes > 1e3) return `${(bytes/1e3).toFixed(0)} KB`;
   return `${bytes} B`;
 }
 function iconFor(type: string) {
@@ -77,6 +43,10 @@ function iconFor(type: string) {
   if (type.includes('pdf'))    return '📄';
   if (type.startsWith('audio')) return '🎵';
   return '📎';
+}
+function getMediaSrc(item: MediaItem) {
+  if (item.fileUrl) return `${(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace('/api/v1','').replace('/api/v1','')}${item.fileUrl}`;
+  return item.dataUrl;
 }
 
 const getApi = () => {
@@ -97,25 +67,20 @@ export default function PackagesPage() {
   const api = getApi();
   const toast = (msg: string) => { setStatus(msg); setTimeout(() => setStatus(''), 2800); };
 
-  // ── Load ──────────────────────────────────────────────────────────────────
   const load = useCallback(async () => {
     try {
       const [pkgRes, libRes] = await Promise.all([
         fetch(withCreator(`${api}/config/packages`)),
         fetch(withCreator(`${api}/config/media_library`)),
       ]);
-      const pkgData  = await pkgRes.json();
-      const libData  = await libRes.json();
+      const pkgData = await pkgRes.json();
+      const libData = await libRes.json();
       const val = pkgData.value;
-      // Migrate old package format to new format
       const rawPkgs: Package[] = (Array.isArray(val) ? val : (Array.isArray(val?.packages) ? val.packages : [])).map((p: any) => ({
         ...BLANK, ...p,
-        media_files: p.media_files || [],
-        banner_image_id: p.banner_image_id || '',
-        payment_link: p.payment_link || '',
-        package_text: p.package_text || p.welcome_message || '',
-        currency: p.currency || '€',
-        dynamic: p.dynamic ?? false,
+        media_files: p.media_files || [], banner_image_id: p.banner_image_id || '',
+        payment_link: p.payment_link || '', package_text: p.package_text || p.welcome_message || '',
+        currency: p.currency || '€', dynamic: p.dynamic ?? false,
         dynamic_rules: p.dynamic_rules || { videos: 2, images: 8 },
         package_preview_description: p.package_preview_description || '',
         stripe_button_code: p.stripe_button_code || '',
@@ -130,503 +95,367 @@ export default function PackagesPage() {
     setSaving(true);
     try {
       const res = await fetch(withCreator(`${api}/config/packages`), {
-        method:'POST', headers:{'Content-Type':'application/json'},
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updated),
       });
       if (!res.ok) throw new Error(`${res.status}`);
-      setPackages(updated);
-      toast('✓ Gespeichert');
+      setPackages(updated); toast('✓ Gespeichert');
     } catch { toast('⚠ Fehler beim Speichern'); }
     finally { setSaving(false); }
   };
 
   useEffect(() => { load(); }, [load]);
 
-  const openNew  = () => setEditing({ ...BLANK, id:`pkg-${Date.now()}` });
-  const openEdit = (p: Package) => setEditing({ ...BLANK, ...p });
-
   const confirmEdit = () => {
     if (!editing || !editing.name.trim()) return;
     const updated = packages.some(p => p.id === editing.id)
       ? packages.map(p => p.id === editing.id ? editing : p)
       : [...packages, editing];
-    persist(updated);
-    setEditing(null);
+    persist(updated); setEditing(null);
   };
-
-  const deletePackage = (id: string) => {
-    if (!confirm('Paket löschen?')) return;
-    persist(packages.filter(p => p.id !== id));
-  };
-
-  const toggleActive = (id: string) => persist(packages.map(p => p.id === id ? { ...p, active: !p.active } : p));
-
-  // ── Media picker helpers ──────────────────────────────────────────────────
-  const bannerItem   = editing ? mediaLib.find(m => m.id === editing.banner_image_id) : null;
-  const pickableMeds = mediaLib.filter(m => m.type.startsWith('image') || m.type.startsWith('video'));
 
   const addFileToPackage = (item: MediaItem) => {
-    if (!editing) return;
-    if (editing.media_files.some(f => f.media_id === item.id)) return; // already added
-    const pf: PackageFile = { media_id: item.id, name: item.name, type: item.type };
-    setEditing({ ...editing, media_files: [...editing.media_files, pf] });
+    if (!editing || editing.media_files.some(f => f.media_id === item.id)) return;
+    setEditing({ ...editing, media_files: [...editing.media_files, { media_id: item.id, name: item.name, type: item.type }] });
   };
 
-  const removeFile = (mediaId: string) => {
-    if (!editing) return;
-    setEditing({ ...editing, media_files: editing.media_files.filter(f => f.media_id !== mediaId) });
-  };
-
-  // Generate package pitch text automatically from package data
   const generatePitchText = (pkg: Package) => {
-    const lines: string[] = [];
-    lines.push(`📦 *${pkg.name}*${pkg.tagline ? ` — ${pkg.tagline}` : ''}`);
+    const lines = [`📦 *${pkg.name}*${pkg.tagline ? ` — ${pkg.tagline}` : ''}`];
     if (pkg.package_preview_description) lines.push(`\n${pkg.package_preview_description}`);
     else if (pkg.description) lines.push(`\n${pkg.description}`);
     if (pkg.media_files.length > 0) {
       lines.push('\n📂 *Inhalt:*');
-      pkg.media_files.forEach(f => {
-        const typeLabel = f.type.startsWith('video') ? '🎬 Video' : f.type.startsWith('image') ? '🖼️ Bild' : '📄 Datei';
-        lines.push(`• ${typeLabel}: ${f.name}${f.duration ? ` (${f.duration})` : ''}`);
-      });
+      pkg.media_files.forEach(f => lines.push(`• ${f.type.startsWith('video') ? '🎬' : '🖼️'} ${f.name}${f.duration ? ` (${f.duration})` : ''}`));
     }
     if (pkg.price) lines.push(`\n💰 Preis: *${pkg.price} ${pkg.currency}*`);
     if (pkg.payment_link) lines.push(`\n🔗 Kaufen: ${pkg.payment_link}`);
     return lines.join('\n');
   };
 
+  const bannerItem   = editing ? mediaLib.find(m => m.id === editing.banner_image_id) : null;
+  const pickableMeds = mediaLib.filter(m => m.type.startsWith('image') || m.type.startsWith('video'));
+
   return (
     <DashboardLayout>
-      <div style={{ padding:'28px 24px', maxWidth:'960px', color: C.t1 }}>
+      <div className="p-6 max-w-4xl space-y-5">
+
         {/* Header */}
-        <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom:'24px', flexWrap:'wrap', gap:'12px' }}>
+        <div className="flex items-start justify-between flex-wrap gap-3">
           <div>
-            <h1 style={{ fontSize:'26px', fontWeight:700, margin:0, letterSpacing:'-0.03em' }}>Pakete</h1>
-            <p style={{ color: C.t2, fontSize:'14px', margin:'4px 0 0' }}>Angebote die der Bot automatisch pitcht — inkl. Vorschau, Dateien & Kauflink</p>
+            <h1 className="text-2xl font-bold tracking-tight">Pakete</h1>
+            <p className="text-sm text-muted-foreground mt-1">Angebote die der Bot automatisch pitcht</p>
           </div>
-          <button onClick={openNew} style={{ padding:'10px 18px', borderRadius:'12px', background: C.blue, border:'none', color:'#fff', fontSize:'13px', fontWeight:600, cursor:'pointer' }}>
-            + Neues Paket
-          </button>
+          <Button onClick={() => setEditing({ ...BLANK, id:`pkg-${Date.now()}` })}>+ Neues Paket</Button>
         </div>
 
         {status && (
-          <div style={{ padding:'8px 14px', borderRadius:'10px', marginBottom:'14px', fontSize:'13px',
-            background: status.startsWith('✓') ? 'rgba(48,209,88,0.1)' : 'rgba(255,69,58,0.1)',
-            color: status.startsWith('✓') ? C.green : C.red,
-            border:`1px solid ${status.startsWith('✓') ? 'rgba(48,209,88,0.2)' : 'rgba(255,69,58,0.2)'}`,
-          }}>{status}</div>
+          <div className={cn("px-3.5 py-2.5 rounded-xl text-sm border", status.startsWith('✓') ? "bg-green-500/10 border-green-500/20 text-green-400" : "bg-red-500/10 border-red-500/20 text-red-400")}>
+            {status}
+          </div>
         )}
 
         {loading ? (
-          <div style={{ textAlign:'center', padding:'80px', color: C.t3 }}>Laden…</div>
+          <div className="text-center py-20 text-muted-foreground">Laden…</div>
         ) : packages.length === 0 ? (
-          <div style={{ textAlign:'center', padding:'80px' }}>
-            <div style={{ fontSize:'48px', marginBottom:'14px' }}>📦</div>
-            <div style={{ fontSize:'15px', fontWeight:600, color: C.t2, marginBottom:'8px' }}>Noch keine Pakete</div>
-            <div style={{ fontSize:'13px', color: C.t3, marginBottom:'20px' }}>
-              Erstelle dein erstes Paket — der Bot pitcht es automatisch sobald ein Lead in die Monetization-Phase wechselt.
-            </div>
-            <button onClick={openNew} style={{ padding:'11px 24px', borderRadius:'12px', background: C.blue, border:'none', color:'#fff', fontSize:'14px', fontWeight:600, cursor:'pointer' }}>
-              + Paket erstellen
-            </button>
+          <div className="text-center py-20">
+            <div className="text-5xl mb-3">📦</div>
+            <div className="font-semibold mb-1">Noch keine Pakete</div>
+            <div className="text-sm text-muted-foreground mb-5">Der Bot pitcht Pakete automatisch sobald ein Lead in die Monetization-Phase wechselt.</div>
+            <Button onClick={() => setEditing({ ...BLANK, id:`pkg-${Date.now()}` })}>+ Paket erstellen</Button>
           </div>
         ) : (
-          <div style={{ display:'flex', flexDirection:'column', gap:'14px' }}>
+          <div className="flex flex-col gap-3">
             {packages.map(pkg => {
               const banner = mediaLib.find(m => m.id === pkg.banner_image_id);
+              const bannerSrc = banner ? getMediaSrc(banner) : null;
               return (
-                <div key={pkg.id} style={{
-                  background: C.s1, borderRadius:'18px', border:`1px solid ${pkg.active ? C.sep : 'rgba(255,255,255,0.04)'}`,
-                  overflow:'hidden', opacity: pkg.active ? 1 : 0.55,
-                }}>
-                  <div style={{ display:'flex', gap:0 }}>
-                    {/* Banner preview */}
-                    <div style={{ width:'140px', flexShrink:0, background: C.s2, minHeight:'120px', display:'flex', alignItems:'center', justifyContent:'center', position:'relative' }}>
-                      {banner?.dataUrl && banner.type.startsWith('image') ? (
-                        <img src={banner.dataUrl} alt="banner" style={{ width:'100%', height:'100%', objectFit:'cover', position:'absolute', inset:0 }} />
-                      ) : banner?.dataUrl && banner.type.startsWith('video') ? (
-                        <video src={banner.dataUrl} muted style={{ width:'100%', height:'100%', objectFit:'cover', position:'absolute', inset:0 }} />
+                <Card key={pkg.id} className={cn("overflow-hidden", !pkg.active && "opacity-55")}>
+                  <div className="flex">
+                    {/* Banner */}
+                    <div className="w-32 flex-shrink-0 bg-muted flex items-center justify-center min-h-[100px] relative overflow-hidden">
+                      {bannerSrc && banner?.type.startsWith('image') ? (
+                        <img src={bannerSrc} alt="banner" className="absolute inset-0 w-full h-full object-cover" />
+                      ) : bannerSrc && banner?.type.startsWith('video') ? (
+                        <video src={bannerSrc} muted className="absolute inset-0 w-full h-full object-cover" />
                       ) : (
-                        <span style={{ fontSize:'36px' }}>📦</span>
+                        <span className="text-4xl">📦</span>
                       )}
                     </div>
-
                     {/* Content */}
-                    <div style={{ flex:1, padding:'16px 18px' }}>
-                      <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:'10px' }}>
-                        <div>
-                          <div style={{ display:'flex', alignItems:'center', gap:'8px', flexWrap:'wrap', marginBottom:'4px' }}>
-                            <span style={{ fontWeight:700, fontSize:'16px' }}>{pkg.name}</span>
-                            {pkg.tagline && <span style={{ fontSize:'12px', color: C.t3 }}>{pkg.tagline}</span>}
-                            <span style={{ fontSize:'10px', padding:'2px 8px', borderRadius:'20px',
-                              background: pkg.active ? 'rgba(48,209,88,0.12)' : 'rgba(255,255,255,0.06)',
-                              color: pkg.active ? C.green : C.t3, border:`1px solid ${pkg.active ? 'rgba(48,209,88,0.25)' : C.sep}`,
-                            }}>
+                    <CardContent className="flex-1 py-3 px-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                            <span className="font-bold text-base">{pkg.name}</span>
+                            {pkg.tagline && <span className="text-xs text-muted-foreground">{pkg.tagline}</span>}
+                            <Badge variant="outline" className={cn("text-xs", pkg.active ? "text-green-400 border-green-400/30 bg-green-400/10" : "text-muted-foreground")}>
                               {pkg.active ? 'Aktiv' : 'Pausiert'}
-                            </span>
+                            </Badge>
                           </div>
-                          {pkg.description && <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px', fontStyle:'italic' }}>{pkg.description}</div>}
                           {pkg.package_preview_description && (
-                            <div style={{ fontSize:'13px', color: C.t2, marginBottom:'8px', padding:'6px 10px', borderRadius:'8px', background:`${C.teal}0A`, borderLeft:`2px solid ${C.teal}60` }}>
-                              <span style={{ fontSize:'10px', color: C.teal, fontWeight:700, marginRight:'6px' }}>👁 WAS DER USER SIEHT</span>
+                            <div className="text-sm text-muted-foreground mb-2 px-2.5 py-1.5 rounded-lg bg-cyan-500/5 border-l-2 border-cyan-500/40">
+                              <span className="text-[10px] text-cyan-400 font-bold mr-1.5">👁 WAS DER USER SIEHT</span>
                               {pkg.package_preview_description}
                             </div>
                           )}
-                          {/* File list */}
                           {pkg.media_files.length > 0 && (
-                            <div style={{ display:'flex', gap:'5px', flexWrap:'wrap', marginBottom:'8px' }}>
+                            <div className="flex gap-1.5 flex-wrap mb-2">
                               {pkg.media_files.map(f => (
-                                <span key={f.media_id} style={{ fontSize:'10px', padding:'2px 7px', borderRadius:'6px', background: C.s3, color: C.t2 }}>
+                                <span key={f.media_id} className="text-[10px] px-2 py-0.5 rounded bg-muted text-muted-foreground">
                                   {iconFor(f.type)} {f.name}{f.duration ? ` · ${f.duration}` : ''}
                                 </span>
                               ))}
                             </div>
                           )}
-                          <div style={{ display:'flex', gap:'14px', fontSize:'12px', color: C.t3, flexWrap:'wrap' }}>
-                            {pkg.price && <span style={{ color: C.orange, fontWeight:700 }}>💰 {pkg.price} {pkg.currency}</span>}
+                          <div className="flex gap-3 text-xs text-muted-foreground flex-wrap">
+                            {pkg.price && <span className="text-orange-400 font-bold">💰 {pkg.price} {pkg.currency}</span>}
                             {pkg.keywords && <span>🔑 {pkg.keywords}</span>}
-                            {pkg.payment_link && <span style={{ color: C.blue }}>🔗 Kauflink</span>}
-                            {pkg.dynamic
-                              ? <span style={{ color: C.teal }}>🎯 Dynamisch — {pkg.dynamic_rules?.videos ?? 0}V + {pkg.dynamic_rules?.images ?? 0}B</span>
-                              : pkg.media_files.length > 0 && <span>📂 {pkg.media_files.length} Datei{pkg.media_files.length!==1?'en':''}</span>
-                            }
+                            {pkg.payment_link && <span className="text-primary">🔗 Kauflink</span>}
+                            {pkg.dynamic ? <span className="text-cyan-400">🎯 Dynamisch — {pkg.dynamic_rules?.videos}V + {pkg.dynamic_rules?.images}B</span>
+                              : pkg.media_files.length > 0 && <span>📂 {pkg.media_files.length} Datei{pkg.media_files.length!==1?'en':''}</span>}
                           </div>
                         </div>
-                        <div style={{ display:'flex', gap:'6px', flexShrink:0 }}>
-                          <button onClick={() => toggleActive(pkg.id)} style={{ padding:'6px 10px', borderRadius:'9px', background: C.s3, border:'none', color: C.t2, fontSize:'11px', cursor:'pointer' }}>
+                        <div className="flex gap-1.5 flex-shrink-0">
+                          <Button variant="outline" size="sm" onClick={() => persist(packages.map(p => p.id === pkg.id ? { ...p, active: !p.active } : p))}>
                             {pkg.active ? 'Pause' : 'Aktivieren'}
-                          </button>
-                          <button onClick={() => openEdit(pkg)} style={{ padding:'6px 10px', borderRadius:'9px', background: C.s3, border:'none', color: C.t2, fontSize:'11px', cursor:'pointer' }}>Bearbeiten</button>
-                          <button onClick={() => deletePackage(pkg.id)} style={{ padding:'6px 9px', borderRadius:'9px', background:'rgba(255,69,58,0.1)', border:'1px solid rgba(255,69,58,0.2)', color: C.red, fontSize:'11px', cursor:'pointer' }}>🗑</button>
+                          </Button>
+                          <Button variant="outline" size="sm" onClick={() => setEditing({ ...BLANK, ...pkg })}>Bearbeiten</Button>
+                          <Button variant="destructive" size="sm" onClick={() => { if(confirm('Paket löschen?')) persist(packages.filter(p => p.id !== pkg.id)); }}>🗑</Button>
                         </div>
                       </div>
-                    </div>
+                    </CardContent>
                   </div>
-                </div>
+                </Card>
               );
             })}
           </div>
         )}
       </div>
 
-      {/* ── Edit Modal ─────────────────────────────────────────────────────────── */}
+      {/* Edit Modal */}
       {editing && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.8)', zIndex:1000, display:'flex', alignItems:'center', justifyContent:'center', padding:'16px', overflowY:'auto' }}
+        <div className="fixed inset-0 bg-black/80 z-[1000] flex items-center justify-center p-4 overflow-y-auto"
           onClick={e => { if (e.target === e.currentTarget) setEditing(null); }}>
-          <div style={{ background: C.s1, borderRadius:'20px', padding:'24px', width:'100%', maxWidth:'560px', border:`1px solid ${C.sep}`, maxHeight:'92vh', overflowY:'auto' }}>
-            <h3 style={{ margin:'0 0 20px', fontSize:'17px', fontWeight:700 }}>
+          <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-lg max-h-[92vh] overflow-y-auto my-auto">
+            <h3 className="font-bold text-base mb-5">
               {packages.some(p => p.id === editing.id) ? 'Paket bearbeiten' : 'Neues Paket'}
             </h3>
 
-            {/* Banner image */}
-            <div style={{ marginBottom:'16px' }}>
-              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'6px' }}>Vorschau-Banner (wird mit dem Paket gesendet)</div>
-              <div style={{ display:'flex', gap:'10px', alignItems:'center' }}>
-                {/* Banner preview */}
-                <div style={{ width:'80px', height:'60px', borderRadius:'10px', background: C.s2, overflow:'hidden', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center' }}>
-                  {bannerItem?.dataUrl && bannerItem.type.startsWith('image') ? (
-                    <img src={bannerItem.dataUrl} alt="banner" style={{ width:'100%', height:'100%', objectFit:'cover' }} />
-                  ) : bannerItem?.dataUrl && bannerItem.type.startsWith('video') ? (
-                    <video src={bannerItem.dataUrl} muted style={{ width:'100%', height:'100%', objectFit:'cover' }} />
-                  ) : (
-                    <span style={{ fontSize:'24px' }}>📦</span>
-                  )}
+            {/* Banner */}
+            <div className="mb-4">
+              <div className="text-xs text-muted-foreground mb-1.5">Vorschau-Banner</div>
+              <div className="flex gap-2.5 items-center">
+                <div className="w-20 h-14 rounded-xl bg-muted overflow-hidden flex-shrink-0 flex items-center justify-center">
+                  {(() => { const src = bannerItem ? getMediaSrc(bannerItem) : null; return src && bannerItem?.type.startsWith('image') ? <img src={src} className="w-full h-full object-cover" /> : src && bannerItem?.type.startsWith('video') ? <video src={src} muted className="w-full h-full object-cover" /> : <span className="text-2xl">📦</span>; })()}
                 </div>
-                <div style={{ flex:1 }}>
-                  <button onClick={() => setMediaPicker('banner')} style={{ width:'100%', padding:'8px 12px', borderRadius:'10px', background: C.s2, border:`1px solid ${C.sep}`, color: C.blue, fontSize:'12px', fontWeight:600, cursor:'pointer', marginBottom:'4px' }}>
-                    🖼️ Bild aus Media Library wählen
-                  </button>
-                  {editing.banner_image_id && (
-                    <button onClick={() => setEditing({ ...editing, banner_image_id: '' })} style={{ width:'100%', padding:'5px', borderRadius:'8px', background:'none', border:'none', color: C.t3, fontSize:'11px', cursor:'pointer' }}>
-                      ✕ Banner entfernen
-                    </button>
-                  )}
+                <div className="flex-1 space-y-1.5">
+                  <Button variant="outline" size="sm" className="w-full text-xs" onClick={() => setMediaPicker('banner')}>🖼️ Bild wählen</Button>
+                  {editing.banner_image_id && <button onClick={() => setEditing({ ...editing, banner_image_id: '' })} className="w-full text-[11px] text-muted-foreground hover:text-foreground transition-colors">✕ Banner entfernen</button>}
                 </div>
               </div>
             </div>
 
             {/* Name + tagline */}
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'13px' }}>
+            <div className="grid grid-cols-2 gap-2.5 mb-3">
               <label>
-                <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Name *</div>
-                <input value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })}
-                  placeholder="z.B. Hot Bundle"
-                  style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }} />
+                <div className="text-xs text-muted-foreground mb-1">Name *</div>
+                <input value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })} placeholder="z.B. Hot Bundle"
+                  className="w-full bg-muted border border-border rounded-xl px-3 py-2 text-sm outline-none" />
               </label>
               <label>
-                <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Tagline</div>
-                <input value={editing.tagline} onChange={e => setEditing({ ...editing, tagline: e.target.value })}
-                  placeholder="Kurzer Untertitel"
-                  style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }} />
+                <div className="text-xs text-muted-foreground mb-1">Tagline</div>
+                <input value={editing.tagline} onChange={e => setEditing({ ...editing, tagline: e.target.value })} placeholder="Kurzer Untertitel"
+                  className="w-full bg-muted border border-border rounded-xl px-3 py-2 text-sm outline-none" />
               </label>
             </div>
 
-            {/* Description (internal notes) */}
-            <label style={{ display:'block', marginBottom:'13px' }}>
-              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Beschreibung <span style={{ color: C.t3, fontWeight:400 }}>(interne Notiz)</span></div>
+            {/* Internal description */}
+            <label className="block mb-3">
+              <div className="text-xs text-muted-foreground mb-1">Beschreibung <span className="font-normal">(interne Notiz)</span></div>
               <textarea value={editing.description} onChange={e => setEditing({ ...editing, description: e.target.value })}
-                placeholder="Interne Notiz zum Paket (wird dem Fan nicht gezeigt)"
-                rows={2}
-                style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', resize:'vertical', fontFamily:'inherit', boxSizing:'border-box' }} />
+                placeholder="Interne Notiz (wird dem Fan nicht gezeigt)" rows={2}
+                className="w-full bg-muted border border-border rounded-xl px-3 py-2 text-sm outline-none resize-y font-inherit" />
             </label>
 
-            {/* Package preview description — what the buyer will see */}
-            <label style={{ display:'block', marginBottom:'16px' }}>
-              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>
-                Was der User sieht <span style={{ color: C.teal }}>👁 (für Bot-Antworten + Paketmenü)</span>
-              </div>
-              <textarea
-                value={editing.package_preview_description}
-                onChange={e => setEditing({ ...editing, package_preview_description: e.target.value })}
-                placeholder="Beschreibe kurz was der Käufer in diesem Paket zu sehen bekommt.&#10;z.B. Outfit, Stimmung, Setting, was passiert.&#10;&#10;Wenn ein Fan fragt 'Was ist im Paket?' antwortet der Bot NUR mit diesem Text."
-                rows={4}
-                style={{ width:'100%', background: C.s2, border:`1px solid ${C.teal}40`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', resize:'vertical', fontFamily:'inherit', boxSizing:'border-box' }}
-              />
-              <div style={{ fontSize:'11px', color: C.teal, marginTop:'4px' }}>
-                🛡 Bot erfindet keine Details — er antwortet ausschließlich mit diesem Text wenn jemand fragt "was ist drin?"
-              </div>
+            {/* Preview description */}
+            <label className="block mb-4">
+              <div className="text-xs text-muted-foreground mb-1">Was der User sieht <span className="text-cyan-400">👁 (für Bot-Antworten)</span></div>
+              <textarea value={editing.package_preview_description} onChange={e => setEditing({ ...editing, package_preview_description: e.target.value })}
+                placeholder={"Was der Käufer sehen bekommt.\nz.B. Outfit, Stimmung, Setting."}
+                rows={3}
+                className="w-full bg-muted border border-cyan-500/40 rounded-xl px-3 py-2 text-sm outline-none resize-y font-inherit" />
             </label>
 
             {/* Dynamic toggle */}
-            <div style={{ marginBottom:'16px', padding:'14px', borderRadius:'12px', background: C.s2, border:`1px solid ${C.sep}` }}>
-              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom: editing.dynamic ? '14px' : '0' }}>
+            <div className="mb-4 p-3.5 rounded-xl bg-muted border border-border">
+              <div className={cn("flex items-center justify-between", editing.dynamic && "mb-3")}>
                 <div>
-                  <div style={{ fontSize:'13px', fontWeight:600, color: C.t1 }}>🎯 Dynamische Zusammenstellung</div>
-                  <div style={{ fontSize:'11px', color: C.t3, marginTop:'2px' }}>
-                    {editing.dynamic
-                      ? 'Dateien werden per Keyword aus der Media Library gewählt'
-                      : 'Feste Dateien — du wählst was im Paket ist'}
-                  </div>
+                  <div className="text-sm font-semibold">🎯 Dynamische Zusammenstellung</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">{editing.dynamic ? 'Dateien per Keyword aus Media Library' : 'Feste Dateien — du wählst was im Paket ist'}</div>
                 </div>
-                <button
-                  onClick={() => setEditing({ ...editing, dynamic: !editing.dynamic })}
-                  style={{
-                    width:'42px', height:'24px', borderRadius:'12px', border:'none', cursor:'pointer',
-                    background: editing.dynamic ? C.blue : C.s4, position:'relative', transition:'background 0.2s', flexShrink:0,
-                  }}
-                >
-                  <div style={{
-                    position:'absolute', top:'3px', left: editing.dynamic ? '21px' : '3px',
-                    width:'18px', height:'18px', borderRadius:'50%', background:'#fff', transition:'left 0.2s',
-                  }} />
-                </button>
+                <div onClick={() => setEditing({ ...editing, dynamic: !editing.dynamic })}
+                  className={cn("w-10 h-6 rounded-full relative cursor-pointer transition-colors", editing.dynamic ? "bg-primary" : "bg-muted-foreground/30")}>
+                  <div className={cn("absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-all", editing.dynamic ? "left-5" : "left-1")} />
+                </div>
               </div>
-
               {editing.dynamic && (
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }}>
+                <div className="grid grid-cols-2 gap-2.5">
                   <label>
-                    <div style={{ fontSize:'11px', color: C.t3, marginBottom:'4px' }}>Anzahl Videos</div>
-                    <input
-                      type="number" min="0" max="20"
-                      value={editing.dynamic_rules.videos}
+                    <div className="text-[11px] text-muted-foreground mb-1">Videos</div>
+                    <input type="number" min="0" max="20" value={editing.dynamic_rules.videos}
                       onChange={e => setEditing({ ...editing, dynamic_rules: { ...editing.dynamic_rules, videos: Math.max(0, parseInt(e.target.value)||0) } })}
-                      style={{ width:'100%', background: C.s3, border:`1px solid ${C.sep}`, borderRadius:'8px', padding:'7px 10px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }}
-                    />
+                      className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-sm outline-none" />
                   </label>
                   <label>
-                    <div style={{ fontSize:'11px', color: C.t3, marginBottom:'4px' }}>Anzahl Bilder</div>
-                    <input
-                      type="number" min="0" max="50"
-                      value={editing.dynamic_rules.images}
+                    <div className="text-[11px] text-muted-foreground mb-1">Bilder</div>
+                    <input type="number" min="0" max="50" value={editing.dynamic_rules.images}
                       onChange={e => setEditing({ ...editing, dynamic_rules: { ...editing.dynamic_rules, images: Math.max(0, parseInt(e.target.value)||0) } })}
-                      style={{ width:'100%', background: C.s3, border:`1px solid ${C.sep}`, borderRadius:'8px', padding:'7px 10px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }}
-                    />
+                      className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-sm outline-none" />
                   </label>
-                  <div style={{ gridColumn:'1/-1', fontSize:'11px', color: C.teal, padding:'6px 8px', background:'rgba(90,200,250,0.06)', borderRadius:'8px' }}>
-                    💡 Der Bot sucht beim Senden automatisch passende Dateien aus der Media Library — basierend auf dem Keyword das der Fan erwähnt hat (z.B. "squirting" → Squirting-Videos + Bilder)
-                  </div>
                 </div>
               )}
             </div>
 
-            {/* Media files (only shown for non-dynamic packages) */}
+            {/* Media files */}
             {!editing.dynamic && (
-            <div style={{ marginBottom:'16px' }}>
-              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'8px' }}>
-                <div style={{ fontSize:'12px', color: C.t3 }}>📂 Enthaltene Dateien ({editing.media_files.length})</div>
-                <button onClick={() => setMediaPicker('files')} style={{ padding:'4px 10px', borderRadius:'8px', background: C.s2, border:`1px solid ${C.sep}`, color: C.blue, fontSize:'11px', fontWeight:600, cursor:'pointer' }}>
-                  + Aus Media Library
-                </button>
-              </div>
-              {editing.media_files.length === 0 ? (
-                <div style={{ padding:'12px', borderRadius:'10px', background: C.s2, border:`1px dashed ${C.sep}`, textAlign:'center', fontSize:'12px', color: C.t3 }}>
-                  Keine Dateien — klicke "Aus Media Library" um Dateien hinzuzufügen
+              <div className="mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-xs text-muted-foreground">📂 Enthaltene Dateien ({editing.media_files.length})</div>
+                  <Button variant="outline" size="sm" className="text-xs" onClick={() => setMediaPicker('files')}>+ Aus Media Library</Button>
                 </div>
-              ) : (
-                <div style={{ display:'flex', flexDirection:'column', gap:'6px' }}>
-                  {editing.media_files.map(f => {
-                    const libItem = mediaLib.find(m => m.id === f.media_id);
-                    return (
-                      <div key={f.media_id} style={{ display:'flex', alignItems:'center', gap:'10px', padding:'8px 12px', borderRadius:'10px', background: C.s2, border:`1px solid ${C.sep}` }}>
-                        {libItem?.dataUrl && libItem.type.startsWith('image') && (
-                          <img src={libItem.dataUrl} alt={f.name} style={{ width:'32px', height:'32px', borderRadius:'6px', objectFit:'cover', flexShrink:0 }} />
-                        )}
-                        <span style={{ fontSize:'16px', flexShrink:0 }}>{iconFor(f.type)}</span>
-                        <div style={{ flex:1, minWidth:0 }}>
-                          <div style={{ fontSize:'12px', fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{f.name}</div>
-                          <div style={{ fontSize:'10px', color: C.t3 }}>{f.type.startsWith('video') ? '🎬 Video' : f.type.startsWith('image') ? '🖼️ Bild' : '📄 Datei'}{libItem ? ` · ${fmt(libItem.size)}` : ''}</div>
+                {editing.media_files.length === 0 ? (
+                  <div className="py-3 border border-dashed border-border rounded-xl text-center text-xs text-muted-foreground">Keine Dateien</div>
+                ) : (
+                  <div className="flex flex-col gap-1.5">
+                    {editing.media_files.map(f => {
+                      const li = mediaLib.find(m => m.id === f.media_id);
+                      const src = li ? getMediaSrc(li) : null;
+                      return (
+                        <div key={f.media_id} className="flex items-center gap-2.5 p-2.5 rounded-xl bg-muted border border-border">
+                          {src && li?.type.startsWith('image') && <img src={src} className="w-8 h-8 rounded-lg object-cover flex-shrink-0" />}
+                          <span className="text-base flex-shrink-0">{iconFor(f.type)}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-semibold truncate">{f.name}</div>
+                            <div className="text-[10px] text-muted-foreground">{f.type.startsWith('video') ? '🎬' : '🖼️'}{li ? ` · ${fmt(li.size)}` : ''}</div>
+                          </div>
+                          {f.type.startsWith('video') && (
+                            <input value={f.duration||''} onChange={e => setEditing({ ...editing, media_files: editing.media_files.map(mf => mf.media_id===f.media_id ? { ...mf, duration: e.target.value } : mf) })}
+                              placeholder="2:34" title="Videolänge"
+                              className="w-14 bg-card border border-border rounded-md px-1.5 py-1 text-[11px] outline-none text-center" />
+                          )}
+                          <button onClick={() => setEditing({ ...editing, media_files: editing.media_files.filter(mf => mf.media_id!==f.media_id) })} className="text-muted-foreground hover:text-foreground text-base px-1">×</button>
                         </div>
-                        {/* Duration for video */}
-                        {f.type.startsWith('video') && (
-                          <input
-                            value={f.duration || ''}
-                            onChange={e => setEditing({ ...editing, media_files: editing.media_files.map(mf => mf.media_id === f.media_id ? { ...mf, duration: e.target.value } : mf) })}
-                            placeholder="z.B. 2:34"
-                            title="Videolänge (optional)"
-                            style={{ width:'58px', background: C.s3, border:`1px solid ${C.sep}`, borderRadius:'6px', padding:'4px 6px', color: C.t2, fontSize:'11px', outline:'none', textAlign:'center' }}
-                          />
-                        )}
-                        <button onClick={() => removeFile(f.media_id)} style={{ background:'none', border:'none', color: C.t3, cursor:'pointer', fontSize:'16px', flexShrink:0, padding:'0 2px' }}>×</button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             )}
 
-            {/* Price + currency + payment link */}
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 60px', gap:'10px', marginBottom:'13px' }}>
+            {/* Price + currency */}
+            <div className="grid grid-cols-[1fr_70px] gap-2.5 mb-3">
               <label>
-                <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Preis</div>
-                <input value={editing.price} onChange={e => setEditing({ ...editing, price: e.target.value })}
-                  placeholder="29.99"
-                  style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }} />
+                <div className="text-xs text-muted-foreground mb-1">Preis</div>
+                <input value={editing.price} onChange={e => setEditing({ ...editing, price: e.target.value })} placeholder="29.99"
+                  className="w-full bg-muted border border-border rounded-xl px-3 py-2 text-sm outline-none" />
               </label>
               <label>
-                <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Währung</div>
+                <div className="text-xs text-muted-foreground mb-1">Währung</div>
                 <select value={editing.currency} onChange={e => setEditing({ ...editing, currency: e.target.value })}
-                  style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 8px', color: C.t1, fontSize:'13px', outline:'none' }}>
+                  className="w-full bg-muted border border-border rounded-xl px-2 py-2 text-sm outline-none cursor-pointer">
                   {['€','$','£','CHF'].map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </label>
             </div>
 
-            {/* Stripe payment fields */}
-            <div style={{ background:'rgba(48,164,108,0.06)', border:'1px solid rgba(48,164,108,0.2)', borderRadius:'12px', padding:'14px', marginBottom:'13px' }}>
-              <div style={{ fontSize:'11px', fontWeight:700, color:'#30a46c', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:'12px' }}>
-                💳 Stripe Zahlung — wird automatisch als Button in Telegram gesendet
-              </div>
-
-              <label style={{ display:'block', marginBottom:'10px' }}>
-                <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Kauflink (buy.stripe.com URL)</div>
-                <input value={editing.payment_link} onChange={e => setEditing({ ...editing, payment_link: e.target.value })}
-                  placeholder="https://buy.stripe.com/…"
-                  style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }} />
+            {/* Stripe */}
+            <div className="p-3.5 rounded-xl bg-green-500/5 border border-green-500/20 mb-3 space-y-2.5">
+              <div className="text-[11px] font-bold text-green-500 uppercase tracking-wide">💳 Stripe Zahlung</div>
+              <label className="block">
+                <div className="text-xs text-muted-foreground mb-1">Kauflink (buy.stripe.com)</div>
+                <input value={editing.payment_link} onChange={e => setEditing({ ...editing, payment_link: e.target.value })} placeholder="https://buy.stripe.com/…"
+                  className="w-full bg-muted border border-border rounded-xl px-3 py-2 text-sm outline-none" />
               </label>
-
-              <div style={{ marginBottom:'4px' }}>
-                <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Stripe Buy Button Code</div>
+              <label className="block">
+                <div className="text-xs text-muted-foreground mb-1">Stripe Buy Button Code</div>
                 <textarea value={editing.stripe_button_code} onChange={e => setEditing({ ...editing, stripe_button_code: e.target.value })}
                   placeholder={'<stripe-buy-button\n  buy-button-id="buy_btn_…"\n  publishable-key="pk_live_…"\n></stripe-buy-button>'}
-                  rows={4}
-                  style={{ width:'100%', boxSizing:'border-box', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'11px', outline:'none', resize:'none', fontFamily:'monospace', lineHeight:1.5 }} />
-
-                {/* Live Stripe button preview */}
-                {editing.stripe_button_code && editing.stripe_button_code.includes('buy-button-id') && (
-                  <div style={{ marginTop:'12px' }}>
-                    <div style={{ fontSize:'10px', color: C.t3, marginBottom:'8px', textTransform:'uppercase', letterSpacing:'0.06em' }}>Vorschau</div>
-                    <div style={{ background: C.s2, borderRadius:'10px', padding:'16px', display:'flex', justifyContent:'center', alignItems:'center', minHeight:'60px' }}>
-                      <Script src="https://js.stripe.com/v3/buy-button.js" strategy="lazyOnload" />
-                      <div dangerouslySetInnerHTML={{ __html: editing.stripe_button_code }} />
-                    </div>
-                    <div style={{ fontSize:'10px', color: C.t3, marginTop:'6px' }}>
-                      💡 Dieser Button ist für die Dashboard-Vorschau. Im Telegram-Chat wird ein nativer Inline-Button gesendet.
-                    </div>
+                  rows={3} className="w-full bg-muted border border-border rounded-xl px-3 py-2 text-[11px] outline-none resize-none font-mono leading-relaxed" />
+                {editing.stripe_button_code?.includes('buy-button-id') && (
+                  <div className="mt-2 bg-muted border border-border rounded-xl p-4 flex justify-center min-h-14">
+                    <Script src="https://js.stripe.com/v3/buy-button.js" strategy="lazyOnload" />
+                    <div dangerouslySetInnerHTML={{ __html: editing.stripe_button_code }} />
                   </div>
                 )}
-              </div>
+              </label>
             </div>
 
-            {/* Package pitch text */}
-            <div style={{ marginBottom:'13px' }}>
-              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'4px' }}>
-                <div style={{ fontSize:'12px', color: C.t3 }}>Bot-Nachricht (wird an Fan gesendet)</div>
-                <button onClick={() => setEditing({ ...editing, package_text: generatePitchText(editing) })} style={{ background:'none', border:'none', color: C.blue, cursor:'pointer', fontSize:'11px', fontWeight:600, padding:0 }}>
-                  ✨ Auto-generieren
-                </button>
+            {/* Pitch text */}
+            <div className="mb-3">
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs text-muted-foreground">Bot-Nachricht</div>
+                <button onClick={() => setEditing({ ...editing, package_text: generatePitchText(editing) })} className="text-[11px] text-primary font-semibold hover:underline">✨ Auto-generieren</button>
               </div>
               <textarea value={editing.package_text} onChange={e => setEditing({ ...editing, package_text: e.target.value })}
-                placeholder="Klicke '✨ Auto-generieren' oder schreibe den Text manuell"
-                rows={5}
-                style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', resize:'vertical', fontFamily:'inherit', lineHeight:1.5, boxSizing:'border-box' }} />
-              <div style={{ fontSize:'11px', color: C.t3, marginTop:'3px' }}>Dieser Text wird gesendet wenn ein Fan das Paket anfragt oder der Bot es pitcht</div>
+                placeholder="Klicke ✨ Auto-generieren oder schreibe manuell" rows={4}
+                className="w-full bg-muted border border-border rounded-xl px-3 py-2 text-sm outline-none resize-y font-inherit leading-relaxed" />
             </div>
 
             {/* Keywords */}
-            <label style={{ display:'block', marginBottom:'13px' }}>
-              <div style={{ fontSize:'12px', color: C.t3, marginBottom:'4px' }}>Keywords (kommagetrennt)</div>
-              <input value={editing.keywords} onChange={e => setEditing({ ...editing, keywords: e.target.value })}
-                placeholder="kaufen, preis, paket, bundle, inhalt"
-                style={{ width:'100%', background: C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 12px', color: C.t1, fontSize:'13px', outline:'none', boxSizing:'border-box' }} />
+            <label className="block mb-5">
+              <div className="text-xs text-muted-foreground mb-1">Keywords (kommagetrennt)</div>
+              <input value={editing.keywords} onChange={e => setEditing({ ...editing, keywords: e.target.value })} placeholder="kaufen, preis, paket"
+                className="w-full bg-muted border border-border rounded-xl px-3 py-2 text-sm outline-none" />
             </label>
 
-            <div style={{ display:'flex', gap:'10px', marginTop:'4px' }}>
-              <button onClick={() => setEditing(null)} style={{ flex:1, padding:'11px', borderRadius:'12px', background: C.s3, border:'none', color: C.t2, fontSize:'14px', cursor:'pointer' }}>
-                Abbrechen
-              </button>
-              <button onClick={confirmEdit} disabled={saving || !editing.name.trim()} style={{
-                flex:2, padding:'11px', borderRadius:'12px', background: C.blue, border:'none', color:'#fff',
-                fontSize:'14px', fontWeight:600, cursor:'pointer', opacity:(saving||!editing.name.trim())?0.5:1,
-              }}>
+            <div className="flex gap-2.5">
+              <Button variant="outline" className="flex-1" onClick={() => setEditing(null)}>Abbrechen</Button>
+              <Button className="flex-[2]" onClick={confirmEdit} disabled={saving || !editing.name.trim()}>
                 {saving ? 'Speichern…' : 'Paket speichern'}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── Media Picker Modal ─────────────────────────────────────────────────── */}
+      {/* Media Picker */}
       {mediaPicker && editing && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:1100, display:'flex', alignItems:'center', justifyContent:'center', padding:'16px' }}
+        <div className="fixed inset-0 bg-black/85 z-[1100] flex items-center justify-center p-4"
           onClick={e => { if (e.target === e.currentTarget) setMediaPicker(null); }}>
-          <div style={{ background: C.s1, borderRadius:'20px', padding:'24px', width:'100%', maxWidth:'600px', border:`1px solid ${C.sep}`, maxHeight:'80vh', overflow:'hidden', display:'flex', flexDirection:'column' }}>
-            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'16px', flexShrink:0 }}>
-              <h3 style={{ margin:0, fontSize:'16px', fontWeight:700 }}>
-                {mediaPicker === 'banner' ? '🖼️ Banner-Bild wählen' : '📂 Dateien zum Paket hinzufügen'}
-              </h3>
-              <button onClick={() => setMediaPicker(null)} style={{ background:'none', border:'none', color: C.t3, cursor:'pointer', fontSize:'20px' }}>✕</button>
+          <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-xl max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between mb-4 flex-shrink-0">
+              <h3 className="font-bold text-base">{mediaPicker === 'banner' ? '🖼️ Banner wählen' : '📂 Dateien hinzufügen'}</h3>
+              <Button variant="ghost" size="icon" onClick={() => setMediaPicker(null)}><X size={16} /></Button>
             </div>
             {mediaLib.length === 0 ? (
-              <div style={{ textAlign:'center', padding:'40px', color: C.t3 }}>
-                <div style={{ fontSize:'32px', marginBottom:'10px' }}>📂</div>
-                Noch keine Dateien in der Media Library — lade zuerst Dateien unter /media hoch
-              </div>
+              <div className="text-center py-10 text-muted-foreground">Noch keine Dateien — lade zuerst Dateien unter /media hoch</div>
             ) : (
-              <div style={{ overflowY:'auto', flex:1 }}>
-                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(130px, 1fr))', gap:'10px' }}>
+              <div className="overflow-y-auto flex-1">
+                <div className="grid gap-2.5" style={{ gridTemplateColumns:'repeat(auto-fill,minmax(120px,1fr))' }}>
                   {(mediaPicker === 'banner' ? pickableMeds : mediaLib).map(item => {
                     const alreadyAdded = mediaPicker === 'files' && editing.media_files.some(f => f.media_id === item.id);
                     const isBanner = mediaPicker === 'banner' && editing.banner_image_id === item.id;
+                    const src = getMediaSrc(item);
                     return (
-                      <div key={item.id}
-                        onClick={() => {
-                          if (mediaPicker === 'banner') {
-                            setEditing({ ...editing, banner_image_id: isBanner ? '' : item.id });
-                          } else {
-                            if (!alreadyAdded) addFileToPackage(item);
-                          }
-                        }}
-                        style={{
-                          borderRadius:'12px', overflow:'hidden', cursor: alreadyAdded ? 'default' : 'pointer',
-                          border:`2px solid ${(isBanner || alreadyAdded) ? C.green : C.sep}`,
-                          position:'relative', opacity: alreadyAdded ? 0.6 : 1, transition:'border-color 0.15s',
-                        }}>
-                        <div style={{ height:'90px', background: C.s2, display:'flex', alignItems:'center', justifyContent:'center' }}>
-                          {item.dataUrl && item.type.startsWith('image') ? (
-                            <img src={item.dataUrl} alt={item.name} style={{ width:'100%', height:'100%', objectFit:'cover' }} />
-                          ) : item.dataUrl && item.type.startsWith('video') ? (
-                            <video src={item.dataUrl} muted style={{ width:'100%', height:'100%', objectFit:'cover' }} />
-                          ) : (
-                            <span style={{ fontSize:'32px' }}>{iconFor(item.type)}</span>
-                          )}
+                      <div key={item.id} onClick={() => {
+                        if (mediaPicker === 'banner') setEditing({ ...editing, banner_image_id: isBanner ? '' : item.id });
+                        else if (!alreadyAdded) addFileToPackage(item);
+                      }}
+                        className={cn("rounded-xl overflow-hidden cursor-pointer border-2 relative transition-all",
+                          (isBanner || alreadyAdded) ? "border-green-500" : "border-border hover:border-primary/50",
+                          alreadyAdded && "opacity-60 cursor-default"
+                        )}>
+                        <div className="h-20 bg-muted flex items-center justify-center">
+                          {src && item.type.startsWith('image') ? <img src={src} className="w-full h-full object-cover" />
+                            : src && item.type.startsWith('video') ? <video src={src} muted className="w-full h-full object-cover" />
+                            : <span className="text-3xl">{iconFor(item.type)}</span>}
                         </div>
-                        <div style={{ padding:'6px 8px', background: C.s1 }}>
-                          <div style={{ fontSize:'10px', fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.name}</div>
-                          <div style={{ fontSize:'9px', color: C.t3 }}>{item.tag}</div>
+                        <div className="p-1.5 bg-card">
+                          <div className="text-[10px] font-semibold truncate">{item.name}</div>
+                          <div className="text-[9px] text-muted-foreground">{item.tag}</div>
                         </div>
                         {(isBanner || alreadyAdded) && (
-                          <div style={{ position:'absolute', top:'6px', right:'6px', background: C.green, borderRadius:'50%', width:'18px', height:'18px', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'11px' }}>✓</div>
+                          <div className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-green-500 flex items-center justify-center text-[11px] text-white">✓</div>
                         )}
                       </div>
                     );
@@ -635,17 +464,13 @@ export default function PackagesPage() {
               </div>
             )}
             {mediaPicker === 'files' && (
-              <button onClick={() => setMediaPicker(null)} style={{ marginTop:'16px', padding:'10px', borderRadius:'12px', background: C.blue, border:'none', color:'#fff', fontSize:'13px', fontWeight:600, cursor:'pointer', flexShrink:0 }}>
-                ✓ Fertig ({editing.media_files.length} Datei{editing.media_files.length!==1?'en':''} ausgewählt)
-              </button>
+              <Button className="mt-4 flex-shrink-0" onClick={() => setMediaPicker(null)}>
+                ✓ Fertig ({editing.media_files.length} Datei{editing.media_files.length!==1?'en':''})
+              </Button>
             )}
           </div>
         </div>
       )}
-
-      <style>{`
-        @media(max-width:600px) { div[style*="minmax(130px"]{grid-template-columns:repeat(3,1fr)!important} }
-      `}</style>
     </DashboardLayout>
   );
 }

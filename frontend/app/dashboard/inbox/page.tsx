@@ -4,13 +4,9 @@ import { useEffect, useState, useCallback, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { useCreator } from '@/contexts/CreatorContext';
-
-const C = {
-  bg:'#0a0a0a', s1:'#111113', s2:'#1c1c1e', s3:'#2c2c2e', s4:'#3a3a3c',
-  sep:'rgba(84,84,88,0.5)', sepL:'rgba(84,84,88,0.2)',
-  t1:'#fff', t2:'rgba(235,235,245,0.65)', t3:'rgba(235,235,245,0.35)',
-  blue:'#0a84ff', green:'#30d158', red:'#ff453a', orange:'#ff9f0a', purple:'#bf5af2', teal:'#5ac8fa',
-};
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { RefreshCw, X } from 'lucide-react';
 
 interface Conversation {
   user_id: string;
@@ -54,12 +50,20 @@ interface Insights {
   lead_score?: number;
 }
 
-const LABELS = ['COLD','CURIOUS','WARM','HOT','BUYER','TIMEWASTER','CUSTOM'];
-const FILTER_LABELS = ['All', 'COLD', 'CURIOUS', 'WARM', 'HOT', 'BUYER', 'TIMEWASTER'];
-const INTERESTS = ['SOLO','DILDO','SQUIRTING','DESSOUS','HIGHHEELS','BATHTUB','FEET','TOYS','OUTDOOR','COUPLE'];
-const LABEL_COLORS: Record<string,string> = {
-  COLD: C.teal, CURIOUS: C.blue, WARM: C.orange, HOT: '#ff2d55', BUYER: C.green, TIMEWASTER: C.red, CUSTOM: C.purple,
+const LABELS       = ['COLD','CURIOUS','WARM','HOT','BUYER','TIMEWASTER','CUSTOM'];
+const FILTER_LABELS = ['All','COLD','CURIOUS','WARM','HOT','BUYER','TIMEWASTER'];
+const INTERESTS    = ['SOLO','DILDO','SQUIRTING','DESSOUS','HIGHHEELS','BATHTUB','FEET','TOYS','OUTDOOR','COUPLE'];
+
+const LABEL_COLOR: Record<string,string> = {
+  COLD:'text-cyan-400 border-cyan-400/40 bg-cyan-400/10',
+  CURIOUS:'text-blue-400 border-blue-400/40 bg-blue-400/10',
+  WARM:'text-orange-400 border-orange-400/40 bg-orange-400/10',
+  HOT:'text-pink-400 border-pink-400/40 bg-pink-400/10',
+  BUYER:'text-green-400 border-green-400/40 bg-green-400/10',
+  TIMEWASTER:'text-red-400 border-red-400/40 bg-red-400/10',
+  CUSTOM:'text-purple-400 border-purple-400/40 bg-purple-400/10',
 };
+
 type SortBy = 'recent' | 'oldest' | 'score_high' | 'score_low';
 
 function timeAgo(iso?: string) {
@@ -73,18 +77,15 @@ function timeAgo(iso?: string) {
 function formatTime(iso: string) {
   try { return new Date(iso).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }); } catch { return ''; }
 }
-function scoreColor(s: number) { return s >= 70 ? C.green : s >= 40 ? C.orange : C.t3; }
 function sortByRecent(list: Conversation[]): Conversation[] {
-  return [...list].sort((a, b) => {
+  return [...list].sort((a,b) => {
     const ta = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
     const tb = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
     return tb - ta;
   });
 }
-function avatarColor(id: number) {
-  const colors = [C.blue, C.green, C.orange, C.purple, C.red, C.teal, '#ffd60a'];
-  return colors[Math.abs(id) % colors.length];
-}
+const AVATAR_COLORS = ['bg-blue-500','bg-green-500','bg-orange-500','bg-purple-500','bg-red-500','bg-cyan-500','bg-yellow-500'];
+function avatarColorClass(id: number) { return AVATAR_COLORS[Math.abs(id) % AVATAR_COLORS.length]; }
 
 const apiBase = () => {
   const raw = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -95,37 +96,38 @@ function InboxContent() {
   const searchParams = useSearchParams();
   const autoSelectUserId = searchParams?.get('user') ?? null;
   const { withCreator } = useCreator();
-  const [tgConnected, setTgConnected] = useState<boolean | null>(null);
-  const [tgAccount, setTgAccount]     = useState('');
-  const [convos, setConvos]           = useState<Conversation[]>([]);
-  const [selected, setSelected]       = useState<Conversation | null>(null);
-  const [messages, setMessages]       = useState<Message[]>([]);
-  const [insights, setInsights]       = useState<Insights | null>(null);
+
+  const [tgConnected, setTgConnected]   = useState<boolean | null>(null);
+  const [tgAccount,   setTgAccount]     = useState('');
+  const [convos,      setConvos]        = useState<Conversation[]>([]);
+  const [selected,    setSelected]      = useState<Conversation | null>(null);
+  const [messages,    setMessages]      = useState<Message[]>([]);
+  const [insights,    setInsights]      = useState<Insights | null>(null);
   const [insightsLoading, setInsightsLoading] = useState(false);
-  const [insightsSaving, setInsightsSaving]   = useState(false);
-  const [insightsTab, setInsightsTab] = useState<'insights'|'memory'>('insights');
-  const [panelOpen, setPanelOpen]     = useState(true);
-  const [folders, setFolders]         = useState<string[]>([]);
+  const [insightsSaving,  setInsightsSaving]  = useState(false);
+  const [insightsTab, setInsightsTab]   = useState<'insights'|'memory'>('insights');
+  const [panelOpen,   setPanelOpen]     = useState(true);
+  const [folders,     setFolders]       = useState<string[]>([]);
   const [activeFolder, setActiveFolder] = useState<string>('All');
   const [loadingConvos, setLoadingConvos] = useState(true);
-  const [loadingMsgs, setLoadingMsgs]    = useState(false);
-  const [syncing, setSyncing]         = useState(false);
-  const [syncStatus, setSyncStatus]   = useState('');
+  const [loadingMsgs,   setLoadingMsgs]  = useState(false);
+  const [syncing,     setSyncing]       = useState(false);
+  const [syncStatus,  setSyncStatus]    = useState('');
   const [reconnecting, setReconnecting] = useState(false);
-  const [search, setSearch]           = useState('');
-  const [labelFilter, setLabelFilter] = useState<string>('All');
-  const [sortBy, setSortBy]           = useState<SortBy>('recent');
-  const [draft, setDraft]             = useState('');
-  const [sending, setSending]         = useState(false);
-  const [sendError, setSendError]     = useState('');
-  const [broadcastOpen, setBroadcastOpen] = useState(false);
-  const [broadcastMsg, setBroadcastMsg]   = useState('hey wie gehts dir so 😊');
-  const [broadcasting, setBroadcasting]   = useState(false);
+  const [search,      setSearch]        = useState('');
+  const [labelFilter, setLabelFilter]   = useState<string>('All');
+  const [sortBy,      setSortBy]        = useState<SortBy>('recent');
+  const [draft,       setDraft]         = useState('');
+  const [sending,     setSending]       = useState(false);
+  const [sendError,   setSendError]     = useState('');
+  const [broadcastOpen,   setBroadcastOpen]   = useState(false);
+  const [broadcastMsg,    setBroadcastMsg]    = useState('hey wie gehts dir so 😊');
+  const [broadcasting,    setBroadcasting]    = useState(false);
   const [broadcastResult, setBroadcastResult] = useState('');
-  const [resetting, setResetting] = useState(false);
+  const [resetting,   setResetting]     = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef       = useRef<HTMLTextAreaElement>(null);
-  const pollRef        = useRef<NodeJS.Timeout | null>(null);
   const lastMsgTimeRef = useRef<string>('');
 
   const api = apiBase();
@@ -143,14 +145,14 @@ function InboxContent() {
     try {
       const d = await fetch(`${api}/telegram/folders`).then(r => r.json());
       if (Array.isArray(d.folders) && d.folders.length > 0) setFolders(d.folders);
-    } catch { /* silent */ }
+    } catch {}
   }, [api]);
 
   const loadConvos = useCallback(async (folder?: string) => {
     try {
       setLoadingConvos(true);
-      const folderParam = (folder && folder !== 'All') ? `&folder=${encodeURIComponent(folder)}` : '';
-      const data = await fetch(withCreator(`${api}/messages/conversations?limit=500${folderParam}`)).then(r => r.json());
+      const fp = (folder && folder !== 'All') ? `&folder=${encodeURIComponent(folder)}` : '';
+      const data = await fetch(withCreator(`${api}/messages/conversations?limit=500${fp}`)).then(r => r.json());
       setConvos(data.items || []);
       return (data.items || []).length as number;
     } catch { setConvos([]); return 0; }
@@ -170,9 +172,7 @@ function InboxContent() {
             return fresh.length > 0 ? [...prev, ...fresh] : prev;
           });
         }
-      } else {
-        setMessages(data);
-      }
+      } else { setMessages(data); }
       if (data.length > 0) lastMsgTimeRef.current = data[data.length - 1].created_at;
     } catch { if (!append) setMessages([]); }
     finally { if (!append) setLoadingMsgs(false); }
@@ -192,62 +192,43 @@ function InboxContent() {
     setInsightsSaving(true);
     try {
       await fetch(`${api}/users/${selected.user_id}/insights`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
       });
       setInsights(prev => prev ? { ...prev, ...patch } : patch as Insights);
-      // Update convo ai_enabled in list
       if ('ai_enabled' in patch) {
         setConvos(prev => prev.map(c => c.user_id === selected.user_id ? { ...c, ai_enabled: patch.ai_enabled } : c));
       }
-    } catch { /* silent */ }
+    } catch {}
     finally { setInsightsSaving(false); }
   };
 
   const resetConversation = async (userId?: string) => {
     const targetId = userId ?? selected?.user_id;
     if (!targetId) return;
-    if (!confirm('Chat komplett löschen?\n\n• Alle Nachrichten werden gelöscht\n• KI-Erinnerungen werden gelöscht\n• Nächste Nachricht gilt als erstkontakt\n\nDiese Aktion kann nicht rückgängig gemacht werden.')) return;
+    if (!confirm('Chat komplett löschen?\n\n• Alle Nachrichten werden gelöscht\n• KI-Erinnerungen werden gelöscht\n\nDiese Aktion kann nicht rückgängig gemacht werden.')) return;
     setResetting(true);
     try {
       const res = await fetch(withCreator(`${api}/users/${targetId}/reset`), { method: 'POST' });
-      if (!res.ok) {
-        const err = await res.text().catch(() => res.statusText);
-        throw new Error(`HTTP ${res.status}: ${err}`);
-      }
-      // Deselect + clear view if this chat was open
-      if (selected?.user_id === targetId) {
-        setSelected(null);
-        setMessages([]);
-        setInsights(null);
-        lastMsgTimeRef.current = '';
-      }
-      // Remove from list — will reappear naturally when user sends next message
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (selected?.user_id === targetId) { setSelected(null); setMessages([]); setInsights(null); lastMsgTimeRef.current = ''; }
       setConvos(prev => prev.filter(c => c.user_id !== targetId));
     } catch (e) {
       alert(`Fehler beim Löschen:\n${e instanceof Error ? e.message : e}`);
-      console.error('Reset failed:', e);
-    }
-    finally { setResetting(false); }
+    } finally { setResetting(false); }
   };
 
   const toggleChatAI = async (e: React.MouseEvent, userId: string, current: boolean | undefined) => {
     e.stopPropagation();
     const next = !current;
-    // Optimistic update
     setConvos(prev => prev.map(c => c.user_id === userId ? { ...c, ai_enabled: next } : c));
     if (selected?.user_id === userId) setInsights(prev => prev ? { ...prev, ai_enabled: next } : { ai_enabled: next });
     try {
       await fetch(`${api}/users/${userId}/insights`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ai_enabled: next }),
       });
-    } catch {
-      // Revert on failure
-      setConvos(prev => prev.map(c => c.user_id === userId ? { ...c, ai_enabled: current } : c));
-    }
+    } catch { setConvos(prev => prev.map(c => c.user_id === userId ? { ...c, ai_enabled: current } : c)); }
   };
 
   const sendBroadcast = async () => {
@@ -256,56 +237,35 @@ function InboxContent() {
     try {
       const folder = activeFolder !== 'All' ? activeFolder : undefined;
       const res = await fetch(`${api}/telegram/broadcast`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: broadcastMsg.trim(), limit: 500, ...(folder ? { folder } : {}) }),
       });
       const d = await res.json();
       if (!res.ok) { setBroadcastResult(`⚠ ${d.detail || 'Failed'}`); setBroadcasting(false); return; }
-
-      // New async response: { status: "started", job_id, total, eta_seconds }
       if (d.job_id) {
         setBroadcastResult(`📤 Sending… 0/${d.total} sent`);
-        const pollInterval = setInterval(async () => {
+        const iv = setInterval(async () => {
           try {
             const sr = await fetch(`${api}/telegram/broadcast/status?job_id=${d.job_id}`);
             const s = await sr.json();
-            if (!s) return;
             setBroadcastResult(`📤 Sending… ${s.sent ?? 0}/${s.total ?? d.total} sent${s.failed > 0 ? `, ${s.failed} failed` : ''}`);
-            if (s.status === 'done') {
-              clearInterval(pollInterval);
-              setBroadcasting(false);
-              setBroadcastResult(`✓ Sent to ${s.sent} chats${s.failed > 0 ? `, ${s.failed} failed` : ''}`);
-              loadConvos(activeFolder !== 'All' ? activeFolder : undefined);
-            }
-          } catch { /* keep polling */ }
+            if (s.status === 'done') { clearInterval(iv); setBroadcasting(false); setBroadcastResult(`✓ Sent to ${s.sent} chats`); loadConvos(activeFolder !== 'All' ? activeFolder : undefined); }
+          } catch {}
         }, 2000);
-      } else {
-        // Legacy sync response fallback
-        setBroadcastResult(`✓ Sent to ${d.sent} chats${d.failed > 0 ? `, ${d.failed} failed` : ''}`);
-        setBroadcasting(false);
-        loadConvos(activeFolder !== 'All' ? activeFolder : undefined);
-      }
+      } else { setBroadcastResult(`✓ Sent to ${d.sent} chats`); setBroadcasting(false); loadConvos(activeFolder !== 'All' ? activeFolder : undefined); }
     } catch (e: any) { setBroadcastResult(`⚠ ${e.message}`); setBroadcasting(false); }
   };
 
   const sync = useCallback(async (silent = false) => {
-    if (!silent) { setSyncing(true); setSyncStatus('Syncing all chats (main + archived)…'); }
+    if (!silent) { setSyncing(true); setSyncStatus('Syncing all chats…'); }
     try {
-      // limit=0 → unlimited, syncs main + archived folders
       const res = await fetch(`${api}/telegram/sync?limit_per_chat=150&max_dialogs=0`, { method:'POST' });
       const d = await res.json();
       if (res.ok) {
-        const totalMsg = d.total_dialogs > 0
-          ? `✓ Found ${d.total_dialogs} chats · ${d.synced_users} new · ${d.synced_messages} new msgs`
-          : `✓ Synced ${d.synced_messages} messages from ${d.synced_users} new chats`;
-        if (!silent) setSyncStatus(totalMsg);
-        // Also fetch folder tags in background
+        if (!silent) setSyncStatus(`✓ Found ${d.total_dialogs || 0} chats · ${d.synced_messages || 0} new msgs`);
         fetch(`${api}/telegram/sync-folders`, { method:'POST' }).then(() => loadFolders()).catch(() => {});
         await loadConvos(activeFolder !== 'All' ? activeFolder : undefined);
-      } else {
-        if (!silent) setSyncStatus(`⚠ ${d.detail || 'Sync failed'}`);
-      }
+      } else { if (!silent) setSyncStatus(`⚠ ${d.detail || 'Sync failed'}`); }
     } catch (e: any) { if (!silent) setSyncStatus(`⚠ ${e.message}`); }
     finally { if (!silent) setSyncing(false); }
   }, [api, loadConvos, loadFolders, activeFolder]);
@@ -314,49 +274,29 @@ function InboxContent() {
     setReconnecting(true); setSyncStatus('Attempting reconnect…');
     try {
       const d = await fetch(`${api}/telegram/reconnect`, { method:'POST' }).then(r => r.json());
-      if (d.status === 'reconnected') {
-        setTgConnected(true); setTgAccount(d.account || '');
-        setSyncStatus('✓ Reconnected — syncing chats…');
-        await sync();
-      } else {
-        setSyncStatus(`⚠ Reconnect failed: ${d.detail}`);
-      }
+      if (d.status === 'reconnected') { setTgConnected(true); setTgAccount(d.account || ''); setSyncStatus('✓ Reconnected — syncing chats…'); await sync(); }
+      else { setSyncStatus(`⚠ Reconnect failed: ${d.detail}`); }
     } catch (e: any) { setSyncStatus(`⚠ ${e.message}`); }
     finally { setReconnecting(false); }
   };
 
   const sendMessage = async () => {
     if (!draft.trim() || !selected || sending) return;
-    const text = draft.trim();
-    setDraft(''); setSending(true); setSendError('');
+    const text = draft.trim(); setDraft(''); setSending(true); setSendError('');
     const tempId = `temp-${Date.now()}`;
     const opt: Message = { id:tempId, text, direction:'outgoing', is_ai_generated:false, created_at:new Date().toISOString() };
     setMessages(prev => [...prev, opt]);
     try {
-      const res = await fetch(`${api}/messages/send`, {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ user_id: selected.user_id, text }),
-      });
+      const res = await fetch(`${api}/messages/send`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ user_id: selected.user_id, text }) });
       const d = await res.json();
-      if (!res.ok) {
-        setSendError(d.detail || 'Send failed');
-        setMessages(prev => prev.filter(m => m.id !== tempId));
-        setDraft(text);
-      } else {
+      if (!res.ok) { setSendError(d.detail || 'Send failed'); setMessages(prev => prev.filter(m => m.id !== tempId)); setDraft(text); }
+      else {
         setMessages(prev => prev.map(m => m.id === tempId ? d : m));
         lastMsgTimeRef.current = d.created_at;
-        setConvos(prev => {
-          const updated = prev.map(c =>
-            c.user_id === selected.user_id ? { ...c, last_message: text, last_message_direction: 'outgoing', last_message_at: d.created_at } : c
-          );
-          return sortByRecent(updated);
-        });
+        setConvos(prev => sortByRecent(prev.map(c => c.user_id === selected.user_id ? { ...c, last_message: text, last_message_direction: 'outgoing', last_message_at: d.created_at } : c)));
       }
-    } catch (e: any) {
-      setSendError(e.message);
-      setMessages(prev => prev.filter(m => m.id !== tempId));
-      setDraft(text);
-    } finally { setSending(false); }
+    } catch (e: any) { setSendError(e.message); setMessages(prev => prev.filter(m => m.id !== tempId)); setDraft(text); }
+    finally { setSending(false); }
   };
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior:'smooth' }); }, [messages]);
@@ -370,7 +310,6 @@ function InboxContent() {
     })();
   }, []); // eslint-disable-line
 
-  // Auto-select user from URL param (e.g. ?user=UUID from analytics)
   useEffect(() => {
     if (!autoSelectUserId || convos.length === 0) return;
     const target = convos.find(c => c.user_id === autoSelectUserId);
@@ -378,86 +317,48 @@ function InboxContent() {
   }, [autoSelectUserId, convos]); // eslint-disable-line
 
   useEffect(() => {
-    if (selected) {
-      lastMsgTimeRef.current = '';
-      loadMessages(selected.user_id);
-      loadInsights(selected.user_id);
-    }
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    if (selected) { lastMsgTimeRef.current = ''; loadMessages(selected.user_id); loadInsights(selected.user_id); }
   }, [selected]); // eslint-disable-line
 
-  // SSE live stream + 3s safety-net poll
   useEffect(() => {
     if (!selected) return;
-    const sseUrl = `${api}/telegram/stream`;
     let es: EventSource | null = null;
-
     const connect = () => {
-      es = new EventSource(sseUrl);
+      es = new EventSource(`${api}/telegram/stream`);
       es.onmessage = (evt) => {
         try {
           const data = JSON.parse(evt.data);
-          if (data.type === 'connected') return;
-          if (data.user_id !== selected.user_id) return;
+          if (data.type === 'connected' || data.user_id !== selected.user_id) return;
           const msg = data.message;
           if (!msg?.id) return;
-          setMessages(prev => {
-            if (prev.some(m => String(m.id) === String(msg.id))) return prev;
-            return [...prev, { ...msg, id: String(msg.id) }];
-          });
-          setConvos(prev => {
-            const updated = prev.map(c =>
-              c.user_id === selected.user_id
-                ? { ...c, last_message: msg.text, last_message_direction: msg.direction, last_message_at: msg.created_at }
-                : c
-            );
-            return sortByRecent(updated);
-          });
-        } catch { /* ignore */ }
+          setMessages(prev => prev.some(m => String(m.id) === String(msg.id)) ? prev : [...prev, { ...msg, id: String(msg.id) }]);
+          setConvos(prev => sortByRecent(prev.map(c => c.user_id === selected.user_id ? { ...c, last_message: msg.text, last_message_direction: msg.direction, last_message_at: msg.created_at } : c)));
+        } catch {}
       };
       es.onerror = () => { es?.close(); setTimeout(connect, 3000); };
     };
     connect();
-    // Safety-net poll every 3s in case SSE misses events
     const safePoll = setInterval(() => loadMessages(selected.user_id, true), 3000);
     return () => { es?.close(); clearInterval(safePoll); };
   }, [selected, api]); // eslint-disable-line
 
   const filtered = (() => {
     let list = convos.filter(c => {
-      const matchesSearch = !search ||
-        c.name.toLowerCase().includes(search.toLowerCase()) ||
-        (c.username||'').toLowerCase().includes(search.toLowerCase()) ||
-        (c.last_message||'').toLowerCase().includes(search.toLowerCase());
-      const matchesFolder = activeFolder === 'All' || (c.tg_folders || []).includes(activeFolder);
-      const matchesLabel  = labelFilter === 'All' || (c.lead_label || '').toUpperCase() === labelFilter;
-      return matchesSearch && matchesFolder && matchesLabel;
+      const ms = !search || c.name.toLowerCase().includes(search.toLowerCase()) || (c.username||'').toLowerCase().includes(search.toLowerCase()) || (c.last_message||'').toLowerCase().includes(search.toLowerCase());
+      const mf = activeFolder === 'All' || (c.tg_folders || []).includes(activeFolder);
+      const ml = labelFilter === 'All' || (c.lead_label || '').toUpperCase() === labelFilter;
+      return ms && mf && ml;
     });
-    // Sort
-    if (sortBy === 'recent') {
-      list = [...list].sort((a, b) => {
-        const ta = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
-        const tb = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
-        return tb - ta;
-      });
-    } else if (sortBy === 'oldest') {
-      list = [...list].sort((a, b) => {
-        const ta = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
-        const tb = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
-        return ta - tb;
-      });
-    } else if (sortBy === 'score_high') {
-      list = [...list].sort((a, b) => b.lead_score - a.lead_score);
-    } else if (sortBy === 'score_low') {
-      list = [...list].sort((a, b) => a.lead_score - b.lead_score);
-    }
+    if (sortBy === 'recent')     list = [...list].sort((a,b) => (new Date(b.last_message_at||0).getTime()) - (new Date(a.last_message_at||0).getTime()));
+    else if (sortBy === 'oldest') list = [...list].sort((a,b) => (new Date(a.last_message_at||0).getTime()) - (new Date(b.last_message_at||0).getTime()));
+    else if (sortBy === 'score_high') list = [...list].sort((a,b) => b.lead_score - a.lead_score);
+    else if (sortBy === 'score_low')  list = [...list].sort((a,b) => a.lead_score - b.lead_score);
     return list;
   })();
 
-  // ── Memory analysis: group messages by day and annotate ──
   const memoryGroups = (() => {
     if (!messages.length) return [];
-    const byDay: Record<string, Message[]> = {};
+    const byDay: Record<string,Message[]> = {};
     messages.forEach(m => {
       const day = new Date(m.created_at).toLocaleDateString('en', { month:'short', day:'numeric', year:'numeric' });
       if (!byDay[day]) byDay[day] = [];
@@ -466,90 +367,57 @@ function InboxContent() {
     return Object.entries(byDay).map(([day, msgs]) => ({ day, msgs }));
   })();
 
-  const statusBanner = () => {
-    if (tgConnected === null) return null;
-    if (tgConnected) return (
-      <div style={{ display:'flex', alignItems:'center', gap:'8px', padding:'7px 12px', borderRadius:'10px', background:'rgba(48,209,88,0.08)', border:'1px solid rgba(48,209,88,0.2)', fontSize:'12px', color:C.green, marginBottom:'10px' }}>
-        <span style={{ width:'6px', height:'6px', borderRadius:'50%', background:C.green, boxShadow:`0 0 6px ${C.green}`, flexShrink:0 }} />
-        {tgAccount || 'Connected'}
-        <button onClick={() => sync()} disabled={syncing} style={{ marginLeft:'auto', background:'none', border:'none', color:C.blue, cursor:'pointer', fontSize:'12px', fontWeight:600, padding:0, opacity:syncing?0.5:1 }}>
-          {syncing ? 'Syncing…' : '⬇ Sync'}
-        </button>
-      </div>
-    );
-    return (
-      <div style={{ padding:'12px', borderRadius:'12px', background:'rgba(255,69,58,0.08)', border:'1px solid rgba(255,69,58,0.25)', marginBottom:'12px' }}>
-        <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'8px' }}>
-          <span style={{ width:'6px', height:'6px', borderRadius:'50%', background:C.red, flexShrink:0 }} />
-          <span style={{ fontSize:'13px', fontWeight:600, color:C.red }}>Telegram not connected</span>
-          <button onClick={reconnect} disabled={reconnecting} style={{ marginLeft:'auto', padding:'4px 12px', borderRadius:'8px', background:C.blue, border:'none', color:'#fff', fontSize:'12px', fontWeight:600, cursor:'pointer', opacity:reconnecting?0.5:1 }}>
-            {reconnecting ? 'Reconnecting…' : '↺ Reconnect'}
-          </button>
-        </div>
-        <div style={{ padding:'10px 12px', borderRadius:'8px', background:'rgba(0,0,0,0.4)', fontFamily:'monospace', fontSize:'11px', color:'#e5e5e5', lineHeight:1.9 }}>
-          <div style={{ color:C.t3 }}># Mac Terminal:</div>
-          <div>cd ~/Downloads/ai-telegram-crm && railway shell</div>
-          <div style={{ color:C.t3 }}># In shell:</div>
-          <div>pip3 install telethon && python3 -c &quot;from telethon.sync import TelegramClient; from telethon.sessions import StringSession; import os; c = TelegramClient(StringSession(), int(os.environ[&apos;TELEGRAM_API_ID&apos;]), os.environ[&apos;TELEGRAM_API_HASH&apos;]); c.start(phone=os.environ[&apos;TELEGRAM_PHONE&apos;]); print(c.session.save())&quot;</div>
-          <div style={{ color:C.t3 }}># Copy output → Railway Variables → TELEGRAM_SESSION_STRING → Save → Redeploy</div>
-        </div>
-      </div>
-    );
-  };
-
   return (
     <DashboardLayout>
-      <div style={{ display:'flex', height:'calc(100vh - 50px)', overflow:'hidden' }}>
+      <div className="flex overflow-hidden" style={{ height:'calc(100vh - 52px)' }}>
 
         {/* ── Convo list ── */}
-        <div style={{ width: selected ? 'min(280px,30%)' : '100%', borderRight:`1px solid ${C.sep}`, display:'flex', flexDirection:'column', background:C.bg, flexShrink:0, transition:'width 0.2s' }} className="convo-panel">
-          {/* ── Inbox header ── */}
-          <div style={{ borderBottom:`1px solid ${C.sepL}`, flexShrink:0 }}>
-            {/* Title row */}
-            <div style={{ padding:'12px 14px 8px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-              <h2 style={{ fontSize:'20px', fontWeight:700, margin:0, color:C.t1 }}>Inbox</h2>
-              <div style={{ display:'flex', gap:'6px', alignItems:'center' }}>
-                <span style={{ fontSize:'11px', color:C.t3 }}>{convos.length}</span>
-                <button onClick={() => loadConvos()} disabled={loadingConvos} style={{ background:'none', border:'none', color:C.blue, cursor:'pointer', fontSize:'18px', opacity:loadingConvos?0.4:1, padding:'2px 6px', borderRadius:'6px' }}>↺</button>
+        <div className={cn(
+          "flex flex-col flex-shrink-0 bg-background border-r border-border transition-all duration-200",
+          selected ? "w-[260px] sm:w-[280px]" : "w-full"
+        )}>
+          {/* Header */}
+          <div className="flex-shrink-0 border-b border-border">
+            <div className="px-3.5 pt-3 pb-2 flex items-center justify-between">
+              <h2 className="text-lg font-bold">Inbox</h2>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground">{convos.length}</span>
+                <button onClick={() => loadConvos()} disabled={loadingConvos} className="p-1 rounded text-primary text-base hover:bg-muted transition-colors disabled:opacity-40">↺</button>
               </div>
             </div>
 
-            {/* Folder tabs — always visible, scrollable */}
-            <div style={{ overflowX:'auto', paddingBottom:'1px' }} className="folder-scroll">
-              <div style={{ display:'flex', gap:'0', borderBottom:`1px solid ${C.sepL}`, paddingLeft:'4px', minWidth:'max-content' }}>
+            {/* Folder tabs */}
+            <div className="overflow-x-auto border-b border-border">
+              <div className="flex min-w-max pl-1">
                 {['All', ...folders].map(f => (
-                  <button key={f} onClick={() => { setActiveFolder(f); loadConvos(f !== 'All' ? f : undefined); }} style={{
-                    padding:'8px 14px', background:'none', border:'none', cursor:'pointer',
-                    fontSize:'12px', fontWeight:600, whiteSpace:'nowrap',
-                    color: activeFolder === f ? C.blue : C.t3,
-                    borderBottom: activeFolder === f ? `2px solid ${C.blue}` : '2px solid transparent',
-                    transition:'all 0.15s',
-                  }}>{f}</button>
+                  <button key={f} onClick={() => { setActiveFolder(f); loadConvos(f !== 'All' ? f : undefined); }}
+                    className={cn(
+                      "px-3 py-2 text-xs font-semibold whitespace-nowrap border-b-2 transition-all",
+                      activeFolder === f ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
+                    )}>
+                    {f}
+                  </button>
                 ))}
               </div>
             </div>
 
-            {/* Label filter chips + sort */}
-            <div style={{ padding:'6px 10px 0', display:'flex', alignItems:'center', gap:'6px', flexWrap:'nowrap', overflowX:'auto' }} className="filter-scroll">
+            {/* Label + sort filters */}
+            <div className="px-2 pt-2 flex items-center gap-1.5 overflow-x-auto flex-nowrap">
               {FILTER_LABELS.map(lbl => {
                 const active = labelFilter === lbl;
-                const col = lbl === 'All' ? C.blue : (LABEL_COLORS[lbl] ?? C.t3);
+                const cls = lbl === 'All' ? 'text-primary border-primary/40 bg-primary/10' : (LABEL_COLOR[lbl] ?? '');
                 return (
-                  <button key={lbl} onClick={() => setLabelFilter(lbl)} style={{
-                    padding:'3px 10px', borderRadius:'20px', fontSize:'11px', fontWeight:600,
-                    cursor:'pointer', border:'1px solid', whiteSpace:'nowrap', flexShrink:0, transition:'all 0.15s',
-                    background: active ? `${col}22` : 'transparent',
-                    borderColor: active ? col : 'rgba(84,84,88,0.35)',
-                    color: active ? col : C.t3,
-                  }}>
+                  <button key={lbl} onClick={() => setLabelFilter(lbl)}
+                    className={cn(
+                      "px-2.5 py-0.5 rounded-full text-[11px] font-semibold border flex-shrink-0 transition-all",
+                      active ? cls : "border-border text-muted-foreground"
+                    )}>
                     {lbl === 'All' ? `Alle (${convos.length})` : lbl}
                   </button>
                 );
               })}
-              <select value={sortBy} onChange={e => setSortBy(e.target.value as SortBy)} style={{
-                marginLeft:'auto', flexShrink:0, background:C.s2, border:`1px solid rgba(84,84,88,0.35)`,
-                borderRadius:'8px', padding:'3px 7px', color:C.t2, fontSize:'11px', outline:'none', cursor:'pointer',
-              }}>
+              <select value={sortBy} onChange={e => setSortBy(e.target.value as SortBy)}
+                className="ml-auto flex-shrink-0 bg-card border border-border rounded-lg px-1.5 py-0.5 text-[11px] text-foreground outline-none cursor-pointer">
                 <option value="recent">Neueste</option>
                 <option value="oldest">Älteste</option>
                 <option value="score_high">Score ↓</option>
@@ -557,109 +425,118 @@ function InboxContent() {
               </select>
             </div>
 
-            {/* Search + status */}
-            <div style={{ padding:'8px 14px 10px' }}>
-              {statusBanner()}
-              {syncStatus && (
-                <div style={{ fontSize:'12px', padding:'5px 10px', borderRadius:'8px', marginBottom:'8px',
-                  background: syncStatus.startsWith('✓') ? 'rgba(48,209,88,0.08)' : 'rgba(255,149,10,0.08)',
-                  color: syncStatus.startsWith('✓') ? C.green : C.orange }}>
-                  {syncStatus}
+            {/* Status + search */}
+            <div className="px-3.5 pt-2 pb-3 space-y-2">
+              {/* Status banner */}
+              {tgConnected === false && (
+                <div className="p-3 rounded-xl bg-red-500/8 border border-red-500/25">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />
+                    <span className="text-sm font-semibold text-red-400">Telegram not connected</span>
+                    <Button size="sm" className="ml-auto" onClick={reconnect} disabled={reconnecting}>
+                      {reconnecting ? 'Reconnecting…' : '↺ Reconnect'}
+                    </Button>
+                  </div>
                 </div>
               )}
-              <input placeholder="Search chats…" value={search} onChange={e => setSearch(e.target.value)}
-                style={{ width:'100%', boxSizing:'border-box', background:C.s2, border:'none', borderRadius:'10px', padding:'8px 12px', color:C.t1, fontSize:'14px', outline:'none' }} />
+              {tgConnected === true && (
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-green-500/8 border border-green-500/20 text-xs text-green-400">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.6)] flex-shrink-0" />
+                  {tgAccount || 'Connected'}
+                  <button onClick={() => sync()} disabled={syncing} className="ml-auto text-primary font-semibold disabled:opacity-50">{syncing ? 'Syncing…' : '⬇ Sync'}</button>
+                </div>
+              )}
+              {syncStatus && (
+                <div className={cn("text-xs px-2.5 py-1.5 rounded-lg", syncStatus.startsWith('✓') ? "bg-green-500/8 text-green-400" : "bg-orange-500/8 text-orange-400")}>{syncStatus}</div>
+              )}
+              <input
+                placeholder="Search chats…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-full bg-muted border-none rounded-xl px-3 py-2 text-sm outline-none"
+              />
             </div>
           </div>
 
-          <div style={{ flex:1, overflowY:'auto' }}>
+          {/* List */}
+          <div className="flex-1 overflow-y-auto">
             {loadingConvos && convos.length === 0 ? (
-              <div style={{ textAlign:'center', padding:'50px 20px', color:C.t3 }}>Loading chats…</div>
+              <div className="text-center py-12 text-muted-foreground text-sm">Loading chats…</div>
             ) : filtered.length === 0 ? (
-              <div style={{ padding:'28px 20px', textAlign:'center', color:C.t3 }}>
-                <div style={{ fontSize:'32px', marginBottom:'10px' }}>✉</div>
-                <div style={{ fontSize:'14px', fontWeight:600, color:C.t2, marginBottom:'8px' }}>No chats yet</div>
+              <div className="p-7 text-center text-muted-foreground">
+                <div className="text-4xl mb-3">✉</div>
+                <div className="font-semibold text-foreground mb-2">No chats yet</div>
                 {tgConnected ? (
                   <>
-                    <div style={{ fontSize:'12px', marginBottom:'12px' }}>Tap below to import all existing conversations.</div>
-                    <button onClick={() => sync()} disabled={syncing} style={{ padding:'10px 20px', borderRadius:'12px', background:C.blue, border:'none', color:'#fff', fontSize:'14px', fontWeight:600, cursor:'pointer', opacity:syncing?0.6:1 }}>
+                    <div className="text-xs mb-3">Tap below to import all existing conversations.</div>
+                    <Button size="sm" onClick={() => sync()} disabled={syncing}>
                       {syncing ? '⏳ Syncing…' : '⬇ Import All Chats'}
-                    </button>
+                    </Button>
                   </>
                 ) : (
-                  <div style={{ fontSize:'12px' }}>Connect Telegram first using the instructions above.</div>
+                  <div className="text-xs">Connect Telegram first.</div>
                 )}
               </div>
             ) : filtered.map(c => {
-              const on = selected?.user_id === c.user_id;
-              const ac = avatarColor(c.telegram_id || 0);
+              const active = selected?.user_id === c.user_id;
+              const avCls  = avatarColorClass(c.telegram_id || 0);
               return (
-                <div key={c.user_id} onClick={() => setSelected(c)}
-                  style={{ display:'flex', alignItems:'center', gap:'10px', padding:'10px 14px', cursor:'pointer',
-                    background: on ? 'rgba(10,132,255,0.1)' : 'transparent',
-                    borderBottom:`1px solid rgba(84,84,88,0.12)`, transition:'background 0.1s' }}
-                  onMouseEnter={e => { if (!on) e.currentTarget.style.background='rgba(255,255,255,0.04)'; }}
-                  onMouseLeave={e => { if (!on) e.currentTarget.style.background='transparent'; }}
+                <div
+                  key={c.user_id}
+                  onClick={() => setSelected(c)}
+                  className={cn(
+                    "flex items-center gap-2.5 px-3.5 py-2.5 cursor-pointer border-b border-border/40 transition-colors",
+                    active ? "bg-primary/10" : "hover:bg-muted/40"
+                  )}
                 >
-                  <div style={{ width:'38px', height:'38px', borderRadius:'50%', background:ac, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'14px', fontWeight:700, color:'#fff', flexShrink:0, position:'relative' }}>
+                  {/* Avatar */}
+                  <div className={cn("w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white flex-shrink-0 relative", avCls)}>
                     {(c.name||'?')[0].toUpperCase()}
-                    {/* AI active indicator dot */}
                     {c.ai_enabled && (
-                      <div style={{ position:'absolute', bottom:'1px', right:'1px', width:'9px', height:'9px', borderRadius:'50%', background:C.green, border:`1.5px solid ${C.bg}` }} />
+                      <div className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-green-500 border-2 border-background" />
                     )}
                   </div>
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', gap:'4px' }}>
-                      <span style={{ fontWeight:600, fontSize:'13px', color:C.t1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:'110px' }}>{c.name}</span>
-                      <span style={{ fontSize:'10px', color:C.t3, flexShrink:0 }}>{timeAgo(c.last_message_at)}</span>
+
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-baseline justify-between gap-1">
+                      <span className="font-semibold text-sm truncate max-w-[100px]">{c.name}</span>
+                      <span className="text-[10px] text-muted-foreground flex-shrink-0">{timeAgo(c.last_message_at)}</span>
                     </div>
-                    <div style={{ fontSize:'12px', color:C.t3, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', marginTop:'2px' }}>
-                      {c.last_message_direction === 'outgoing' && <span style={{ color:C.blue }}>↗ </span>}
+                    <div className="text-xs text-muted-foreground truncate mt-0.5">
+                      {c.last_message_direction === 'outgoing' && <span className="text-primary">↗ </span>}
                       {c.last_message || '—'}
                     </div>
-                    <div style={{ display:'flex', gap:'5px', marginTop:'4px', alignItems:'center' }}>
-                      {/* AI toggle pill */}
+                    <div className="flex items-center gap-1.5 mt-1">
+                      {/* AI pill */}
                       <button
                         onClick={e => toggleChatAI(e, c.user_id, c.ai_enabled)}
-                        title={c.ai_enabled ? 'AI autopilot ON — click to pause' : 'AI autopilot OFF — click to activate'}
-                        style={{
-                          display:'flex', alignItems:'center', gap:'3px',
-                          padding:'2px 7px 2px 5px', borderRadius:'10px', cursor:'pointer',
-                          border: `1px solid ${c.ai_enabled ? 'rgba(48,209,88,0.4)' : 'rgba(84,84,88,0.4)'}`,
-                          background: c.ai_enabled ? 'rgba(48,209,88,0.12)' : 'rgba(84,84,88,0.12)',
-                          flexShrink:0, transition:'all 0.15s',
-                        }}
+                        className={cn(
+                          "flex items-center gap-1 px-1.5 py-0.5 rounded-lg text-[9px] font-bold border transition-all",
+                          c.ai_enabled ? "bg-green-500/12 border-green-500/40 text-green-400" : "bg-muted border-border text-muted-foreground"
+                        )}
                       >
-                        <span style={{ fontSize:'9px' }}>🤖</span>
-                        <span style={{ fontSize:'9px', fontWeight:700, color: c.ai_enabled ? C.green : C.t3 }}>
-                          {c.ai_enabled ? 'ON' : 'OFF'}
-                        </span>
+                        🤖 {c.ai_enabled ? 'ON' : 'OFF'}
                       </button>
                       {/* Lead label */}
-                      {c.lead_label && (() => {
-                        const lc: Record<string,string> = { HOT:C.orange, BUYER:C.green, TIMEWASTER:C.red, COLD:C.teal, CURIOUS:C.blue, CUSTOM:C.purple };
-                        const col = lc[c.lead_label] ?? C.t3;
-                        return <span style={{ fontSize:'9px', padding:'2px 6px', borderRadius:'8px', background:`${col}20`, color:col, fontWeight:600 }}>{c.lead_label}</span>;
-                      })()}
-                      {/* Score bar */}
-                      <div style={{ display:'flex', alignItems:'center', gap:'3px', marginLeft:'auto' }}>
-                        <div style={{ width:'22px', height:'3px', borderRadius:'2px', background:C.s3 }}>
-                          <div style={{ height:'100%', background:scoreColor(c.lead_score), width:`${c.lead_score}%` }} />
+                      {c.lead_label && (
+                        <span className={cn("text-[9px] px-1.5 py-0.5 rounded-lg border font-semibold", LABEL_COLOR[c.lead_label] ?? 'text-muted-foreground border-border bg-muted')}>
+                          {c.lead_label}
+                        </span>
+                      )}
+                      {/* Score */}
+                      <div className="flex items-center gap-1 ml-auto">
+                        <div className="w-5 h-0.5 rounded-full bg-muted overflow-hidden">
+                          <div className={cn("h-full", c.lead_score >= 70 ? "bg-green-400" : c.lead_score >= 40 ? "bg-orange-400" : "bg-muted-foreground")} style={{ width:`${c.lead_score}%` }} />
                         </div>
-                        <span style={{ fontSize:'9px', color:scoreColor(c.lead_score) }}>{Math.round(c.lead_score)}</span>
+                        <span className={cn("text-[9px]", c.lead_score >= 70 ? "text-green-400" : c.lead_score >= 40 ? "text-orange-400" : "text-muted-foreground")}>
+                          {Math.round(c.lead_score)}
+                        </span>
                       </div>
-                      {/* Delete / reset chat button */}
+                      {/* Delete */}
                       <button
                         onClick={e => { e.stopPropagation(); resetConversation(c.user_id); }}
-                        title="Chat zurücksetzen"
-                        style={{
-                          background:'none', border:'none', cursor:'pointer',
-                          padding:'2px 4px', borderRadius:'6px', fontSize:'11px',
-                          color:C.t3, lineHeight:1, flexShrink:0,
-                          transition:'color 0.15s',
-                        }}
-                        onMouseEnter={e => (e.currentTarget.style.color = '#ff453a')}
-                        onMouseLeave={e => (e.currentTarget.style.color = C.t3)}
+                        className="p-0.5 rounded text-muted-foreground hover:text-red-400 transition-colors text-[11px]"
                       >🗑</button>
                     </div>
                   </div>
@@ -668,20 +545,16 @@ function InboxContent() {
             })}
           </div>
 
-          <div style={{ padding:'8px 14px', borderTop:`1px solid ${C.sep}`, fontSize:'11px', color:C.t3, display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+          {/* Footer */}
+          <div className="px-3.5 py-2 border-t border-border text-[11px] text-muted-foreground flex items-center justify-between flex-shrink-0">
             <span>{convos.length} chats</span>
-            <div style={{ display:'flex', gap:'8px', alignItems:'center' }}>
-              {tgConnected && (
-                <button onClick={() => sync()} disabled={syncing} style={{ background:'none', border:'none', color:C.blue, cursor:'pointer', fontSize:'11px', opacity:syncing?0.5:1 }}>
-                  {syncing ? 'Syncing…' : '⬇ Sync'}
-                </button>
-              )}
+            <div className="flex gap-2 items-center">
+              {tgConnected && <button onClick={() => sync()} disabled={syncing} className="text-primary disabled:opacity-50">{syncing ? 'Syncing…' : '⬇ Sync'}</button>}
               {tgConnected && convos.length > 0 && (
-                <button onClick={() => { setBroadcastOpen(true); setBroadcastResult(''); }} style={{
-                  padding:'4px 10px', borderRadius:'8px', background:'rgba(191,90,242,0.12)',
-                  border:'1px solid rgba(191,90,242,0.3)', color:C.purple,
-                  fontSize:'11px', fontWeight:600, cursor:'pointer',
-                }}>📢 Broadcast</button>
+                <button onClick={() => { setBroadcastOpen(true); setBroadcastResult(''); }}
+                  className="px-2.5 py-1 rounded-lg bg-purple-500/12 border border-purple-500/30 text-purple-400 text-[11px] font-semibold hover:bg-purple-500/20 transition-colors">
+                  📢 Broadcast
+                </button>
               )}
             </div>
           </div>
@@ -689,67 +562,58 @@ function InboxContent() {
 
         {/* ── Thread ── */}
         {selected ? (
-          <div style={{ flex:1, display:'flex', flexDirection:'column', minWidth:0, background:C.bg }}>
+          <div className="flex-1 flex flex-col min-w-0 bg-background">
             {/* Thread header */}
-            <div style={{ padding:'10px 14px', borderBottom:`1px solid ${C.sepL}`, display:'flex', alignItems:'center', gap:'10px', flexShrink:0 }}>
-              <button onClick={() => setSelected(null)} className="back-btn" style={{ background:'none', border:'none', color:C.blue, cursor:'pointer', fontSize:'20px', padding:'0 4px 0 0', display:'none' }}>←</button>
-              <div style={{ width:'32px', height:'32px', borderRadius:'50%', background:avatarColor(selected.telegram_id||0), display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700, color:'#fff', fontSize:'13px', flexShrink:0 }}>
+            <div className="px-3.5 py-2.5 border-b border-border flex items-center gap-2.5 flex-shrink-0">
+              <button onClick={() => setSelected(null)} className="sm:hidden text-primary text-xl px-1">←</button>
+              <div className={cn("w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-sm flex-shrink-0", avatarColorClass(selected.telegram_id||0))}>
                 {(selected.name||'?')[0].toUpperCase()}
               </div>
-              <div style={{ flex:1, minWidth:0 }}>
-                <div style={{ fontWeight:600, fontSize:'15px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', color:C.t1 }}>{selected.name}</div>
-                <div style={{ fontSize:'11px', color:C.t3 }}>
-                  {selected.username ? `@${selected.username} · ` : ''}{selected.total_messages} msgs · Score {Math.round(selected.lead_score)}
-                </div>
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold truncate">{selected.name}</div>
+                <div className="text-xs text-muted-foreground">{selected.username ? `@${selected.username} · ` : ''}{selected.total_messages} msgs · Score {Math.round(selected.lead_score)}</div>
               </div>
-              <button onClick={() => loadMessages(selected.user_id)} style={{ background:'none', border:'none', color:C.blue, cursor:'pointer', fontSize:'16px', padding:'4px' }} title="Refresh">↺</button>
-
-              {/* Autopilot quick toggle */}
-              <div style={{ display:'flex', alignItems:'center', gap:'6px', padding:'5px 10px', borderRadius:'10px',
-                background: insights?.ai_enabled ? 'rgba(48,209,88,0.1)' : 'rgba(255,255,255,0.05)',
-                border: `1px solid ${insights?.ai_enabled ? 'rgba(48,209,88,0.3)' : C.sep}`,
-              }}>
-                <span style={{ fontSize:'11px', fontWeight:600, color: insights?.ai_enabled ? C.green : C.t3 }}>
-                  {insights?.ai_enabled ? '🤖 AI ON' : '🤖 AI OFF'}
+              <button onClick={() => loadMessages(selected.user_id)} className="text-primary p-1 hover:bg-muted rounded transition-colors">↺</button>
+              {/* AI toggle */}
+              <div className={cn(
+                "flex items-center gap-2 px-2.5 py-1.5 rounded-xl border cursor-pointer select-none",
+                insights?.ai_enabled ? "bg-green-500/10 border-green-500/30" : "bg-muted border-border"
+              )} onClick={() => saveInsights({ ai_enabled: !insights?.ai_enabled })}>
+                <span className={cn("text-xs font-semibold", insights?.ai_enabled ? "text-green-400" : "text-muted-foreground")}>
+                  🤖 AI {insights?.ai_enabled ? 'ON' : 'OFF'}
                 </span>
-                <div onClick={() => saveInsights({ ai_enabled: !insights?.ai_enabled })}
-                  style={{ width:'32px', height:'18px', borderRadius:'9px', background: insights?.ai_enabled ? C.green : C.s4,
-                    cursor:'pointer', position:'relative', transition:'background 0.2s', flexShrink:0 }}>
-                  <div style={{ position:'absolute', top:'2px', left: insights?.ai_enabled ? '16px' : '2px',
-                    width:'14px', height:'14px', borderRadius:'50%', background:'#fff',
-                    transition:'left 0.2s', boxShadow:'0 1px 3px rgba(0,0,0,0.4)' }} />
+                <div className={cn("w-8 h-4 rounded-full relative transition-colors", insights?.ai_enabled ? "bg-green-500" : "bg-muted-foreground/30")}>
+                  <div className={cn("absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all", insights?.ai_enabled ? "left-4" : "left-0.5")} />
                 </div>
               </div>
-
               <button
                 onClick={() => setPanelOpen(v => !v)}
-                style={{ background: panelOpen ? 'rgba(10,132,255,0.15)' : C.s2, border:`1px solid ${panelOpen ? C.blue : C.sep}`, borderRadius:'8px', color: panelOpen ? C.blue : C.t3, cursor:'pointer', fontSize:'12px', padding:'5px 10px', fontWeight:600 }}
-                title="Toggle insights panel"
+                className={cn("text-xs font-semibold px-2.5 py-1.5 rounded-lg border transition-colors", panelOpen ? "bg-primary/15 border-primary/40 text-primary" : "bg-muted border-border text-muted-foreground")}
               >
                 {panelOpen ? '→ Info' : '← Info'}
               </button>
             </div>
 
             {/* Messages */}
-            <div style={{ flex:1, overflowY:'auto', padding:'14px', display:'flex', flexDirection:'column', gap:'6px' }}>
+            <div className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-1.5">
               {loadingMsgs ? (
-                <div style={{ textAlign:'center', padding:'40px', color:C.t3 }}>Loading…</div>
+                <div className="text-center py-10 text-muted-foreground">Loading…</div>
               ) : messages.length === 0 ? (
-                <div style={{ textAlign:'center', padding:'40px', color:C.t3 }}>No messages — tap Sync to import</div>
+                <div className="text-center py-10 text-muted-foreground">No messages — tap Sync to import</div>
               ) : messages.map(msg => {
                 const out = msg.direction === 'outgoing';
                 return (
-                  <div key={msg.id} style={{ display:'flex', justifyContent: out ? 'flex-end' : 'flex-start' }}>
-                    <div style={{
-                      maxWidth:'70%', padding:'9px 13px',
-                      borderRadius: out ? '18px 18px 5px 18px' : '18px 18px 18px 5px',
-                      background: out ? (msg.is_ai_generated ? 'rgba(191,90,242,0.55)' : C.blue) : C.s2,
-                      fontSize:'14px', lineHeight:'1.5', color:C.t1,
-                      boxShadow: out ? '0 1px 4px rgba(10,132,255,0.25)' : '0 1px 3px rgba(0,0,0,0.3)',
-                    }}>
-                      {msg.text || <em style={{ color:C.t3, fontSize:'12px' }}>[{msg.media_type||'media'}]</em>}
-                      <div style={{ fontSize:'10px', marginTop:'4px', color:'rgba(255,255,255,0.4)', display:'flex', gap:'4px', justifyContent:out?'flex-end':'flex-start', alignItems:'center' }}>
-                        {msg.is_ai_generated && <span style={{ background:'rgba(255,255,255,0.15)', padding:'1px 5px', borderRadius:'4px' }}>AI</span>}
+                  <div key={msg.id} className={cn("flex", out ? "justify-end" : "justify-start")}>
+                    <div className={cn(
+                      "max-w-[70%] px-3.5 py-2 text-sm leading-relaxed",
+                      out ? "rounded-[18px_18px_5px_18px]" : "rounded-[18px_18px_18px_5px]",
+                      out
+                        ? msg.is_ai_generated ? "bg-purple-500/55 text-white" : "bg-primary text-white"
+                        : "bg-card text-foreground"
+                    )}>
+                      {msg.text || <em className="text-muted-foreground text-xs">[{msg.media_type||'media'}]</em>}
+                      <div className={cn("text-[10px] mt-1 flex gap-1 items-center opacity-60", out ? "justify-end" : "justify-start")}>
+                        {msg.is_ai_generated && <span className="bg-white/15 px-1 py-0.5 rounded">AI</span>}
                         {formatTime(msg.created_at)}
                       </div>
                     </div>
@@ -759,10 +623,10 @@ function InboxContent() {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Compose bar */}
-            <div style={{ borderTop:`1px solid ${C.sepL}`, padding:'10px 12px', background:C.s1, flexShrink:0 }}>
-              {sendError && <div style={{ fontSize:'12px', color:C.red, marginBottom:'6px', padding:'4px 8px', borderRadius:'6px', background:'rgba(255,69,58,0.1)' }}>⚠ {sendError}</div>}
-              <div style={{ display:'flex', gap:'8px', alignItems:'flex-end' }}>
+            {/* Compose */}
+            <div className="border-t border-border px-3 py-2.5 bg-card flex-shrink-0">
+              {sendError && <div className="text-xs text-red-400 mb-1.5 px-2 py-1 rounded bg-red-500/10">⚠ {sendError}</div>}
+              <div className="flex gap-2 items-end">
                 <textarea
                   ref={inputRef}
                   value={draft}
@@ -771,134 +635,134 @@ function InboxContent() {
                   placeholder="Type a message… (Enter to send)"
                   disabled={sending || !tgConnected}
                   rows={1}
-                  style={{ flex:1, background:C.s2, border:'none', borderRadius:'14px', padding:'10px 14px', color:C.t1, fontSize:'14px', resize:'none', outline:'none', lineHeight:'1.5', minHeight:'40px', maxHeight:'120px', fontFamily:'inherit', opacity:(!tgConnected)?0.5:1 }}
+                  className="flex-1 bg-muted border-none rounded-2xl px-3.5 py-2.5 text-sm resize-none outline-none min-h-[40px] max-h-[120px] font-inherit leading-relaxed disabled:opacity-50"
                 />
-                <button onClick={sendMessage} disabled={sending || !draft.trim() || !tgConnected} style={{ width:'40px', height:'40px', borderRadius:'50%', background:(sending||!draft.trim()||!tgConnected)?C.s3:C.blue, border:'none', color:'#fff', fontSize:'18px', cursor:(sending||!draft.trim()||!tgConnected)?'default':'pointer', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, transition:'background 0.15s' }}>
+                <button
+                  onClick={sendMessage}
+                  disabled={sending || !draft.trim() || !tgConnected}
+                  className={cn(
+                    "w-10 h-10 rounded-full flex items-center justify-center text-white text-lg flex-shrink-0 transition-colors",
+                    sending || !draft.trim() || !tgConnected ? "bg-muted text-muted-foreground cursor-default" : "bg-primary cursor-pointer hover:bg-primary/80"
+                  )}
+                >
                   {sending ? '…' : '↑'}
                 </button>
               </div>
-              {!tgConnected && <div style={{ fontSize:'11px', color:C.t3, marginTop:'5px', textAlign:'center' }}>Telegram disconnected — reconnect to send messages</div>}
+              {!tgConnected && <div className="text-[11px] text-muted-foreground text-center mt-1">Telegram disconnected</div>}
             </div>
           </div>
         ) : (
-          <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', color:C.t3 }} className="empty-thread">
-            <div style={{ textAlign:'center' }}>
-              <div style={{ fontSize:'40px', marginBottom:'10px' }}>✉</div>
-              <div style={{ fontSize:'14px' }}>Select a conversation</div>
+          <div className="flex-1 hidden sm:flex items-center justify-center text-muted-foreground">
+            <div className="text-center">
+              <div className="text-4xl mb-2">✉</div>
+              <div className="text-sm">Select a conversation</div>
             </div>
           </div>
         )}
 
-        {/* ── Right insights panel ── */}
+        {/* ── Right panel ── */}
         {selected && panelOpen && (
-          <div style={{ width:'280px', flexShrink:0, borderLeft:`1px solid ${C.sep}`, background:C.s1, display:'flex', flexDirection:'column', overflowY:'auto' }} className="insights-panel">
+          <div className="w-[270px] flex-shrink-0 border-l border-border bg-card flex flex-col overflow-y-auto hidden md:flex">
             {/* Tabs */}
-            <div style={{ display:'flex', borderBottom:`1px solid ${C.sepL}`, flexShrink:0 }}>
+            <div className="flex border-b border-border flex-shrink-0">
               {(['insights','memory'] as const).map(tab => (
-                <button key={tab} onClick={() => setInsightsTab(tab)} style={{
-                  flex:1, padding:'12px 0', background:'none', border:'none', cursor:'pointer',
-                  fontSize:'12px', fontWeight:600, textTransform:'capitalize',
-                  color: insightsTab===tab ? C.blue : C.t3,
-                  borderBottom: insightsTab===tab ? `2px solid ${C.blue}` : '2px solid transparent',
-                  transition:'color 0.15s',
-                }}>{tab === 'insights' ? '🎯 Insights' : '🧠 Memory'}</button>
+                <button key={tab} onClick={() => setInsightsTab(tab)}
+                  className={cn(
+                    "flex-1 py-3 text-xs font-semibold capitalize border-b-2 transition-colors",
+                    insightsTab === tab ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
+                  )}>
+                  {tab === 'insights' ? '🎯 Insights' : '🧠 Memory'}
+                </button>
               ))}
             </div>
 
             {insightsTab === 'insights' ? (
-              <div style={{ padding:'16px', display:'flex', flexDirection:'column', gap:'14px' }}>
+              <div className="p-4 space-y-4">
                 {insightsLoading ? (
-                  <div style={{ textAlign:'center', padding:'30px', color:C.t3 }}>Loading…</div>
+                  <div className="text-center py-8 text-muted-foreground text-sm">Loading…</div>
                 ) : (
                   <>
-                    {/* AI Autopilot toggle */}
-                    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'12px', borderRadius:'12px', background:C.s2 }}>
+                    {/* AI toggle */}
+                    <div className="flex items-center justify-between p-3 rounded-xl bg-muted">
                       <div>
-                        <div style={{ fontSize:'13px', fontWeight:600, marginBottom:'2px' }}>AI Autopilot</div>
-                        <div style={{ fontSize:'11px', color:C.t3 }}>Nika replies automatically</div>
+                        <div className="text-sm font-semibold">AI Autopilot</div>
+                        <div className="text-xs text-muted-foreground">Nika replies automatically</div>
                       </div>
                       <div
                         onClick={() => saveInsights({ ai_enabled: !insights?.ai_enabled })}
-                        style={{ width:'42px', height:'24px', borderRadius:'12px', background: insights?.ai_enabled ? C.green : C.s4, cursor:'pointer', position:'relative', transition:'background 0.2s', opacity:insightsSaving?0.5:1 }}
+                        className={cn("w-10 h-6 rounded-full relative cursor-pointer transition-colors", insights?.ai_enabled ? "bg-green-500" : "bg-muted-foreground/30", insightsSaving && "opacity-50")}
                       >
-                        <div style={{ position:'absolute', top:'3px', left: insights?.ai_enabled ? '21px' : '3px', width:'18px', height:'18px', borderRadius:'50%', background:'#fff', transition:'left 0.2s', boxShadow:'0 1px 3px rgba(0,0,0,0.4)' }} />
+                        <div className={cn("absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-all", insights?.ai_enabled ? "left-5" : "left-1")} />
                       </div>
                     </div>
 
                     {/* Lead label */}
                     <div>
-                      <div style={{ fontSize:'11px', fontWeight:600, color:C.t3, textTransform:'uppercase', letterSpacing:'0.07em', marginBottom:'8px' }}>Lead Stage</div>
-                      <div style={{ display:'flex', flexWrap:'wrap', gap:'6px' }}>
+                      <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">Lead Stage</div>
+                      <div className="flex flex-wrap gap-1.5">
                         {LABELS.map(l => {
                           const active = insights?.lead_label === l;
-                          const col = LABEL_COLORS[l] ?? C.t3;
+                          const cls = LABEL_COLOR[l] ?? '';
                           return (
-                            <button key={l} onClick={() => saveInsights({ lead_label: l })} style={{
-                              padding:'4px 10px', borderRadius:'20px', fontSize:'11px', fontWeight:600, cursor:'pointer', border:'1px solid',
-                              background: active ? `${col}20` : 'transparent',
-                              borderColor: active ? col : C.sep,
-                              color: active ? col : C.t3, transition:'all 0.15s',
-                            }}>{l}</button>
+                            <button key={l} onClick={() => saveInsights({ lead_label: l })}
+                              className={cn("px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all", active ? cls : "border-border text-muted-foreground hover:border-muted-foreground")}>
+                              {l}
+                            </button>
                           );
                         })}
                       </div>
                     </div>
 
-                    {/* Interest tags */}
+                    {/* Interests */}
                     <div>
-                      <div style={{ fontSize:'11px', fontWeight:600, color:C.t3, textTransform:'uppercase', letterSpacing:'0.07em', marginBottom:'8px' }}>Interests</div>
-                      <div style={{ display:'flex', flexWrap:'wrap', gap:'5px' }}>
+                      <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">Interests</div>
+                      <div className="flex flex-wrap gap-1">
                         {INTERESTS.map(tag => {
                           const active = insights?.interest_tags?.includes(tag);
                           return (
                             <button key={tag} onClick={() => {
                               const prev = insights?.interest_tags || [];
-                              const next = active ? prev.filter(t => t !== tag) : [...prev, tag];
-                              saveInsights({ interest_tags: next });
-                            }} style={{
-                              padding:'3px 9px', borderRadius:'16px', fontSize:'10px', fontWeight:500, cursor:'pointer', border:'1px solid',
-                              background: active ? 'rgba(10,132,255,0.15)' : 'transparent',
-                              borderColor: active ? C.blue : C.sep,
-                              color: active ? C.blue : C.t3, transition:'all 0.15s',
-                            }}>{tag}</button>
+                              saveInsights({ interest_tags: active ? prev.filter(t => t !== tag) : [...prev, tag] });
+                            }}
+                              className={cn("px-2 py-0.5 rounded-full text-[10px] font-medium border transition-all",
+                                active ? "bg-primary/15 border-primary/40 text-primary" : "border-border text-muted-foreground hover:border-muted-foreground")}>
+                              {tag}
+                            </button>
                           );
                         })}
                       </div>
                     </div>
 
-                    {/* Purchase status */}
+                    {/* Purchase */}
                     <div>
-                      <div style={{ fontSize:'11px', fontWeight:600, color:C.t3, textTransform:'uppercase', letterSpacing:'0.07em', marginBottom:'6px' }}>Purchase Status</div>
+                      <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Purchase Status</div>
                       <select value={insights?.purchase_status || ''} onChange={e => saveInsights({ purchase_status: e.target.value })}
-                        style={{ width:'100%', background:C.s2, border:`1px solid ${C.sep}`, borderRadius:'8px', padding:'7px 10px', color:C.t1, fontSize:'12px', outline:'none' }}>
+                        className="w-full bg-muted border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none cursor-pointer">
                         <option value="">— Not set —</option>
                         {['NEVER_BOUGHT','VIEWED_ONLY','BOUGHT_ONCE','REPEAT_BUYER','VIP'].map(v => <option key={v} value={v}>{v.replace(/_/g,' ')}</option>)}
                       </select>
                     </div>
 
-                    {/* Loop / wishperme status */}
-                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
-                      <div>
-                        <div style={{ fontSize:'11px', fontWeight:600, color:C.t3, marginBottom:'6px' }}>Loop</div>
-                        <select value={insights?.loop_status || ''} onChange={e => saveInsights({ loop_status: e.target.value })}
-                          style={{ width:'100%', background:C.s2, border:`1px solid ${C.sep}`, borderRadius:'8px', padding:'7px 8px', color:C.t1, fontSize:'11px', outline:'none' }}>
-                          <option value="">—</option>
-                          {['FREE_LOOP','PAID_LOOP','INACTIVE'].map(v => <option key={v} value={v}>{v.replace(/_/g,' ')}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <div style={{ fontSize:'11px', fontWeight:600, color:C.t3, marginBottom:'6px' }}>Wishperme</div>
-                        <select value={insights?.wishperme_status || ''} onChange={e => saveInsights({ wishperme_status: e.target.value })}
-                          style={{ width:'100%', background:C.s2, border:`1px solid ${C.sep}`, borderRadius:'8px', padding:'7px 8px', color:C.t1, fontSize:'11px', outline:'none' }}>
-                          <option value="">—</option>
-                          {['NOT_SHOWN','SHOWN','INTERESTED','SUBSCRIBED'].map(v => <option key={v} value={v}>{v.replace(/_/g,' ')}</option>)}
-                        </select>
-                      </div>
+                    {/* Loop + Wishperme */}
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { label: 'Loop', key: 'loop_status' as keyof Insights, options: ['FREE_LOOP','PAID_LOOP','INACTIVE'] },
+                        { label: 'Wishperme', key: 'wishperme_status' as keyof Insights, options: ['NOT_SHOWN','SHOWN','INTERESTED','SUBSCRIBED'] },
+                      ].map(({ label, key, options }) => (
+                        <div key={key}>
+                          <div className="text-[11px] font-semibold text-muted-foreground mb-1">{label}</div>
+                          <select value={(insights?.[key] as string) || ''} onChange={e => saveInsights({ [key]: e.target.value })}
+                            className="w-full bg-muted border border-border rounded-lg px-2 py-1.5 text-[11px] text-foreground outline-none cursor-pointer">
+                            <option value="">—</option>
+                            {options.map(v => <option key={v} value={v}>{v.replace(/_/g,' ')}</option>)}
+                          </select>
+                        </div>
+                      ))}
                     </div>
 
                     {/* Stats */}
                     {insights && (insights.message_count ?? 0) > 0 && (
-                      <div style={{ padding:'10px 12px', borderRadius:'10px', background:C.s2, display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
+                      <div className="grid grid-cols-2 gap-2 p-3 rounded-xl bg-muted">
                         {[
                           { label:'Total', value: insights.message_count ?? 0 },
                           { label:'Incoming', value: insights.incoming_count ?? 0 },
@@ -906,37 +770,31 @@ function InboxContent() {
                           { label:'AI Sent', value: insights.ai_count ?? 0 },
                         ].map(s => (
                           <div key={s.label}>
-                            <div style={{ fontSize:'10px', color:C.t3 }}>{s.label}</div>
-                            <div style={{ fontSize:'15px', fontWeight:700, color:C.t1 }}>{s.value}</div>
+                            <div className="text-[10px] text-muted-foreground">{s.label}</div>
+                            <div className="text-base font-bold">{s.value}</div>
                           </div>
                         ))}
                       </div>
                     )}
 
-                    {/* Human notes */}
+                    {/* Notes */}
                     <div>
-                      <div style={{ fontSize:'11px', fontWeight:600, color:C.t3, textTransform:'uppercase', letterSpacing:'0.07em', marginBottom:'6px' }}>Notes</div>
+                      <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Notes</div>
                       <textarea
                         value={insights?.human_notes || ''}
                         onChange={e => setInsights(prev => prev ? { ...prev, human_notes: e.target.value } : { human_notes: e.target.value })}
                         onBlur={() => saveInsights({ human_notes: insights?.human_notes || '' })}
-                        placeholder="Private notes about this contact…"
+                        placeholder="Private notes…"
                         rows={3}
-                        style={{ width:'100%', boxSizing:'border-box', background:C.s2, border:`1px solid ${C.sep}`, borderRadius:'10px', padding:'9px 10px', color:C.t1, fontSize:'12px', outline:'none', resize:'vertical', fontFamily:'inherit', lineHeight:1.5 }}
+                        className="w-full bg-muted border border-border rounded-xl px-3 py-2 text-xs outline-none resize-y font-inherit leading-relaxed"
                       />
                     </div>
 
-                    {/* Reset conversation */}
+                    {/* Reset */}
                     <button
                       onClick={() => resetConversation()}
                       disabled={resetting}
-                      style={{
-                        width: '100%', padding: '9px', borderRadius: '10px',
-                        background: 'rgba(255,69,58,0.08)', border: '1px solid rgba(255,69,58,0.25)',
-                        color: '#ff453a', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
-                        opacity: resetting ? 0.5 : 1, transition: 'opacity 0.2s',
-                        marginTop: '4px',
-                      }}
+                      className="w-full py-2.5 rounded-xl bg-red-500/8 border border-red-500/25 text-red-400 text-xs font-semibold hover:bg-red-500/15 transition-colors disabled:opacity-50"
                     >
                       {resetting ? '🗑 Löschen…' : '🗑 Kompletten Chat zurücksetzen'}
                     </button>
@@ -944,28 +802,27 @@ function InboxContent() {
                 )}
               </div>
             ) : (
-              /* Memory tab */
-              <div style={{ padding:'16px', display:'flex', flexDirection:'column', gap:'16px' }}>
-                <div style={{ fontSize:'12px', color:C.t3 }}>Full conversation timeline with AI analysis</div>
+              <div className="p-4 space-y-4">
+                <p className="text-xs text-muted-foreground">Full conversation timeline</p>
                 {memoryGroups.length === 0 ? (
-                  <div style={{ textAlign:'center', padding:'30px', color:C.t3 }}>No messages loaded</div>
+                  <div className="text-center py-8 text-muted-foreground text-sm">No messages loaded</div>
                 ) : memoryGroups.map(({ day, msgs }) => (
                   <div key={day}>
-                    <div style={{ fontSize:'10px', fontWeight:600, color:C.t3, textTransform:'uppercase', letterSpacing:'0.07em', marginBottom:'8px', padding:'4px 8px', background:C.s2, borderRadius:'6px', display:'inline-block' }}>{day}</div>
-                    <div style={{ display:'flex', flexDirection:'column', gap:'6px' }}>
+                    <div className="inline-block text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-2 py-1 bg-muted rounded-md">{day}</div>
+                    <div className="flex flex-col gap-1.5">
                       {msgs.map(m => {
                         const out = m.direction === 'outgoing';
                         return (
-                          <div key={m.id} style={{ display:'flex', gap:'6px', alignItems:'flex-start' }}>
-                            <span style={{ fontSize:'9px', color:C.t3, flexShrink:0, marginTop:'3px', width:'36px', textAlign:'right' }}>{formatTime(m.created_at)}</span>
-                            <div style={{
-                              flex:1, padding:'6px 9px', borderRadius:'8px',
-                              background: out ? (m.is_ai_generated ? 'rgba(191,90,242,0.15)' : 'rgba(10,132,255,0.15)') : C.s2,
-                              fontSize:'12px', lineHeight:1.5, color: out ? C.t1 : C.t2,
-                              borderLeft: `2px solid ${out ? (m.is_ai_generated ? C.purple : C.blue) : C.sep}`,
-                            }}>
-                              {m.text || <em style={{ color:C.t3 }}>[{m.media_type||'media'}]</em>}
-                              {m.is_ai_generated && <span style={{ fontSize:'9px', color:C.purple, marginLeft:'6px' }}>AI</span>}
+                          <div key={m.id} className="flex gap-1.5 items-start">
+                            <span className="text-[9px] text-muted-foreground flex-shrink-0 mt-1 w-9 text-right">{formatTime(m.created_at)}</span>
+                            <div className={cn(
+                              "flex-1 px-2.5 py-1.5 rounded-lg text-xs leading-relaxed border-l-2",
+                              out
+                                ? m.is_ai_generated ? "bg-purple-500/15 text-white border-purple-500" : "bg-primary/15 text-foreground border-primary"
+                                : "bg-muted text-muted-foreground border-border"
+                            )}>
+                              {m.text || <em className="text-muted-foreground">[{m.media_type||'media'}]</em>}
+                              {m.is_ai_generated && <span className="text-[9px] text-purple-400 ml-1.5">AI</span>}
                             </div>
                           </div>
                         );
@@ -979,59 +836,44 @@ function InboxContent() {
         )}
       </div>
 
-      {/* ── Broadcast Modal ── */}
+      {/* Broadcast modal */}
       {broadcastOpen && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.8)', zIndex:2000, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}
+        <div className="fixed inset-0 bg-black/80 z-[2000] flex items-center justify-center p-5"
           onClick={e => { if (e.target === e.currentTarget) setBroadcastOpen(false); }}>
-          <div style={{ background:C.s1, borderRadius:'20px', padding:'24px', width:'100%', maxWidth:'460px', border:`1px solid ${C.sep}` }}>
-            <h3 style={{ margin:'0 0 6px', fontSize:'17px', fontWeight:700 }}>📢 Broadcast Message</h3>
-            <p style={{ fontSize:'13px', color:C.t3, margin:'0 0 18px' }}>
-              Sends to {activeFolder !== 'All' ? `"${activeFolder}" folder` : 'all chats'} ({convos.length} contacts).
-              Nika will auto-reply to everyone who responds.
-            </p>
-
+          <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="font-bold text-base">📢 Broadcast Message</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">Sends to {activeFolder !== 'All' ? `"${activeFolder}"` : 'all chats'} ({convos.length} contacts)</p>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => setBroadcastOpen(false)}><X size={16} /></Button>
+            </div>
             <textarea
               value={broadcastMsg}
               onChange={e => setBroadcastMsg(e.target.value)}
               rows={4}
-              placeholder="Your message…"
-              style={{ width:'100%', boxSizing:'border-box', background:C.s2, border:`1px solid ${C.sep}`, borderRadius:'12px', padding:'12px', color:C.t1, fontSize:'14px', outline:'none', resize:'vertical', fontFamily:'inherit', lineHeight:1.5 }}
+              className="w-full bg-muted border border-border rounded-xl px-3 py-2.5 text-sm outline-none resize-y font-inherit leading-relaxed mb-3"
             />
-
             {broadcastResult && (
-              <div style={{ marginTop:'10px', padding:'8px 12px', borderRadius:'8px', fontSize:'13px',
-                background: broadcastResult.startsWith('✓') ? 'rgba(48,209,88,0.1)' : 'rgba(255,69,58,0.1)',
-                color: broadcastResult.startsWith('✓') ? C.green : C.red }}>
+              <div className={cn("px-3 py-2 rounded-xl text-sm mb-3", broadcastResult.startsWith('✓') ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400")}>
                 {broadcastResult}
               </div>
             )}
-
-            <div style={{ display:'flex', gap:'10px', marginTop:'16px' }}>
-              <button onClick={() => setBroadcastOpen(false)} style={{ flex:1, padding:'11px', borderRadius:'12px', background:C.s3, border:'none', color:C.t2, fontSize:'14px', cursor:'pointer' }}>Cancel</button>
-              <button onClick={sendBroadcast} disabled={broadcasting || !broadcastMsg.trim()} style={{
-                flex:2, padding:'11px', borderRadius:'12px', background:C.purple, border:'none', color:'#fff',
-                fontSize:'14px', fontWeight:600, cursor:'pointer', opacity:(broadcasting||!broadcastMsg.trim())?0.5:1,
-              }}>
-                {broadcasting ? `📤 Sending… please wait` : `📢 Send to ${activeFolder !== 'All' ? activeFolder : 'All'} (${convos.length})`}
-              </button>
+            <div className="flex gap-2.5">
+              <Button variant="outline" className="flex-1" onClick={() => setBroadcastOpen(false)}>Cancel</Button>
+              <Button className="flex-[2] bg-purple-600 hover:bg-purple-500" onClick={sendBroadcast} disabled={broadcasting || !broadcastMsg.trim()}>
+                {broadcasting ? '📤 Sending…' : `📢 Send to ${activeFolder !== 'All' ? activeFolder : 'All'} (${convos.length})`}
+              </Button>
             </div>
           </div>
         </div>
       )}
 
       <style>{`
-        @media(max-width:768px) {
-          .convo-panel { width:100% !important; border-right:none !important; }
-          .back-btn { display:block !important; }
-          .empty-thread { display:none !important; }
-          .insights-panel { display:none !important; }
+        @media(max-width:640px) {
+          .sm\\:hidden { display: block; }
+          .sm\\:flex { display: none !important; }
         }
-        .folder-scroll::-webkit-scrollbar { height:3px; }
-        .folder-scroll::-webkit-scrollbar-track { background:transparent; }
-        .folder-scroll::-webkit-scrollbar-thumb { background:rgba(84,84,88,0.4); border-radius:2px; }
-        .filter-scroll::-webkit-scrollbar { height:3px; }
-        .filter-scroll::-webkit-scrollbar-track { background:transparent; }
-        .filter-scroll::-webkit-scrollbar-thumb { background:rgba(84,84,88,0.3); border-radius:2px; }
       `}</style>
     </DashboardLayout>
   );

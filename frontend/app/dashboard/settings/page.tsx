@@ -3,12 +3,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { useCreator } from '@/contexts/CreatorContext';
-
-const C = {
-  s1:'#111113', s2:'#1c1c1e', s3:'#2c2c2e', sep:'rgba(255,255,255,0.07)',
-  t1:'#fff', t2:'rgba(235,235,245,0.65)', t3:'rgba(235,235,245,0.35)',
-  blue:'#0a84ff', green:'#30d158', red:'#ff453a', orange:'#ff9f0a', purple:'#bf5af2',
-};
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 
 const NIKA_PERSONA = `You are a Telegram sales autopilot for wishperme creator. You write exactly like the creator herself — warm, flirty, teasing, personal, short and natural.
 
@@ -41,7 +38,7 @@ COLD | CURIOUS | HOT | BUYER | TIMEWASTER | CUSTOM | FAILED_PAYMENT | HIGH_INTEN
 
 ## Keyword → Action Rules
 - Price / how much / what does it cost → HOT label, send package menu
-- Link / payment / pay / buy → HOT label, send payment CTA  
+- Link / payment / pay / buy → HOT label, send payment CTA
 - Paid / done / sent → BUYER, confirm and send first wishperme pitch
 - Free / show me first / preview → TIMEWASTER, boundary response
 - Custom / custom video / personalized → CUSTOM, escalate to human
@@ -89,10 +86,10 @@ const MODELS = [
 ];
 
 const LANGUAGES = [
-  { code: 'de', flag: '🇩🇪', label: 'German' },
-  { code: 'en', flag: '🇬🇧', label: 'English' },
-  { code: 'uk', flag: '🇺🇦', label: 'Ukrainian' },
-  { code: 'ru', flag: '🇷🇺', label: 'Russian' },
+  { code: 'de', flag: '🇩🇪', label: 'German',    hint: 'Nika antwortet auf Deutsch wenn jemand Deutsch schreibt' },
+  { code: 'en', flag: '🇬🇧', label: 'English',   hint: 'Nika replies in English when someone writes in English' },
+  { code: 'uk', flag: '🇺🇦', label: 'Ukrainian', hint: 'Ніка відповідає українською, коли хтось пише по-українськи' },
+  { code: 'ru', flag: '🇷🇺', label: 'Russian',   hint: 'Ника отвечает по-русски, когда кто-то пишет по-русски' },
 ];
 
 const getApi = () => {
@@ -100,27 +97,38 @@ const getApi = () => {
   return raw.replace(/\/api\/v1\/?$/, '') + '/api/v1';
 };
 
+type TabKey = 'system_prompt' | 'persona' | 'model' | 'languages' | 'advanced' | 'cash';
+
+const TABS: { key: TabKey; label: string }[] = [
+  { key: 'system_prompt', label: '🛡 System Rules' },
+  { key: 'persona',       label: '🤖 Persona' },
+  { key: 'languages',     label: '🌍 Languages' },
+  { key: 'model',         label: '⚙ Model' },
+  { key: 'cash',          label: '💵 Cash Alarm' },
+  { key: 'advanced',      label: '🔧 Advanced' },
+];
+
 export default function SettingsPage() {
-  const [persona, setPersona] = useState(NIKA_PERSONA);
-  const [aiEnabled, setAiEnabled] = useState(true);
-  const [maxTokens, setMaxTokens] = useState(512);
-  const [temperature, setTemperature] = useState(0.75);
-  const [model, setModel] = useState('claude-haiku-4-5-20251001');
-  const [enabledLanguages, setEnabledLanguages] = useState<string[]>(['de', 'en', 'uk', 'ru']);
-  const [saved, setSaved] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [jsonError, setJsonError] = useState('');
-  const [jsonSuccess, setJsonSuccess] = useState('');
-  const [systemPrompt, setSystemPrompt] = useState('');
-  const [tab, setTab] = useState<'system_prompt'|'persona'|'model'|'languages'|'advanced'|'cash'>('system_prompt');
-  const [cashUsers, setCashUsers] = useState<string[]>(['FuegoFounder', 'rickjames999']);
-  const [cashInput, setCashInput] = useState('');
-  const [cashSaving, setCashSaving] = useState(false);
-  const [cashSaved, setCashSaved] = useState(false);
-  const [aiStatus, setAiStatus] = useState<any>(null);
-  const [testingAI, setTestingAI] = useState(false);
-  const [enablingAll, setEnablingAll] = useState(false);
+  const [persona,          setPersona]         = useState(NIKA_PERSONA);
+  const [aiEnabled,        setAiEnabled]       = useState(true);
+  const [maxTokens,        setMaxTokens]       = useState(512);
+  const [temperature,      setTemperature]     = useState(0.75);
+  const [model,            setModel]           = useState('claude-haiku-4-5-20251001');
+  const [enabledLanguages, setEnabledLanguages] = useState<string[]>(['de','en','uk','ru']);
+  const [saved,            setSaved]           = useState(false);
+  const [saving,           setSaving]          = useState(false);
+  const [loading,          setLoading]         = useState(true);
+  const [jsonError,        setJsonError]       = useState('');
+  const [jsonSuccess,      setJsonSuccess]     = useState('');
+  const [systemPrompt,     setSystemPrompt]    = useState('');
+  const [tab,              setTab]             = useState<TabKey>('system_prompt');
+  const [cashUsers,        setCashUsers]       = useState<string[]>(['FuegoFounder', 'rickjames999']);
+  const [cashInput,        setCashInput]       = useState('');
+  const [cashSaving,       setCashSaving]      = useState(false);
+  const [cashSaved,        setCashSaved]       = useState(false);
+  const [aiStatus,         setAiStatus]        = useState<any>(null);
+  const [testingAI,        setTestingAI]       = useState(false);
+  const [enablingAll,      setEnablingAll]     = useState(false);
   const jsonRef = useRef<HTMLInputElement>(null);
 
   const api = getApi();
@@ -128,10 +136,8 @@ export default function SettingsPage() {
 
   const testAI = useCallback(async () => {
     setTestingAI(true);
-    try {
-      const d = await fetch(`${api}/ai/status`).then(r => r.json());
-      setAiStatus(d);
-    } catch (e: any) { setAiStatus({ error: e.message }); }
+    try { setAiStatus(await fetch(`${api}/ai/status`).then(r => r.json())); }
+    catch (e: any) { setAiStatus({ error: e.message }); }
     finally { setTestingAI(false); }
   }, [api]);
 
@@ -144,7 +150,6 @@ export default function SettingsPage() {
     finally { setEnablingAll(false); }
   }, [api]);
 
-  // Load existing persona + system_prompt on mount — re-run when creator changes
   useEffect(() => {
     Promise.all([
       fetch(withCreator(`${api}/ai/persona`)).then(r => r.json()),
@@ -169,18 +174,15 @@ export default function SettingsPage() {
     try {
       await Promise.all([
         fetch(withCreator(`${api}/ai/persona`), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ persona, ai_enabled: aiEnabled, max_tokens: maxTokens, temperature, model, enabled_languages: enabledLanguages }),
         }),
         fetch(withCreator(`${api}/config/system_prompt`), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(systemPrompt),
         }),
       ]);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
+      setSaved(true); setTimeout(() => setSaved(false), 3000);
     } catch {}
     setSaving(false);
   };
@@ -192,25 +194,14 @@ export default function SettingsPage() {
       try {
         const raw = e.target?.result as string;
         const json = JSON.parse(raw);
-
-        const personaText =
-          json.persona ?? json.system_prompt ?? json.prompt ??
-          json.content ?? json.instructions ?? json.character ??
-          json.ai_persona ?? json.bot_persona ?? null;
-
-        if (typeof personaText === 'string' && personaText.trim()) {
-          setPersona(personaText.trim());
-        } else if (typeof json === 'string') {
-          setPersona(json);
-        }
-
+        const personaText = json.persona ?? json.system_prompt ?? json.prompt ?? json.content ?? json.instructions ?? json.character ?? json.ai_persona ?? json.bot_persona ?? null;
+        if (typeof personaText === 'string' && personaText.trim()) setPersona(personaText.trim());
+        else if (typeof json === 'string') setPersona(json);
         if (typeof json.ai_enabled === 'boolean') setAiEnabled(json.ai_enabled);
         if (typeof json.max_tokens === 'number') setMaxTokens(json.max_tokens);
         if (typeof json.temperature === 'number') setTemperature(json.temperature);
         if (typeof json.model === 'string') setModel(json.model);
-
-        setJsonSuccess(`✓ Loaded from ${file.name}`);
-        setTab('persona');
+        setJsonSuccess(`✓ Loaded from ${file.name}`); setTab('persona');
       } catch { setJsonError('Invalid JSON — could not parse.'); }
     };
     reader.readAsText(file);
@@ -223,328 +214,268 @@ export default function SettingsPage() {
     URL.revokeObjectURL(url);
   };
 
-  const inp = (style?: React.CSSProperties): React.CSSProperties => ({
-    width: '100%', background: C.s2, border: `1px solid ${C.sep}`, borderRadius: '10px',
-    padding: '9px 12px', color: C.t1, fontSize: '13px', outline: 'none', ...style,
-  });
-
   const saveCashUsers = async () => {
     setCashSaving(true);
     try {
       await fetch(withCreator(`${api}/config/cash_notify_users`), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(cashUsers),
       });
-      setCashSaved(true);
-      setTimeout(() => setCashSaved(false), 3000);
+      setCashSaved(true); setTimeout(() => setCashSaved(false), 3000);
     } catch {}
     setCashSaving(false);
   };
 
   const addCashUser = () => {
     const u = cashInput.trim().replace(/^@/, '');
-    if (u && !cashUsers.includes(u)) {
-      setCashUsers(prev => [...prev, u]);
-    }
+    if (u && !cashUsers.includes(u)) setCashUsers(prev => [...prev, u]);
     setCashInput('');
   };
 
-  const TABS = [
-    { key: 'system_prompt' as const, label: '🛡 System Rules' },
-    { key: 'persona'       as const, label: '🤖 Persona' },
-    { key: 'languages'     as const, label: '🌍 Languages' },
-    { key: 'model'         as const, label: '⚙ Model' },
-    { key: 'cash'          as const, label: '💵 Cash Alarm' },
-    { key: 'advanced'      as const, label: '🔧 Advanced' },
-  ];
-
-  const toggleLang = (code: string) => {
-    setEnabledLanguages(prev =>
-      prev.includes(code) ? prev.filter(l => l !== code) : [...prev, code]
-    );
-  };
+  const inputCls = "w-full bg-muted border border-border rounded-xl px-3 py-2 text-sm outline-none";
 
   return (
     <DashboardLayout>
-      <div style={{ padding: '28px 24px', maxWidth: '720px', color: C.t1 }}>
-        <h1 style={{ fontSize: '26px', fontWeight: 700, margin: '0 0 4px', letterSpacing: '-0.03em' }}>AI Settings</h1>
-        <p style={{ color: C.t2, fontSize: '14px', margin: '0 0 24px' }}>Configure Nika — your Telegram sales autopilot</p>
-
-        {/* AI Toggle */}
-        <div style={{ background: C.s1, borderRadius: '16px', padding: '16px 18px', border: `1px solid ${C.sep}`, marginBottom: '14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div>
-            <div style={{ fontWeight: 600, fontSize: '15px' }}>AI Auto-Responses</div>
-            <div style={{ fontSize: '12px', color: C.t3, marginTop: '2px' }}>Nika replies automatically to incoming Telegram messages</div>
-          </div>
-          <div onClick={() => setAiEnabled(v => !v)} style={{
-            width: '44px', height: '26px', borderRadius: '13px', cursor: 'pointer',
-            background: aiEnabled ? C.green : C.s3,
-            position: 'relative', transition: 'background 0.2s', flexShrink: 0,
-          }}>
-            <div style={{ position: 'absolute', top: '3px', left: aiEnabled ? '21px' : '3px', width: '20px', height: '20px', borderRadius: '50%', background: '#fff', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }} />
-          </div>
+      <div className="p-6 max-w-2xl space-y-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">AI Settings</h1>
+          <p className="text-sm text-muted-foreground mt-1">Configure Nika — your Telegram sales autopilot</p>
         </div>
 
+        {/* AI Toggle */}
+        <Card>
+          <CardContent className="pt-4 pb-4 flex items-center justify-between">
+            <div>
+              <div className="font-semibold text-sm">AI Auto-Responses</div>
+              <div className="text-xs text-muted-foreground mt-0.5">Nika replies automatically to incoming Telegram messages</div>
+            </div>
+            <div
+              onClick={() => setAiEnabled(v => !v)}
+              className={cn("w-11 h-6 rounded-full relative cursor-pointer transition-colors flex-shrink-0", aiEnabled ? "bg-green-500" : "bg-muted-foreground/30")}
+            >
+              <div className={cn("absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-all", aiEnabled ? "left-6" : "left-1")} />
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Tabs */}
-        <div style={{ display: 'flex', gap: '4px', marginBottom: '16px', background: C.s1, borderRadius: '12px', padding: '4px', border: `1px solid ${C.sep}` }}>
+        <div className="flex gap-1 bg-card border border-border rounded-xl p-1 overflow-x-auto">
           {TABS.map(t => (
-            <button key={t.key} onClick={() => setTab(t.key)} style={{
-              flex: 1, padding: '8px', borderRadius: '9px', border: 'none', cursor: 'pointer',
-              background: tab === t.key ? C.s2 : 'transparent',
-              color: tab === t.key ? C.t1 : C.t3, fontSize: '13px', fontWeight: tab === t.key ? 600 : 400,
-              transition: 'all 0.12s',
-            }}>{t.label}</button>
+            <button key={t.key} onClick={() => setTab(t.key)}
+              className={cn(
+                "flex-1 px-2.5 py-2 rounded-lg text-xs font-medium transition-all whitespace-nowrap",
+                tab === t.key ? "bg-muted text-foreground font-semibold" : "text-muted-foreground hover:text-foreground"
+              )}>
+              {t.label}
+            </button>
           ))}
         </div>
 
-        {/* JSON Upload / Export strip */}
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-          <label style={{ flex: 1, padding: '9px', borderRadius: '10px', background: C.s1, border: `1px solid ${C.sep}`, color: C.t2, fontSize: '13px', cursor: 'pointer', textAlign: 'center', fontWeight: 500 }}>
+        {/* JSON import/export */}
+        <div className="flex gap-2">
+          <label className="flex-1 py-2.5 rounded-xl bg-card border border-border text-muted-foreground text-xs font-medium text-center cursor-pointer hover:bg-muted transition-colors">
             ⬆ Import JSON
-            <input ref={jsonRef} type="file" accept=".json,.md,.txt" style={{ display: 'none' }} onChange={e => { if (e.target.files?.[0]) handleJsonUpload(e.target.files[0]); e.target.value = ''; }} />
+            <input ref={jsonRef} type="file" accept=".json,.md,.txt" className="hidden" onChange={e => { if (e.target.files?.[0]) handleJsonUpload(e.target.files[0]); e.target.value = ''; }} />
           </label>
-          <button onClick={exportJson} style={{ flex: 1, padding: '9px', borderRadius: '10px', background: C.s1, border: `1px solid ${C.sep}`, color: C.t2, fontSize: '13px', cursor: 'pointer', fontWeight: 500 }}>⬇ Export JSON</button>
+          <button onClick={exportJson} className="flex-1 py-2.5 rounded-xl bg-card border border-border text-muted-foreground text-xs font-medium hover:bg-muted transition-colors">⬇ Export JSON</button>
         </div>
 
-        {jsonError && <div style={{ padding: '8px 14px', borderRadius: '10px', marginBottom: '12px', background: 'rgba(255,69,58,0.1)', color: C.red, fontSize: '13px' }}>{jsonError}</div>}
-        {jsonSuccess && <div style={{ padding: '8px 14px', borderRadius: '10px', marginBottom: '12px', background: 'rgba(48,209,88,0.08)', color: C.green, fontSize: '13px' }}>{jsonSuccess}</div>}
+        {jsonError && <div className="px-3 py-2 rounded-xl bg-red-500/10 text-red-400 text-sm">{jsonError}</div>}
+        {jsonSuccess && <div className="px-3 py-2 rounded-xl bg-green-500/10 text-green-400 text-sm">{jsonSuccess}</div>}
 
-        {/* Tab content */}
+        {/* Tab Content */}
         {tab === 'system_prompt' && (
-          <div style={{ background: C.s1, borderRadius: '16px', padding: '18px', border: `1px solid ${C.sep}` }}>
-            <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>System Rules</div>
-            <div style={{ fontSize: '12px', color: C.t3, marginBottom: '8px', lineHeight: '1.6' }}>
-              Strict behavioral rules applied before everything else. These override the Persona.
-              Use plain text — one rule per line works best.
-            </div>
-            <div style={{ padding: '10px 14px', borderRadius: '10px', background: 'rgba(10,132,255,0.07)', border: '1px solid rgba(10,132,255,0.2)', fontSize: '11px', color: C.blue, marginBottom: '12px', lineHeight: '1.7' }}>
-              🛡 <strong>Highest priority.</strong> The backend prepends this block to every prompt. Claude sees it first and treats it as binding constraints — your Persona comes second.
-            </div>
-            <textarea
-              value={systemPrompt}
-              onChange={e => setSystemPrompt(e.target.value)}
-              rows={18}
-              placeholder={`Example rules:\n- Reply in maximum 2 sentences.\n- Use at most 1 emoji per message.\n- Never mention competitors.\n- Always stay in character as Nika.\n- If someone asks your age, say "old enough 😏".`}
-              style={{ ...inp(), resize: 'vertical', lineHeight: '1.6', fontFamily: '"SF Mono", "Fira Code", monospace', fontSize: '12px' }}
-            />
-            <div style={{ fontSize: '11px', color: C.t3, marginTop: '6px' }}>
-              Leave blank to use Persona alone. Changes take effect after Save.
-            </div>
-          </div>
+          <Card>
+            <CardContent className="pt-4 pb-5 space-y-3">
+              <div>
+                <div className="font-semibold text-sm">System Rules</div>
+                <div className="text-xs text-muted-foreground mt-0.5">Strict behavioral rules applied before everything else. These override the Persona.</div>
+              </div>
+              <div className="px-3 py-2.5 rounded-xl bg-primary/8 border border-primary/20 text-xs text-primary leading-relaxed">
+                🛡 <strong>Highest priority.</strong> The backend prepends this block to every prompt. Claude sees it first — your Persona comes second.
+              </div>
+              <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)} rows={18}
+                placeholder={`Example rules:\n- Reply in maximum 2 sentences.\n- Use at most 1 emoji per message.\n- Never mention competitors.\n- Always stay in character as Nika.`}
+                className={cn(inputCls, "resize-y leading-relaxed font-mono text-xs")} />
+              <div className="text-xs text-muted-foreground">Leave blank to use Persona alone.</div>
+            </CardContent>
+          </Card>
         )}
 
         {tab === 'persona' && (
-          <div style={{ background: C.s1, borderRadius: '16px', padding: '18px', border: `1px solid ${C.sep}` }}>
-            <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>System Prompt</div>
-            <div style={{ fontSize: '12px', color: C.t3, marginBottom: '12px' }}>This is Nika's complete personality, rules, and sales logic. Edit freely.</div>
-            <textarea
-              value={persona}
-              onChange={e => setPersona(e.target.value)}
-              rows={22}
-              style={{ ...inp(), resize: 'vertical', lineHeight: '1.55', fontFamily: '"SF Mono", "Fira Code", monospace', fontSize: '12px' }}
-            />
-          </div>
+          <Card>
+            <CardContent className="pt-4 pb-5 space-y-3">
+              <div>
+                <div className="font-semibold text-sm">System Prompt</div>
+                <div className="text-xs text-muted-foreground mt-0.5">Nika's complete personality, rules, and sales logic.</div>
+              </div>
+              <textarea value={persona} onChange={e => setPersona(e.target.value)} rows={22}
+                className={cn(inputCls, "resize-y leading-relaxed font-mono text-xs")} />
+            </CardContent>
+          </Card>
         )}
 
         {tab === 'languages' && (
-          <div style={{ background: C.s1, borderRadius: '16px', padding: '18px', border: `1px solid ${C.sep}` }}>
-            <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Reply Languages</div>
-            <div style={{ fontSize: '12px', color: C.t3, marginBottom: '18px' }}>
-              Nika detects the language of each incoming message and automatically replies in the same language.
-              Enable the languages you want to support.
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {LANGUAGES.map(lang => {
-                const active = enabledLanguages.includes(lang.code);
-                return (
-                  <div key={lang.code} onClick={() => toggleLang(lang.code)} style={{
-                    display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 16px',
-                    borderRadius: '12px', cursor: 'pointer', transition: 'all 0.15s',
-                    background: active ? 'rgba(10,132,255,0.08)' : C.s2,
-                    border: `1px solid ${active ? 'rgba(10,132,255,0.35)' : C.sep}`,
-                  }}>
-                    <span style={{ fontSize: '26px', lineHeight: 1 }}>{lang.flag}</span>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 600, fontSize: '14px', color: active ? C.t1 : C.t2 }}>{lang.label}</div>
-                      <div style={{ fontSize: '11px', color: C.t3, marginTop: '2px' }}>
-                        {lang.code === 'de' && 'Nika antwortet auf Deutsch wenn jemand Deutsch schreibt'}
-                        {lang.code === 'en' && 'Nika replies in English when someone writes in English'}
-                        {lang.code === 'uk' && 'Ніка відповідає українською, коли хтось пише по-українськи'}
-                        {lang.code === 'ru' && 'Ника отвечает по-русски, когда кто-то пишет по-русски'}
+          <Card>
+            <CardContent className="pt-4 pb-5 space-y-3">
+              <div>
+                <div className="font-semibold text-sm">Reply Languages</div>
+                <div className="text-xs text-muted-foreground mt-0.5">Nika detects the language of each message and replies in the same language.</div>
+              </div>
+              <div className="space-y-2">
+                {LANGUAGES.map(lang => {
+                  const active = enabledLanguages.includes(lang.code);
+                  return (
+                    <div key={lang.code} onClick={() => setEnabledLanguages(prev => prev.includes(lang.code) ? prev.filter(l => l !== lang.code) : [...prev, lang.code])}
+                      className={cn(
+                        "flex items-center gap-3.5 p-3.5 rounded-xl cursor-pointer border transition-all",
+                        active ? "bg-primary/8 border-primary/30" : "bg-muted border-border hover:border-muted-foreground"
+                      )}>
+                      <span className="text-2xl">{lang.flag}</span>
+                      <div className="flex-1">
+                        <div className={cn("font-semibold text-sm", active ? "text-foreground" : "text-muted-foreground")}>{lang.label}</div>
+                        <div className="text-[11px] text-muted-foreground mt-0.5">{lang.hint}</div>
+                      </div>
+                      <div className={cn("w-10 h-6 rounded-full relative flex-shrink-0 transition-colors", active ? "bg-primary" : "bg-muted-foreground/30")}>
+                        <div className={cn("absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-all", active ? "left-5" : "left-1")} />
                       </div>
                     </div>
-                    {/* Toggle switch */}
-                    <div style={{
-                      width: '42px', height: '24px', borderRadius: '12px', flexShrink: 0,
-                      background: active ? C.blue : C.s3,
-                      position: 'relative', transition: 'background 0.2s',
-                    }}>
-                      <div style={{
-                        position: 'absolute', top: '3px', left: active ? '21px' : '3px',
-                        width: '18px', height: '18px', borderRadius: '50%', background: '#fff',
-                        transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
-                      }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div style={{ marginTop: '16px', padding: '12px 14px', borderRadius: '10px', background: C.s2, fontSize: '12px', color: C.t3, lineHeight: 1.6 }}>
-              💡 <strong style={{ color: C.t2 }}>Auto-detect is always on.</strong> Nika reads the language of each message and replies in that language — no manual switching needed.
-              If a user writes in a language not enabled here, Nika defaults to English.
-            </div>
-          </div>
+                  );
+                })}
+              </div>
+              <div className="px-3 py-2.5 rounded-xl bg-muted text-xs text-muted-foreground leading-relaxed">
+                💡 <strong className="text-foreground">Auto-detect is always on.</strong> If a user writes in a language not enabled here, Nika defaults to English.
+              </div>
+            </CardContent>
+          </Card>
         )}
 
         {tab === 'model' && (
-          <div style={{ background: C.s1, borderRadius: '16px', padding: '18px', border: `1px solid ${C.sep}` }}>
-            <label style={{ display: 'block', marginBottom: '16px' }}>
-              <div style={{ fontSize: '12px', color: C.t3, marginBottom: '6px' }}>Claude Model</div>
-              <select value={model} onChange={e => setModel(e.target.value)} style={inp()}>
-                {MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-              </select>
-            </label>
-            <label style={{ display: 'block', marginBottom: '16px' }}>
-              <div style={{ fontSize: '12px', color: C.t3, marginBottom: '6px' }}>Max Tokens: {maxTokens}</div>
-              <input type="range" min={128} max={2048} step={128} value={maxTokens} onChange={e => setMaxTokens(+e.target.value)} style={{ width: '100%', accentColor: C.blue }} />
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: C.t3, marginTop: '4px' }}><span>128 (short)</span><span>2048 (long)</span></div>
-            </label>
-            <label style={{ display: 'block' }}>
-              <div style={{ fontSize: '12px', color: C.t3, marginBottom: '6px' }}>Temperature: {temperature.toFixed(2)}</div>
-              <input type="range" min={0} max={1} step={0.05} value={temperature} onChange={e => setTemperature(+e.target.value)} style={{ width: '100%', accentColor: C.blue }} />
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: C.t3, marginTop: '4px' }}><span>0 (precise)</span><span>1 (creative)</span></div>
-            </label>
-          </div>
+          <Card>
+            <CardContent className="pt-4 pb-5 space-y-4">
+              <label className="block">
+                <div className="text-xs text-muted-foreground mb-1.5">Claude Model</div>
+                <select value={model} onChange={e => setModel(e.target.value)} className={inputCls}>
+                  {MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                </select>
+              </label>
+              <label className="block">
+                <div className="text-xs text-muted-foreground mb-1.5">Max Tokens: {maxTokens}</div>
+                <input type="range" min={128} max={2048} step={128} value={maxTokens} onChange={e => setMaxTokens(+e.target.value)} className="w-full accent-primary" />
+                <div className="flex justify-between text-[10px] text-muted-foreground mt-1"><span>128 (short)</span><span>2048 (long)</span></div>
+              </label>
+              <label className="block">
+                <div className="text-xs text-muted-foreground mb-1.5">Temperature: {temperature.toFixed(2)}</div>
+                <input type="range" min={0} max={1} step={0.05} value={temperature} onChange={e => setTemperature(+e.target.value)} className="w-full accent-primary" />
+                <div className="flex justify-between text-[10px] text-muted-foreground mt-1"><span>0 (precise)</span><span>1 (creative)</span></div>
+              </label>
+            </CardContent>
+          </Card>
         )}
 
         {tab === 'cash' && (
-          <div style={{ background: C.s1, borderRadius: '16px', padding: '20px', border: `1px solid rgba(255,214,0,0.2)` }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
-              <span style={{ fontSize: '28px' }}>💵</span>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: '16px', color: '#ffd60a' }}>Cash Alarm</div>
-                <div style={{ fontSize: '12px', color: C.t3, marginTop: '2px' }}>Wer bekommt eine Telegram-Nachricht wenn ein Kauf bestätigt wird?</div>
-              </div>
-            </div>
-
-            <div style={{ background: 'rgba(255,214,10,0.06)', border: '1px solid rgba(255,214,10,0.15)', borderRadius: '12px', padding: '14px', marginBottom: '16px', marginTop: '14px' }}>
-              <div style={{ fontSize: '12px', color: '#ffd60a', fontWeight: 600, marginBottom: '4px' }}>Was passiert beim Kauf:</div>
-              <div style={{ fontSize: '12px', color: C.t2, lineHeight: 1.8 }}>
-                1. User bestätigt Zahlung (Screenshot / Transaktions-Nr.)<br/>
-                2. Lead wird auf <span style={{ color: '#30d158', fontWeight: 600 }}>BUYER</span> gesetzt<br/>
-                3. Alle Nutzer unten erhalten sofort:<br/>
-                <span style={{ fontFamily: 'monospace', fontSize: '13px', color: '#ffd60a', marginLeft: '16px' }}>💵💵💵 $ CASH CASH CASH $ 💵💵💵</span>
-              </div>
-            </div>
-
-            {/* User list */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '14px' }}>
-              {cashUsers.map(u => (
-                <div key={u} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: C.s2, borderRadius: '10px', padding: '10px 14px' }}>
-                  <span style={{ fontWeight: 600, fontSize: '14px' }}>@{u}</span>
-                  <button onClick={() => setCashUsers(prev => prev.filter(x => x !== u))}
-                    style={{ background: 'none', border: 'none', color: '#ff453a', cursor: 'pointer', fontSize: '16px', padding: '0 4px', lineHeight: 1 }}>✕</button>
+          <Card className="border-yellow-400/20">
+            <CardContent className="pt-4 pb-5 space-y-4">
+              <div className="flex items-center gap-3">
+                <span className="text-3xl">💵</span>
+                <div>
+                  <div className="font-bold text-base text-yellow-400">Cash Alarm</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">Wer bekommt eine Telegram-Nachricht wenn ein Kauf bestätigt wird?</div>
                 </div>
-              ))}
-              {cashUsers.length === 0 && (
-                <div style={{ textAlign: 'center', padding: '20px', color: C.t3, fontSize: '13px' }}>Noch keine Nutzer — füge einen hinzu</div>
-              )}
-            </div>
-
-            {/* Add user input */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-              <input
-                value={cashInput}
-                onChange={e => setCashInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && addCashUser()}
-                placeholder="@username oder username"
-                style={{ flex: 1, background: C.s2, border: `1px solid ${C.sep}`, borderRadius: '10px', padding: '9px 12px', color: C.t1, fontSize: '13px', outline: 'none' }}
-              />
-              <button onClick={addCashUser}
-                style={{ padding: '9px 16px', borderRadius: '10px', background: '#ffd60a', border: 'none', color: '#000', fontWeight: 700, cursor: 'pointer', fontSize: '13px' }}>
-                + Add
+              </div>
+              <div className="px-4 py-3.5 rounded-xl bg-yellow-400/6 border border-yellow-400/15 text-sm leading-relaxed">
+                <div className="text-yellow-400 font-semibold text-xs mb-2">Was passiert beim Kauf:</div>
+                <div className="text-muted-foreground space-y-1 text-xs">
+                  <div>1. User bestätigt Zahlung (Screenshot / Transaktions-Nr.)</div>
+                  <div>2. Lead wird auf <span className="text-green-400 font-semibold">BUYER</span> gesetzt</div>
+                  <div>3. Alle Nutzer unten erhalten: <span className="font-mono text-yellow-400">💵💵💵 $ CASH CASH CASH $ 💵💵💵</span></div>
+                </div>
+              </div>
+              <div className="space-y-2">
+                {cashUsers.map(u => (
+                  <div key={u} className="flex items-center justify-between bg-muted rounded-xl px-3.5 py-2.5">
+                    <span className="font-semibold text-sm">@{u}</span>
+                    <button onClick={() => setCashUsers(prev => prev.filter(x => x !== u))} className="text-red-400 hover:text-red-300 text-lg px-1 leading-none">✕</button>
+                  </div>
+                ))}
+                {cashUsers.length === 0 && <div className="text-center py-4 text-muted-foreground text-sm">Noch keine Nutzer</div>}
+              </div>
+              <div className="flex gap-2">
+                <input value={cashInput} onChange={e => setCashInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && addCashUser()}
+                  placeholder="@username" className={cn(inputCls, "flex-1")} />
+                <button onClick={addCashUser} className="px-4 py-2 rounded-xl bg-yellow-400 text-black font-bold text-sm hover:bg-yellow-300 transition-colors">+ Add</button>
+              </div>
+              <button onClick={saveCashUsers} disabled={cashSaving}
+                className={cn("w-full py-2.5 rounded-xl font-bold text-sm text-black transition-colors", cashSaved ? "bg-green-400" : "bg-yellow-400 hover:bg-yellow-300", cashSaving && "opacity-60")}>
+                {cashSaved ? '✓ Gespeichert!' : cashSaving ? 'Speichere…' : '💾 Cash Alarm speichern'}
               </button>
-            </div>
-
-            <button onClick={saveCashUsers} disabled={cashSaving}
-              style={{ width: '100%', padding: '11px', borderRadius: '12px', background: cashSaved ? '#30d158' : '#ffd60a', border: 'none', color: '#000', fontWeight: 700, fontSize: '14px', cursor: 'pointer', opacity: cashSaving ? 0.6 : 1 }}>
-              {cashSaved ? '✓ Gespeichert!' : cashSaving ? 'Speichere…' : '💾 Cash Alarm speichern'}
-            </button>
-          </div>
+            </CardContent>
+          </Card>
         )}
 
         {tab === 'advanced' && (
-          <div style={{ background: C.s1, borderRadius: '16px', padding: '18px', border: `1px solid ${C.sep}` }}>
-            <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '12px' }}>Advanced Settings</div>
-            <div style={{ padding: '12px', borderRadius: '10px', background: C.s2, fontSize: '13px', color: C.t2, lineHeight: '1.7' }}>
-              <div style={{ marginBottom: '8px' }}>• AI replies to all new incoming messages when enabled</div>
-              <div style={{ marginBottom: '8px' }}>• Per-user AI can be toggled in the inbox insight panel</div>
-              <div style={{ marginBottom: '8px' }}>• Conversation history (last 30 msgs) is always included as context</div>
-              <div style={{ marginBottom: '8px' }}>• Media files are sent based on keywords defined in the Media library</div>
-              <div>• Packages are pitched based on keywords + message count triggers</div>
-            </div>
-          </div>
+          <Card>
+            <CardContent className="pt-4 pb-4">
+              <div className="font-semibold text-sm mb-3">Advanced Settings</div>
+              <div className="space-y-2 text-sm text-muted-foreground leading-relaxed">
+                {[
+                  'AI replies to all new incoming messages when enabled',
+                  'Per-user AI can be toggled in the inbox insight panel',
+                  'Conversation history (last 30 msgs) is always included as context',
+                  'Media files are sent based on keywords defined in the Media library',
+                  'Packages are pitched based on keywords + message count triggers',
+                ].map((item, i) => <div key={i}>• {item}</div>)}
+              </div>
+            </CardContent>
+          </Card>
         )}
 
-        {/* ── AI Diagnostic Panel ── */}
-        <div style={{ marginTop: '16px', background: C.s1, borderRadius: '16px', padding: '16px 18px', border: `1px solid ${C.sep}` }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: aiStatus ? '12px' : '0' }}>
-            <div>
-              <div style={{ fontWeight: 600, fontSize: '14px' }}>🔬 Test Autopilot</div>
-              <div style={{ fontSize: '11px', color: C.t3, marginTop: '2px' }}>Verify key + Claude reachability + enable AI for all chats</div>
+        {/* AI Diagnostic */}
+        <Card>
+          <CardContent className="pt-4 pb-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-semibold text-sm">🔬 Test Autopilot</div>
+                <div className="text-xs text-muted-foreground mt-0.5">Verify API key + Claude reachability</div>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" className="text-green-400 border-green-400/30 bg-green-400/8 hover:bg-green-400/15" onClick={enableAllAI} disabled={enablingAll}>
+                  {enablingAll ? '…' : '⚡ Enable All'}
+                </Button>
+                <Button variant="outline" size="sm" onClick={testAI} disabled={testingAI}>
+                  {testingAI ? '…' : '▶ Run Test'}
+                </Button>
+              </div>
             </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button onClick={enableAllAI} disabled={enablingAll} style={{
-                padding: '7px 14px', borderRadius: '10px', background: 'rgba(48,209,88,0.12)',
-                border: '1px solid rgba(48,209,88,0.3)', color: C.green,
-                fontSize: '12px', fontWeight: 600, cursor: 'pointer', opacity: enablingAll ? 0.5 : 1,
-              }}>
-                {enablingAll ? '…' : '⚡ Enable All'}
-              </button>
-              <button onClick={testAI} disabled={testingAI} style={{
-                padding: '7px 14px', borderRadius: '10px', background: C.s2,
-                border: `1px solid ${C.sep}`, color: C.t2,
-                fontSize: '12px', fontWeight: 600, cursor: 'pointer', opacity: testingAI ? 0.5 : 1,
-              }}>
-                {testingAI ? '…' : '▶ Run Test'}
-              </button>
-            </div>
-          </div>
+            {aiStatus && (
+              <div className="space-y-2">
+                {[
+                  { label: 'API Key', ok: aiStatus.api_key_set, val: aiStatus.api_key_set ? '✓ Set in Railway' : '✗ Missing — add ANTHROPIC_API_KEY in Railway Variables' },
+                  { label: 'Persona', ok: aiStatus.persona_saved, val: aiStatus.persona_saved ? '✓ Saved' : '✗ Not saved — click Save below' },
+                  { label: 'Model', ok: true, val: aiStatus.model },
+                  { label: 'Claude', ok: aiStatus.claude_reachable, val: aiStatus.claude_reachable ? `✓ Online — "${aiStatus.test_response}"` : `✗ Unreachable — ${aiStatus.error || 'unknown error'}` },
+                ].map(row => (
+                  <div key={row.label} className="flex gap-2.5 items-start text-xs">
+                    <span className="w-14 text-muted-foreground flex-shrink-0">{row.label}</span>
+                    <span className={cn("flex-1", row.ok ? "text-green-400" : "text-red-400")}>{row.val}</span>
+                  </div>
+                ))}
+                {aiStatus._enabledAll != null && (
+                  <div className="text-xs text-green-400 pt-2 border-t border-border">✓ AI enabled for {aiStatus._enabledAll} chats</div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
-          {aiStatus && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {[
-                { label: 'API Key', ok: aiStatus.api_key_set, val: aiStatus.api_key_set ? '✓ Set in Railway' : '✗ Missing — add ANTHROPIC_API_KEY in Railway Variables' },
-                { label: 'Persona', ok: aiStatus.persona_saved, val: aiStatus.persona_saved ? '✓ Saved' : '✗ Not saved — click Save below' },
-                { label: 'Model', ok: true, val: aiStatus.model },
-                { label: 'Claude', ok: aiStatus.claude_reachable, val: aiStatus.claude_reachable ? `✓ Online — "${aiStatus.test_response}"` : `✗ Unreachable — ${aiStatus.error || 'unknown error'}` },
-              ].map(row => (
-                <div key={row.label} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', fontSize: '12px' }}>
-                  <span style={{ width: '60px', color: C.t3, flexShrink: 0 }}>{row.label}</span>
-                  <span style={{ color: row.ok ? C.green : C.red, fontWeight: 500, flex: 1 }}>{row.val}</span>
-                </div>
-              ))}
-              {aiStatus._enabledAll != null && (
-                <div style={{ fontSize: '12px', color: C.green, paddingTop: '4px', borderTop: `1px solid ${C.sep}` }}>
-                  ✓ AI enabled for {aiStatus._enabledAll} chats
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Save button */}
-        <button onClick={handleSave} disabled={saving || loading} style={{
-          width: '100%', marginTop: '16px', padding: '13px', borderRadius: '13px',
-          background: saved ? C.green : C.blue, border: 'none', color: '#fff',
-          fontSize: '15px', fontWeight: 600, cursor: 'pointer',
-          opacity: (saving || loading) ? 0.6 : 1, transition: 'background 0.2s',
-        }}>
-          {saved ? '✓ Saved' : saving ? 'Saving…' : 'Save Nika\'s Settings'}
-        </button>
+        {/* Save */}
+        <Button
+          onClick={handleSave}
+          disabled={saving || loading}
+          className={cn("w-full py-5 text-base font-semibold transition-colors", saved ? "bg-green-500 hover:bg-green-500" : "")}
+        >
+          {saved ? '✓ Saved' : saving ? 'Saving…' : "Save Nika's Settings"}
+        </Button>
       </div>
     </DashboardLayout>
   );

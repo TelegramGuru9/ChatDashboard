@@ -4,79 +4,64 @@ import { useEffect, useState, useCallback } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import Link from 'next/link';
 import { useCreator } from '@/contexts/CreatorContext';
-
-const C = {
-  bg:'#0a0a0a', s1:'#111113', s2:'#1c1c1e', s3:'#2c2c2e', sep:'rgba(255,255,255,0.07)',
-  t1:'#fff', t2:'rgba(235,235,245,0.65)', t3:'rgba(235,235,245,0.35)',
-  blue:'#0a84ff', green:'#30d158', red:'#ff453a', orange:'#ff9f0a', purple:'#bf5af2', teal:'#5ac8fa',
-};
-
-function Card({ children, style, onMouseEnter, onMouseLeave }: {
-  children: React.ReactNode; style?: React.CSSProperties;
-  onMouseEnter?: (e: React.MouseEvent<HTMLDivElement>) => void;
-  onMouseLeave?: (e: React.MouseEvent<HTMLDivElement>) => void;
-}) {
-  return (
-    <div style={{ background: C.s1, borderRadius:'16px', border:`1px solid ${C.sep}`, ...style }} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
-      {children}
-    </div>
-  );
-}
-
-function BigToggle({ on, loading, onChange }: { on: boolean; loading: boolean; onChange: () => void }) {
-  return (
-    <button
-      onClick={onChange}
-      disabled={loading}
-      style={{
-        width:'64px', height:'34px', borderRadius:'17px',
-        background: on ? C.green : C.s3,
-        border: 'none', cursor: loading ? 'wait' : 'pointer', position:'relative',
-        transition:'background 0.25s', flexShrink:0, opacity: loading ? 0.6 : 1,
-        boxShadow: on ? `0 0 16px rgba(48,209,88,0.4)` : 'none',
-      }}
-    >
-      <div style={{
-        position:'absolute', top:'4px', left: on ? '34px' : '4px', width:'26px', height:'26px',
-        borderRadius:'50%', background:'#fff', transition:'left 0.25s',
-        boxShadow:'0 1px 4px rgba(0,0,0,0.4)',
-        display:'flex', alignItems:'center', justifyContent:'center', fontSize:'12px',
-      }}>
-        {loading ? '…' : on ? '✓' : ''}
-      </div>
-    </button>
-  );
-}
-
-const QUICK = [
-  { href:'/dashboard/inbox',       icon:'💬', label:'Inbox',       desc:'Alle Gespräche' },
-  { href:'/dashboard/leads',       icon:'🎯', label:'Leads',       desc:'Pipeline & Scoring' },
-  { href:'/dashboard/analytics',   icon:'📊', label:'Analytics',   desc:'Conversion-Metriken' },
-  { href:'/dashboard/media',       icon:'🖼️', label:'Media',       desc:'Teaser & Dateien' },
-  { href:'/dashboard/packages',    icon:'📦', label:'Pakete',      desc:'Angebote & Preise' },
-];
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/utils';
+import {
+  MessageSquare, Users, Target, Bot, Wifi, WifiOff,
+  LayoutDashboard, BarChart3, Image, Package, ArrowRight,
+} from 'lucide-react';
 
 const apiBase = () => {
   const raw = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   return raw.replace(/\/api\/v1\/?$/, '');
 };
 
+const QUICK = [
+  { href: '/dashboard/inbox',     icon: MessageSquare, label: 'Inbox',     desc: 'Alle Gespräche' },
+  { href: '/dashboard/leads',     icon: Target,        label: 'Leads',     desc: 'Pipeline & Scoring' },
+  { href: '/dashboard/analytics', icon: BarChart3,     label: 'Analytics', desc: 'Conversion-Metriken' },
+  { href: '/dashboard/media',     icon: Image,         label: 'Media',     desc: 'Teaser & Dateien' },
+  { href: '/dashboard/packages',  icon: Package,       label: 'Pakete',    desc: 'Angebote & Preise' },
+];
+
+function BigToggle({ on, loading, onChange }: { on: boolean; loading: boolean; onChange: () => void }) {
+  return (
+    <button
+      onClick={onChange}
+      disabled={loading}
+      className={cn(
+        "relative w-16 h-8 rounded-full border-none cursor-pointer transition-all duration-300 flex-shrink-0",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+        on ? "bg-green-500 shadow-[0_0_16px_rgba(34,197,94,0.4)]" : "bg-muted",
+        loading && "opacity-60 cursor-wait"
+      )}
+    >
+      <div className={cn(
+        "absolute top-1 w-6 h-6 rounded-full bg-white shadow-md transition-all duration-300",
+        "flex items-center justify-center text-xs font-bold",
+        on ? "left-[34px] text-green-600" : "left-1 text-muted-foreground"
+      )}>
+        {loading ? '…' : on ? '✓' : ''}
+      </div>
+    </button>
+  );
+}
+
 export default function DashboardPage() {
   const { withCreator } = useCreator();
   const [health,     setHealth]    = useState<any>(null);
   const [tg,         setTg]        = useState<any>(null);
-  const [stats,      setStats]     = useState({ messages:0, users:0, leads:0 });
-  const [autopilot,  setAutopilot] = useState<boolean>(false);
+  const [stats,      setStats]     = useState({ messages: 0, users: 0, leads: 0 });
+  const [autopilot,  setAutopilot] = useState(false);
   const [apLoading,  setApLoading] = useState(true);
-  const [apToggling, setApToggling]= useState(false);
+  const [apToggling, setApToggling] = useState(false);
   const [apStatus,   setApStatus]  = useState('');
 
   const base = apiBase();
   const api  = `${base}/api/v1`;
 
-  // ── Load everything ───────────────────────────────────────────────────────
   const loadAll = useCallback(async () => {
-    // Status, Telegram, quick stats
     Promise.allSettled([
       fetch(`${base}/health`).then(r => r.json()),
       fetch(`${api}/telegram/status`).then(r => r.json()),
@@ -93,20 +78,12 @@ export default function DashboardPage() {
       });
     });
 
-    // Global autopilot state — prefer config, fall back to "are any users enabled?"
     try {
       setApLoading(true);
       const cfgRes = await fetch(withCreator(`${api}/config/autopilot_global`));
       const cfg = await cfgRes.json();
-      if (cfg.value !== null && cfg.value !== undefined) {
-        // Stored config exists
-        setAutopilot(cfg.value?.enabled !== false);
-      } else {
-        // No config yet — check if any user has ai_enabled
-        const usersRes = await fetch(`${api}/users?limit=1`);
-        const usersData = await usersRes.json();
-        setAutopilot(false); // default off if no config
-      }
+      setAutopilot(cfg.value?.enabled !== false && cfg.value !== null && cfg.value !== undefined
+        ? cfg.value?.enabled !== false : false);
     } catch {
       setAutopilot(false);
     } finally {
@@ -116,20 +93,16 @@ export default function DashboardPage() {
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  // ── Toggle autopilot ──────────────────────────────────────────────────────
   const toggleAutopilot = async () => {
     const next = !autopilot;
     setApToggling(true);
     setApStatus('');
     try {
-      // 1. Save global config
       await fetch(withCreator(`${api}/config/autopilot_global`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: next }),
       });
-
-      // 2. Enable or disable all user-level AI flags
       if (next) {
         const res = await fetch(`${api}/ai/enable-all`, { method: 'POST' });
         const d = await res.json();
@@ -139,7 +112,6 @@ export default function DashboardPage() {
         const d = await res.json();
         setApStatus(`Autopilot deaktiviert — ${d.disabled_count ?? '?'} Chats pausiert`);
       }
-
       setAutopilot(next);
     } catch (e: any) {
       setApStatus(`⚠ Fehler: ${e.message}`);
@@ -153,146 +125,161 @@ export default function DashboardPage() {
   const tgOk      = !!tg?.connected;
   const tgName    = tg?.account?.name || tg?.account?.username;
 
-  const STATUS_ITEMS = [
-    { label: 'Backend',  ok: backendOk, value: backendOk ? 'Online' : 'Offline' },
-    { label: 'Telegram', ok: tgOk,      value: tgOk ? (tgName || 'Verbunden') : 'Nicht verbunden' },
-    { label: 'KI-Modell', ok: backendOk, value: backendOk ? 'Bereit' : 'Offline' },
-  ];
-
   const KPIS = [
-    { label: 'Nachrichten', value: stats.messages.toLocaleString(), color: C.blue,   icon: '✉' },
-    { label: 'Nutzer',      value: stats.users.toLocaleString(),    color: C.purple, icon: '👥' },
-    { label: 'Leads',       value: stats.leads.toLocaleString(),    color: C.green,  icon: '🎯' },
-    { label: 'Autopilot',   value: autopilot ? 'Aktiv' : 'Aus',    color: autopilot ? C.green : C.t3, icon: '🤖' },
+    { label: 'Nachrichten', value: stats.messages.toLocaleString(), icon: MessageSquare, color: 'text-blue-400',   border: 'border-t-blue-400' },
+    { label: 'Nutzer',      value: stats.users.toLocaleString(),    icon: Users,         color: 'text-purple-400', border: 'border-t-purple-400' },
+    { label: 'Leads',       value: stats.leads.toLocaleString(),    icon: Target,        color: 'text-green-400',  border: 'border-t-green-400' },
+    { label: 'Autopilot',   value: autopilot ? 'Aktiv' : 'Aus',    icon: Bot,           color: autopilot ? 'text-green-400' : 'text-muted-foreground', border: autopilot ? 'border-t-green-400' : 'border-t-muted' },
   ];
 
   return (
     <DashboardLayout>
-      <div style={{ padding:'28px 24px', maxWidth:'980px', color: C.t1 }}>
+      <div className="p-6 max-w-5xl space-y-6">
 
         {/* Header */}
-        <div style={{ marginBottom:'24px' }}>
-          <h1 style={{ fontSize:'28px', fontWeight:700, margin:0, letterSpacing:'-0.03em' }}>Übersicht</h1>
-          <p style={{ color: C.t2, fontSize:'14px', margin:'4px 0 0' }}>Dein KI-Telegram-CRM auf einen Blick</p>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Übersicht</h1>
+          <p className="text-sm text-muted-foreground mt-1">Dein KI-Telegram-CRM auf einen Blick</p>
         </div>
 
-        {/* ── AUTOPILOT SWITCH ─────────────────────────────────────────────── */}
-        <div style={{
-          background: autopilot
-            ? 'linear-gradient(135deg, rgba(48,209,88,0.12) 0%, rgba(48,209,88,0.04) 100%)'
-            : C.s1,
-          border: `1px solid ${autopilot ? 'rgba(48,209,88,0.3)' : C.sep}`,
-          borderRadius:'18px', padding:'22px 24px', marginBottom:'20px',
-          display:'flex', alignItems:'center', gap:'20px', flexWrap:'wrap',
-          transition:'all 0.3s',
-        }}>
-          {/* Icon */}
-          <div style={{
-            width:'52px', height:'52px', borderRadius:'14px', flexShrink:0, fontSize:'28px',
-            display:'flex', alignItems:'center', justifyContent:'center',
-            background: autopilot ? 'rgba(48,209,88,0.15)' : C.s2,
-            border:`1px solid ${autopilot ? 'rgba(48,209,88,0.25)' : C.sep}`,
-          }}>
-            🤖
-          </div>
-
-          {/* Text */}
-          <div style={{ flex:1, minWidth:'200px' }}>
-            <div style={{ fontWeight:700, fontSize:'17px', marginBottom:'4px' }}>
-              Autopilot
-              {!apLoading && (
-                <span style={{
-                  marginLeft:'10px', fontSize:'11px', fontWeight:600,
-                  padding:'2px 8px', borderRadius:'8px',
-                  background: autopilot ? 'rgba(48,209,88,0.15)' : 'rgba(255,255,255,0.06)',
-                  color: autopilot ? C.green : C.t3,
-                }}>
-                  {autopilot ? '● AKTIV' : '○ AUS'}
-                </span>
-              )}
-            </div>
-            <div style={{ fontSize:'13px', color: C.t2 }}>
-              {autopilot
-                ? 'Nika antwortet automatisch — KI aktiv für alle Chats. Einzelne Chats im Inbox deaktivierbar.'
-                : 'Autopilot ist aus — Nika antwortet nicht automatisch. Einschalten um alle Chats zu aktivieren.'}
-            </div>
-            {apStatus && (
-              <div style={{ fontSize:'12px', marginTop:'6px', color: apStatus.startsWith('✓') ? C.green : apStatus.startsWith('⚠') ? C.orange : C.t2 }}>
-                {apStatus}
+        {/* Autopilot card */}
+        <Card className={cn(
+          "transition-all duration-300",
+          autopilot && "border-green-500/30 bg-green-500/5"
+        )}>
+          <CardContent className="pt-5 pb-5">
+            <div className="flex items-center gap-5 flex-wrap">
+              <div className={cn(
+                "w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 text-2xl transition-colors",
+                autopilot ? "bg-green-500/15 border border-green-500/25" : "bg-muted border border-border"
+              )}>
+                🤖
               </div>
-            )}
-          </div>
-
-          {/* Toggle */}
-          <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:'6px' }}>
-            <BigToggle on={autopilot} loading={apLoading || apToggling} onChange={toggleAutopilot} />
-            <span style={{ fontSize:'10px', color: C.t3 }}>{autopilot ? 'Ausschalten' : 'Einschalten'}</span>
-          </div>
-        </div>
+              <div className="flex-1 min-w-[200px]">
+                <div className="flex items-center gap-2.5 mb-1">
+                  <span className="font-bold text-base">Autopilot</span>
+                  {!apLoading && (
+                    <Badge variant={autopilot ? 'default' : 'secondary'} className={cn(
+                      "text-xs",
+                      autopilot ? "bg-green-500/15 text-green-400 border-green-500/20" : ""
+                    )}>
+                      {autopilot ? '● AKTIV' : '○ AUS'}
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {autopilot
+                    ? 'Nika antwortet automatisch — KI aktiv für alle Chats. Einzelne Chats im Inbox deaktivierbar.'
+                    : 'Autopilot ist aus — Nika antwortet nicht automatisch. Einschalten um alle Chats zu aktivieren.'}
+                </p>
+                {apStatus && (
+                  <p className={cn(
+                    "text-xs mt-1.5",
+                    apStatus.startsWith('✓') ? "text-green-400" : apStatus.startsWith('⚠') ? "text-orange-400" : "text-muted-foreground"
+                  )}>
+                    {apStatus}
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-col items-center gap-1.5">
+                <BigToggle on={autopilot} loading={apLoading || apToggling} onChange={toggleAutopilot} />
+                <span className="text-[10px] text-muted-foreground">{autopilot ? 'Ausschalten' : 'Einschalten'}</span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Status bar */}
-        <Card style={{ padding:'14px 20px', marginBottom:'20px', display:'flex', alignItems:'center', gap:'24px', flexWrap:'wrap' }}>
-          {STATUS_ITEMS.map(s => (
-            <div key={s.label} style={{ display:'flex', alignItems:'center', gap:'8px' }}>
-              <span style={{ width:'7px', height:'7px', borderRadius:'50%', background: s.ok ? C.green : C.red, flexShrink:0, boxShadow: s.ok ? `0 0 8px ${C.green}` : 'none' }} />
-              <span style={{ fontSize:'12px', color: C.t3, fontWeight:500 }}>{s.label}</span>
-              <span style={{ fontSize:'12px', color: s.ok ? C.t1 : C.red, fontWeight:600 }}>{s.value}</span>
+        <Card>
+          <CardContent className="py-3.5 px-5">
+            <div className="flex items-center gap-6 flex-wrap">
+              {[
+                { label: 'Backend',   ok: backendOk, value: backendOk ? 'Online' : 'Offline' },
+                { label: 'Telegram',  ok: tgOk,      value: tgOk ? (tgName || 'Verbunden') : 'Nicht verbunden' },
+                { label: 'KI-Modell', ok: backendOk, value: backendOk ? 'Bereit' : 'Offline' },
+              ].map(s => (
+                <div key={s.label} className="flex items-center gap-2">
+                  <span className={cn(
+                    "w-2 h-2 rounded-full flex-shrink-0",
+                    s.ok ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" : "bg-red-500"
+                  )} />
+                  <span className="text-xs text-muted-foreground font-medium">{s.label}</span>
+                  <span className={cn("text-xs font-semibold", s.ok ? "text-foreground" : "text-red-400")}>{s.value}</span>
+                </div>
+              ))}
+              {!tgOk && (
+                <Link href="/dashboard/inbox" className="ml-auto text-xs text-primary font-semibold hover:underline">
+                  Verbindung reparieren →
+                </Link>
+              )}
             </div>
-          ))}
-          {!tgOk && (
-            <Link href="/dashboard/inbox" style={{ marginLeft:'auto', fontSize:'12px', color: C.blue, fontWeight:600 }}>
-              Verbindung reparieren →
-            </Link>
-          )}
+          </CardContent>
         </Card>
 
         {/* KPIs */}
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'12px', marginBottom:'20px' }} className="kpi-grid">
-          {KPIS.map(k => (
-            <Card key={k.label} style={{ padding:'20px 18px', borderTop:`2px solid ${k.color}` }}>
-              <div style={{ fontSize:'11px', color: C.t3, textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:'10px' }}>{k.label}</div>
-              <div style={{ fontSize:'30px', fontWeight:700, color: k.color, letterSpacing:'-0.03em', lineHeight:1 }}>{k.value}</div>
-            </Card>
-          ))}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {KPIS.map(k => {
+            const Icon = k.icon;
+            return (
+              <Card key={k.label} className={cn("border-t-2", k.border)}>
+                <CardContent className="pt-4 pb-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs text-muted-foreground uppercase tracking-widest font-medium">{k.label}</span>
+                    <Icon size={14} className={k.color} />
+                  </div>
+                  <div className={cn("text-3xl font-bold tracking-tight leading-none", k.color)}>{k.value}</div>
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
 
         {/* Quick access */}
-        <div style={{ fontSize:'11px', fontWeight:600, color: C.t3, textTransform:'uppercase', letterSpacing:'0.09em', marginBottom:'12px' }}>
-          Schnellzugriff
-        </div>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:'12px' }} className="ql-grid">
-          {QUICK.map(q => (
-            <Link key={q.href} href={q.href} style={{ display:'block', textDecoration:'none' }}>
-              <Card style={{ padding:'18px', cursor:'pointer', transition:'border-color 0.15s, transform 0.1s' }}
-                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = C.blue; (e.currentTarget as HTMLElement).style.transform = 'translateY(-1px)'; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = C.sep; (e.currentTarget as HTMLElement).style.transform = ''; }}
-              >
-                <div style={{ fontSize:'24px', marginBottom:'10px' }}>{q.icon}</div>
-                <div style={{ fontWeight:600, fontSize:'14px', marginBottom:'3px', color: C.t1 }}>{q.label}</div>
-                <div style={{ fontSize:'12px', color: C.t3 }}>{q.desc}</div>
-              </Card>
-            </Link>
-          ))}
+        <div>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3">Schnellzugriff</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {QUICK.map(q => {
+              const Icon = q.icon;
+              return (
+                <Link key={q.href} href={q.href} className="block group">
+                  <Card className="h-full transition-all duration-150 group-hover:border-primary/50 group-hover:-translate-y-px">
+                    <CardContent className="pt-4 pb-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="w-9 h-9 rounded-lg bg-muted flex items-center justify-center group-hover:bg-primary/10 transition-colors">
+                          <Icon size={18} className="text-muted-foreground group-hover:text-primary transition-colors" />
+                        </div>
+                        <ArrowRight size={14} className="text-muted-foreground/40 group-hover:text-primary/60 transition-colors" />
+                      </div>
+                      <div className="font-semibold text-sm mb-0.5">{q.label}</div>
+                      <div className="text-xs text-muted-foreground">{q.desc}</div>
+                    </CardContent>
+                  </Card>
+                </Link>
+              );
+            })}
+          </div>
         </div>
 
-        {/* Help callout if not connected */}
+        {/* Telegram not connected callout */}
         {!tgOk && (
-          <Card style={{ padding:'16px 20px', marginTop:'20px', background:'rgba(10,132,255,0.06)', borderColor:'rgba(10,132,255,0.2)', display:'flex', alignItems:'center', gap:'14px' }}>
-            <span style={{ fontSize:'24px' }}>🔗</span>
-            <div>
-              <div style={{ fontWeight:600, fontSize:'14px', marginBottom:'2px' }}>Telegram nicht verbunden</div>
-              <div style={{ fontSize:'13px', color: C.t2 }}>
-                Gehe zu <Link href="/dashboard/inbox" style={{ color: C.blue }}>Inbox</Link> und klicke Reconnect um Chats und Autopilot zu aktivieren.
+          <Card className="border-primary/20 bg-primary/5">
+            <CardContent className="pt-4 pb-4">
+              <div className="flex items-center gap-4">
+                <WifiOff size={22} className="text-primary flex-shrink-0" />
+                <div>
+                  <p className="font-semibold text-sm mb-0.5">Telegram nicht verbunden</p>
+                  <p className="text-sm text-muted-foreground">
+                    Gehe zu{' '}
+                    <Link href="/dashboard/inbox" className="text-primary hover:underline font-medium">Inbox</Link>
+                    {' '}und klicke Reconnect um Chats und Autopilot zu aktivieren.
+                  </p>
+                </div>
               </div>
-            </div>
+            </CardContent>
           </Card>
         )}
-      </div>
 
-      <style>{`
-        @media(max-width:640px) { .kpi-grid{grid-template-columns:repeat(2,1fr)!important} .ql-grid{grid-template-columns:1fr!important} }
-        @media(min-width:641px) and (max-width:900px) { .ql-grid{grid-template-columns:repeat(2,1fr)!important} }
-      `}</style>
+      </div>
     </DashboardLayout>
   );
 }
