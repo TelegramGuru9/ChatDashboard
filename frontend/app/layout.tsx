@@ -1,9 +1,8 @@
 import type { Metadata } from 'next';
 import './globals.css';
-import { Inter } from "next/font/google";
-import { cn } from "@/lib/utils";
+import { Inter } from 'next/font/google';
 
-const geist = Inter({subsets:['latin'],variable:'--font-sans'});
+const inter = Inter({ subsets: ['latin'], variable: '--font-sans' });
 
 export const metadata: Metadata = {
   title: 'AI Telegram CRM',
@@ -12,8 +11,8 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={cn("dark", "font-sans", geist.variable)}>
-      <body style={{ background: '#0d1117', color: '#e2e8f0', minHeight: '100vh' }}>
+    <html lang="en" className={`dark ${inter.variable}`}>
+      <body className="min-h-screen bg-background text-foreground antialiased">
         {children}
       </body>
     </html>
