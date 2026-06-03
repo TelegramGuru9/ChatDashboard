@@ -5,8 +5,8 @@ import { Inter } from 'next/font/google';
 const inter = Inter({ subsets: ['latin'], variable: '--font-sans' });
 
 export const metadata: Metadata = {
-  title: 'AI Telegram CRM',
-  description: 'AI-powered Telegram CRM platform',
+  title: 'WishperME — Telegram API Dashboard',
+  description: 'AI-powered Telegram CRM & sales autopilot',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

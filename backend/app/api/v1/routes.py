@@ -486,7 +486,7 @@ async def analytics_summary(
                 (SELECT COUNT(*) FROM users WHERE (lead_score < 40 OR lead_score IS NULL) {cfilter}) AS cold_leads,
                 (SELECT COUNT(*) FROM users WHERE ai_enabled = true {cfilter}) AS ai_enabled_count,
                 (SELECT COUNT(*) FROM users WHERE (is_bot = false OR is_bot IS NULL)
-                    AND extra_data->>'lead_label' = 'HOT' {cfilter}) AS hot_label_count
+                    AND metadata->>'lead_label' = 'HOT' {cfilter}) AS hot_label_count
         """), cparams)
         row = raw.fetchone()
 
