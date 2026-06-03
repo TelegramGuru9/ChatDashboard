@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Script from 'next/script';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { useCreator } from '@/contexts/CreatorContext';
 import { cn } from '@/lib/utils';
@@ -9,6 +10,14 @@ import {
   Zap, MessageSquare, TrendingUp, List,
 } from 'lucide-react';
 import Link from 'next/link';
+
+// Extract only the <stripe-buy-button> custom element — strip the <script> tag
+// (the script is loaded once via next/script at page level)
+function extractStripeElement(code: string): string {
+  return code
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .trim();
+}
 
 const getApi = () =>
   (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/api\/v1\/?$/, '') + '/api/v1';
@@ -182,6 +191,11 @@ export default function MessagePreviewPage() {
           </div>
         </div>
 
+        {/* Load Stripe buy button script once for the whole page */}
+        {activePackages.some((p: any) => p.stripe_button_code) && (
+          <Script src="https://js.stripe.com/v3/buy-button.js" strategy="lazyOnload" />
+        )}
+
         {loading ? (
           <div className="text-sm text-muted-foreground py-8 text-center">Loading…</div>
         ) : (
@@ -241,40 +255,68 @@ export default function MessagePreviewPage() {
             )}
 
             {/* ── 3. Purchase Previews ─────────────────────────────────────── */}
-            {activePackages.some(p => p.payment_link) && (
+            {activePackages.some((p: any) => p.payment_link || p.stripe_button_code) && (
               <Section
                 icon={<ShoppingCart className="h-3.5 w-3.5" />}
                 label="Purchase Previews"
                 color="bg-green-500/10 text-green-400"
               >
                 <div className="divide-y divide-border">
-                  {activePackages.filter(p => p.payment_link).map((pkg: any, i: number) => {
-                    const price    = pkg.price ? `${pkg.price} ${pkg.currency || '€'}`.trim() : '';
-                    const orderEx  = `NIKA-${String(i + 1).padStart(6, '0')}`;
-                    const pkgText  = (
-                      pkg.package_text?.trim() ||
-                      pkg.package_preview_description?.trim() ||
-                      pkg.description?.trim() ||
-                      ''
-                    );
-                    const text = pkgText
-                      ? `🧾 ${orderEx}\n\n${pkgText}`
-                      : `🧾 ${orderEx} — ${pkg.name}\n\n💰 ${price}\n\nKlick auf den Button um sicher zu bezahlen 🔐`;
-                    return (
-                      <div key={pkg.id || i} className="px-4 py-4 space-y-2">
-                        <div className="text-xs text-muted-foreground font-medium">
-                          {pkg.name}{price ? ` · ${price}` : ''} — payment message + button
+                  {activePackages
+                    .filter((p: any) => p.payment_link || p.stripe_button_code)
+                    .map((pkg: any, i: number) => {
+                      const price   = pkg.price ? `${pkg.price} ${pkg.currency || '€'}`.trim() : '';
+                      const orderEx = `NIKA-${String(i + 1).padStart(6, '0')}`;
+                      const pkgText = (
+                        pkg.package_text?.trim() ||
+                        pkg.package_preview_description?.trim() ||
+                        pkg.description?.trim() ||
+                        ''
+                      );
+                      const text = pkgText
+                        ? `🧾 ${orderEx}\n\n${pkgText}`
+                        : `🧾 ${orderEx} — ${pkg.name}\n\n💰 ${price}\n\nKlick auf den Button um sicher zu bezahlen 🔐`;
+
+                      const stripeEl = pkg.stripe_button_code
+                        ? extractStripeElement(pkg.stripe_button_code)
+                        : null;
+
+                      return (
+                        <div key={pkg.id || i} className="px-4 py-4 space-y-3">
+                          <div className="text-xs text-muted-foreground font-medium">
+                            {pkg.name}{price ? ` · ${price}` : ''} — payment message
+                          </div>
+
+                          {/* Telegram message bubble */}
+                          <TgBubble text={text} />
+
+                          {/* Stripe buy button — rendered live */}
+                          {stripeEl ? (
+                            <div className="space-y-1.5">
+                              <div className="text-[10px] text-green-400 font-semibold uppercase tracking-wide">
+                                💳 Stripe Buy Button (live)
+                              </div>
+                              <div
+                                className="rounded-xl overflow-hidden bg-white p-3 border border-border"
+                                dangerouslySetInnerHTML={{ __html: stripeEl }}
+                              />
+                            </div>
+                          ) : pkg.payment_link ? (
+                            <div className="space-y-1.5">
+                              <div className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide">
+                                💳 Inline Button (Telethon)
+                              </div>
+                              <div className="px-4 py-2.5 rounded-xl bg-primary/15 border border-primary/30 text-xs font-semibold text-primary text-center">
+                                💳 Jetzt kaufen{price ? ` — ${price}` : ''}
+                              </div>
+                              <div className="text-[10px] text-muted-foreground font-mono break-all">
+                                🔗 {pkg.payment_link}
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
-                        <TgBubble
-                          text={text}
-                          button={`💳 Jetzt kaufen${price ? ` — ${price}` : ''}`}
-                        />
-                        <div className="text-[10px] text-muted-foreground font-mono break-all mt-1">
-                          🔗 {pkg.payment_link}
-                        </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
                 </div>
               </Section>
             )}
