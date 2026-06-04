@@ -337,7 +337,30 @@ def _detect_sales_intent(
     ]):
         return {"intent": "ready_to_pay", "matched_package": matched_pkg, "package_index": matched_idx}
 
-    # ── 5. Default ─────────────────────────────────────────────────────────────
+    # ── 5. Package interest: "what do you have / prices / packages?" ─────────
+    # These questions should trigger the package menu — NOT just a Claude chat reply.
+    if any(kw in t for kw in [
+        # German — price / package curiosity
+        "was kostet", "wie viel kostet", "wieviel kostet", "wie viel ist",
+        "deine pakete", "deine inhalte", "deine videos", "deine bilder",
+        "was hast du", "was hast du so", "was gibst du", "was gibts bei dir",
+        "welche pakete", "welche angebote", "welche videos", "welche bilder",
+        "zeig mir deine", "zeig deine", "zeig mal deine",
+        "was für videos", "was für bilder", "was für content", "was für pakete",
+        "deine preise", "preis liste", "preisliste", "paketpreise",
+        "was bietest du", "was gibt es", "was kann ich kaufen",
+        "was kann ich sehen", "was kann man kaufen", "was verkaufst du",
+        # English — price / package curiosity
+        "what do you have", "what do you offer", "what videos do you have",
+        "what packages", "your packages", "your prices", "price list",
+        "how much", "how much does", "what's the price", "what is the price",
+        "show me your", "what content", "what can i buy", "do you have videos",
+        "do you sell", "what do you sell", "what's available", "what is available",
+        "what are your packages", "what are your prices",
+    ]):
+        return {"intent": "package_interest", "matched_package": matched_pkg, "package_index": matched_idx}
+
+    # ── 6. Default ─────────────────────────────────────────────────────────────
     return {"intent": "browsing", "matched_package": matched_pkg, "package_index": matched_idx}
 
 
@@ -432,6 +455,30 @@ class MessageDebouncer:
         entry["task"] = asyncio.create_task(_fire())
 
 
+# ── Per-turn action lock ───────────────────────────────────────────────────────
+
+class _ActionLock:
+    """
+    In-memory per-(user_id, creator_id) lock.
+    Prevents duplicate AI-response execution for the same user turn —
+    e.g. if the debouncer somehow fires twice, or a restart races with an in-flight call.
+    """
+
+    def __init__(self) -> None:
+        self._active: set = set()
+
+    def acquire(self, user_id, creator_id: Optional[str]) -> bool:
+        """Return True and mark active. Return False if already active (caller should skip)."""
+        key = (str(user_id), creator_id)
+        if key in self._active:
+            return False
+        self._active.add(key)
+        return True
+
+    def release(self, user_id, creator_id: Optional[str]) -> None:
+        self._active.discard((str(user_id), creator_id))
+
+
 # ── Main processor ─────────────────────────────────────────────────────────────
 
 class MessageProcessor:
@@ -440,6 +487,7 @@ class MessageProcessor:
         self._processor_running = False
         self._stats = {"processed": 0, "failed": 0, "ai_responses": 0}
         self.debouncer = MessageDebouncer()
+        self._action_lock = _ActionLock()
 
     async def process_incoming_message(self, event_data: Dict[str, Any]) -> bool:
         try:
@@ -1055,7 +1103,17 @@ class MessageProcessor:
         creator_id: Optional[str] = None,
     ) -> None:
         """Generate Claude AI response and send it via Telegram with human-like timing."""
+        _lock_acquired = False
         try:
+            # ── Action lock: prevent duplicate execution for the same user turn ──
+            _lock_acquired = self._action_lock.acquire(user_id, creator_id)
+            if not _lock_acquired:
+                logger.warning(
+                    f"[action-lock] duplicate call blocked for "
+                    f"user={str(user_id)[:8]}… (creator={creator_id})"
+                )
+                return
+
             if not settings.ANTHROPIC_API_KEY:
                 logger.warning("ANTHROPIC_API_KEY not set — AI autopilot disabled.")
                 return
@@ -1166,6 +1224,43 @@ class MessageProcessor:
                 ]
                 sales_intent = _detect_sales_intent(incoming_text, _active_pkgs, user_extra)
 
+                # ── Load system behavior settings ───────────────────────────
+                ss_res = await session.execute(
+                    select(Config).where(Config.key == "system_settings")
+                )
+                ss_cfg = ss_res.scalars().first()
+                system_settings: dict = {
+                    "autopilot_enabled":        True,
+                    "use_persona":              True,
+                    "use_reply_settings":       True,
+                    "use_package_keywords":     True,
+                    "use_purchase_keywords":    True,
+                    "use_cash_workflow":        True,
+                    "auto_status_change":       True,
+                    "human_handover_after_buy": True,
+                    "never_ask_for_email":      True,
+                    "never_send_paid_media":    True,
+                }
+                if ss_cfg and isinstance(ss_cfg.value, dict):
+                    system_settings.update(ss_cfg.value)
+
+                # ── Load reply settings (blocked words, flirt level, etc.) ──
+                rs_res = await session.execute(
+                    select(Config).where(Config.key == "reply_settings")
+                )
+                rs_cfg = rs_res.scalars().first()
+                reply_settings: dict = {}
+                if rs_cfg and isinstance(rs_cfg.value, dict):
+                    reply_settings = rs_cfg.value
+
+            # ── System settings: main autopilot switch ──────────────────────
+            if not system_settings.get("autopilot_enabled", True):
+                logger.info(
+                    f"[system_settings] autopilot_enabled=False — "
+                    f"skipping for user={str(user_id)[:8]}…"
+                )
+                return
+
             # ── ABSOLUTE OUTPUT RULE — injected first, before everything else ──
             # This prevents internal reasoning / placeholder tokens from leaking
             # into the actual Telegram message sent to the user.
@@ -1194,6 +1289,7 @@ class MessageProcessor:
                 )
 
             # ── Hard payment rule: NEVER ask for email or PayPal address ──────
+            # Always injected; strengthened if system_settings.never_ask_for_email is True
             system_prompt += (
                 "\n\nPAYMENT RULE (non-negotiable, always applies): "
                 "NEVER ask the user for their email address, PayPal address, or any contact details. "
@@ -1201,6 +1297,15 @@ class MessageProcessor:
                 "Do NOT mention email, PayPal, bank transfer, or any manual payment method. "
                 "If the user asks how to pay, tell them to use the button/link provided."
             )
+
+            # ── system_settings safety rules ───────────────────────────────────
+            if system_settings.get("never_send_paid_media", True):
+                system_prompt += (
+                    "\n\nCONTENT SAFETY RULE (absolute): NEVER offer to send, describe sending, "
+                    "or reference delivering any paid content files in chat. "
+                    "Paid content is ONLY released after confirmed payment through the system. "
+                    "Do not say 'I will send you' or 'I can send you' about any paid content."
+                )
 
             # ── Recent-replies context: inject last 3 bot messages so Claude ──
             # can self-check and avoid repetition
@@ -1215,6 +1320,60 @@ class MessageProcessor:
             # ── Sales flow: intercept or inject based on detected intent ─────
             _si        = sales_intent["intent"]
             _si_pkg    = sales_intent.get("matched_package")
+
+            # ── package_interest → send the configured package menu directly ─
+            # "was kostet", "deine pakete", "what do you have", etc.
+            # Bypasses Claude entirely — sends the real menu from config.
+            if _si == "package_interest" and _active_pkgs and system_settings.get("use_package_keywords", True):
+                menu_text = self._build_package_menu_text(_active_pkgs)
+                try:
+                    from telethon.tl.functions.messages import SetTypingRequest
+                    from telethon.tl.types import SendMessageTypingAction
+                    await tg_client.client(
+                        SetTypingRequest(peer=telegram_id, action=SendMessageTypingAction())
+                    )
+                except Exception:
+                    pass
+                await _human_typing_delay(menu_text, persona_data)
+                _menu_tg_id = await self._send_with_retry(tg_client, telegram_id, menu_text)
+                if _menu_tg_id:
+                    self._log_action(
+                        "send_package_menu", user_id, telegram_id, _si, "success",
+                        f"packages={len(_active_pkgs)}"
+                    )
+                    async with db_manager.get_session() as _sm:
+                        _sm.add(Message(
+                            message_id=_menu_tg_id, user_id=user_id, text=menu_text,
+                            direction="outgoing", has_media=False, is_ai_generated=True,
+                            extra_data={"source": "sales_flow", "intent": "package_interest"},
+                            created_at=_naive_utc(),
+                        ))
+                        # Tag lead as WARM when they show package interest
+                        if system_settings.get("auto_status_change", True):
+                            _u_m_res = await _sm.execute(select(User).where(User.id == user_id))
+                            _u_m = _u_m_res.scalars().first()
+                            if _u_m:
+                                _ex_m = dict(_u_m.extra_data or {})
+                                if _ex_m.get("lead_label") not in ("HOT", "BUYER"):
+                                    _ex_m["lead_label"] = "WARM"
+                                    _u_m.extra_data = _ex_m
+                        await _sm.commit()
+                    asyncio.create_task(self._update_lead_funnel(user_id, "price_inquiry"))
+                    try:
+                        import main as _main
+                        _main._broadcast_new_message(str(user_id), {
+                            "id": str(_menu_tg_id), "text": menu_text,
+                            "direction": "outgoing", "is_ai_generated": True,
+                            "created_at": _naive_utc().isoformat(),
+                        })
+                    except Exception:
+                        pass
+                else:
+                    self._log_action(
+                        "send_package_menu", user_id, telegram_id, _si, "failed",
+                        "all send attempts failed"
+                    )
+                return
 
             # ── ready_to_pay WITHOUT a selected package → show menu first ───
             # Prevents the bot from jumping straight to payment instructions
@@ -1233,8 +1392,12 @@ class MessageProcessor:
                 except Exception:
                     pass
                 await _human_typing_delay(menu_text, persona_data)
-                _tg_id2 = await tg_client.send_message(telegram_id, menu_text)
+                _tg_id2 = await self._send_with_retry(tg_client, telegram_id, menu_text)
                 if _tg_id2:
+                    self._log_action(
+                        "send_package_menu", user_id, telegram_id, _si, "success",
+                        f"packages={len(_active_pkgs)}"
+                    )
                     async with db_manager.get_session() as _s2:
                         _s2.add(Message(
                             message_id=_tg_id2, user_id=user_id, text=menu_text,
@@ -1243,12 +1406,14 @@ class MessageProcessor:
                             created_at=_naive_utc(),
                         ))
                         # Tag as WARM — user received package list
-                        _u2r = await _s2.execute(select(User).where(User.id == user_id))
-                        _u2 = _u2r.scalars().first()
-                        if _u2:
-                            _ex2 = dict(_u2.extra_data or {})
-                            _ex2["lead_label"] = "WARM"
-                            _u2.extra_data = _ex2
+                        if system_settings.get("auto_status_change", True):
+                            _u2r = await _s2.execute(select(User).where(User.id == user_id))
+                            _u2 = _u2r.scalars().first()
+                            if _u2:
+                                _ex2 = dict(_u2.extra_data or {})
+                                if _ex2.get("lead_label") not in ("HOT", "BUYER"):
+                                    _ex2["lead_label"] = "WARM"
+                                    _u2.extra_data = _ex2
                         await _s2.commit()
                     asyncio.create_task(self._update_lead_funnel(user_id, "price_inquiry"))
                     try:
@@ -1259,6 +1424,11 @@ class MessageProcessor:
                         })
                     except Exception:
                         pass
+                else:
+                    self._log_action(
+                        "send_package_menu", user_id, telegram_id, _si, "failed",
+                        "all send attempts failed"
+                    )
                 return
 
             # ── selecting_package → send Stripe link directly, skip Claude ────
@@ -1305,10 +1475,14 @@ class MessageProcessor:
                     except Exception:
                         pass
                     await asyncio.sleep(1.5)
-                    _pay_tg_id = await tg_client.send_message(
-                        telegram_id, pay_msg, buttons=pay_button
+                    _pay_tg_id = await self._send_with_retry(
+                        tg_client, telegram_id, pay_msg, buttons=pay_button
                     )
                     if _pay_tg_id:
+                        self._log_action(
+                            "send_payment_link", user_id, telegram_id, _si, "success",
+                            f"package={p_name}"
+                        )
                         async with db_manager.get_session() as _ps:
                             _ps.add(Message(
                                 message_id=_pay_tg_id, user_id=user_id, text=pay_msg,
@@ -1316,13 +1490,19 @@ class MessageProcessor:
                                 extra_data={"source": "sales_flow", "intent": "payment_link_sent", "package": p_name},
                                 created_at=_naive_utc(),
                             ))
-                            # Tag lead as HOT
+                            # Tag lead as HOT + optionally disable autopilot (human handover)
                             _ur = await _ps.execute(select(User).where(User.id == user_id))
                             _u = _ur.scalars().first()
                             if _u:
                                 _ex = dict(_u.extra_data or {})
                                 _ex["lead_label"] = "HOT"
                                 _u.extra_data = _ex
+                                if system_settings.get("human_handover_after_buy", True):
+                                    _u.ai_enabled = False
+                                    logger.info(
+                                        f"[human-handover] ai_enabled=False for user {user_id} "
+                                        f"after payment link sent (selecting_package)"
+                                    )
                             await _ps.commit()
                         asyncio.create_task(self._update_lead_funnel(user_id, "payment_link_sent"))
                         try:
@@ -1334,7 +1514,11 @@ class MessageProcessor:
                             })
                         except Exception:
                             pass
-                    logger.info(f"[sales-flow] selecting_package → sent Stripe link for '{p_name}'")
+                    else:
+                        self._log_action(
+                            "send_payment_link", user_id, telegram_id, _si, "failed",
+                            f"package={p_name}"
+                        )
                     return  # Payment link sent — no Claude call needed
                 else:
                     # No Stripe link configured → fall through to Claude with injection
@@ -1386,10 +1570,14 @@ class MessageProcessor:
                         except Exception:
                             pass
                         await asyncio.sleep(1.0)
-                        _pay2_tg_id = await tg_client.send_message(
-                            telegram_id, pay_msg2, buttons=pay_button2
+                        _pay2_tg_id = await self._send_with_retry(
+                            tg_client, telegram_id, pay_msg2, buttons=pay_button2
                         )
                         if _pay2_tg_id:
+                            self._log_action(
+                                "send_payment_link", user_id, telegram_id, _si, "success",
+                                f"package={_sel_name}"
+                            )
                             async with db_manager.get_session() as _ps2:
                                 _ps2.add(Message(
                                     message_id=_pay2_tg_id, user_id=user_id, text=pay_msg2,
@@ -1397,6 +1585,16 @@ class MessageProcessor:
                                     extra_data={"source": "sales_flow", "intent": "payment_link_reminder"},
                                     created_at=_naive_utc(),
                                 ))
+                                # Human handover: disable autopilot after buy link sent
+                                if system_settings.get("human_handover_after_buy", True):
+                                    _u_h2_res = await _ps2.execute(select(User).where(User.id == user_id))
+                                    _u_h2 = _u_h2_res.scalars().first()
+                                    if _u_h2:
+                                        _u_h2.ai_enabled = False
+                                        logger.info(
+                                            f"[human-handover] ai_enabled=False for user {user_id} "
+                                            f"after payment link sent (ready_to_pay)"
+                                        )
                                 await _ps2.commit()
                             asyncio.create_task(self._update_lead_funnel(user_id, "payment_link_sent"))
                             try:
@@ -1408,7 +1606,11 @@ class MessageProcessor:
                                 })
                             except Exception:
                                 pass
-                        logger.info(f"[sales-flow] ready_to_pay → sent Stripe link for '{_sel_name}'")
+                        else:
+                            self._log_action(
+                                "send_payment_link", user_id, telegram_id, _si, "failed",
+                                f"package={_sel_name}"
+                            )
                         return
                     else:
                         system_prompt += (
@@ -1506,6 +1708,23 @@ class MessageProcessor:
                         f"({original_len} → {len(ai_text)} chars)"
                     )
 
+            # ── Blocked words filter (reply_settings) ──────────────────────
+            if system_settings.get("use_reply_settings", True):
+                _blocked = reply_settings.get("blocked_words", [])
+                if _blocked and isinstance(_blocked, list):
+                    for _bw in _blocked:
+                        if not _bw or not isinstance(_bw, str):
+                            continue
+                        if _bw.lower() in ai_text.lower():
+                            logger.warning(f"[blocked-words] stripping '{_bw}' from AI response")
+                            ai_text = re.sub(re.escape(_bw), "***", ai_text, flags=re.IGNORECASE).strip()
+
+            if not ai_text:
+                logger.warning(f"[post-process] AI text empty after filtering for {telegram_id}")
+                return
+
+            self._log_action("send_ai_reply", user_id, telegram_id, _si, "pending",
+                             f"chars={len(ai_text)}")
             logger.info(f"✓ AI response for tg_id={telegram_id}: {ai_text[:120]}")
 
             # ── Human delay: show typing indicator while waiting ────────────
@@ -1520,9 +1739,11 @@ class MessageProcessor:
 
             await _human_typing_delay(ai_text, persona_data)
 
-            # ── Send via Telegram ───────────────────────────────────────────
-            tg_msg_id = await tg_client.send_message(telegram_id, ai_text)
+            # ── Send via Telegram (with retry) ──────────────────────────────
+            tg_msg_id = await self._send_with_retry(tg_client, telegram_id, ai_text)
             if tg_msg_id is None:
+                self._log_action("send_ai_reply", user_id, telegram_id, _si, "failed",
+                                 "all send attempts failed")
                 logger.error(f"Telegram send failed for tg_id={telegram_id}")
                 return
 
@@ -1569,10 +1790,65 @@ class MessageProcessor:
                 pass
 
             self._stats["ai_responses"] += 1
+            self._log_action("send_ai_reply", user_id, telegram_id, _si, "success",
+                             f"tg_msg_id={tg_msg_id}")
             logger.info(f"AI stats: {self._stats}")
 
         except Exception as e:
             logger.error(f"AI response failed for tg_id={telegram_id}: {e}", exc_info=True)
+        finally:
+            if _lock_acquired:
+                self._action_lock.release(user_id, creator_id)
+
+    def _log_action(
+        self,
+        action: str,
+        user_id,
+        telegram_id: int,
+        intent: str,
+        result: str,
+        detail: str = "",
+    ) -> None:
+        """Structured one-line log for every autopilot action."""
+        logger.info(
+            f"[AUTOPILOT] action={action} | intent={intent} | "
+            f"user={str(user_id)[:8]}… | tg={telegram_id} | result={result}"
+            + (f" | {detail}" if detail else "")
+        )
+
+    async def _send_with_retry(
+        self,
+        tg_client,
+        telegram_id: int,
+        text: str,
+        buttons=None,
+        max_attempts: int = 2,
+    ) -> Optional[int]:
+        """
+        Send a Telegram message with one automatic retry on transient failure.
+        Returns the Telegram message ID on success, None after all attempts fail.
+        """
+        for attempt in range(max_attempts):
+            try:
+                if buttons is not None:
+                    result = await tg_client.send_message(telegram_id, text, buttons=buttons)
+                else:
+                    result = await tg_client.send_message(telegram_id, text)
+                if result is not None:
+                    return result
+                logger.warning(
+                    f"[send-retry] send_message returned None "
+                    f"(attempt {attempt + 1}/{max_attempts}, tg={telegram_id})"
+                )
+            except Exception as exc:
+                logger.warning(
+                    f"[send-retry] attempt {attempt + 1}/{max_attempts} failed "
+                    f"for tg={telegram_id}: {exc}"
+                )
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(2.0)
+        logger.error(f"[send-retry] all {max_attempts} attempts failed for tg={telegram_id}")
+        return None
 
     async def _update_lead_funnel(self, user_id: UUID, interaction_type: str = "ai_reply") -> None:
         """
