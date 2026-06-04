@@ -28,6 +28,47 @@ def _naive_utc() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+# ── Package promise regex (module-level compile) ───────────────────────────────
+# Used to strip verbal package listing from Claude's output when no menu action ran.
+_PACKAGE_PROMISE_RE = re.compile(
+    r'(hier sind meine (pakete?|angebote?|inhalte?)|'
+    r'here are my packages?|'
+    r'ich habe folgende (pakete?|angebote?)|'
+    r'meine (pakete?|angebote?)\s*:)',
+    re.IGNORECASE,
+)
+
+
+async def _load_creator_config(
+    key: str,
+    creator_id: Optional[str],
+    session,
+) -> Optional[Any]:
+    """
+    Load a Config value with creator-scoped fallback.
+
+    Lookup order:
+      1. creator:<creator_id>:<key>  (non-default creator specific)
+      2. <key>                       (global/default-creator value)
+    Returns cfg.value or None if not found.
+    """
+    if creator_id:
+        scoped = f"creator:{creator_id}:{key}"
+        res = await session.execute(select(Config).where(Config.key == scoped))
+        cfg = res.scalars().first()
+        if cfg is not None:
+            logger.debug(f"[config] loaded scoped '{scoped}'")
+            return cfg.value
+        logger.debug(f"[config] '{key}' — no creator-specific config, using global fallback")
+    res = await session.execute(select(Config).where(Config.key == key))
+    cfg = res.scalars().first()
+    if cfg is not None:
+        logger.debug(f"[config] loaded '{key}' (unscoped, creator_id={creator_id})")
+        return cfg.value
+    logger.debug(f"[config] key '{key}' not found (creator_id={creator_id})")
+    return None
+
+
 # ── Persona helpers ────────────────────────────────────────────────────────────
 
 def _build_system_prompt(persona_data: dict) -> str:
@@ -319,6 +360,8 @@ def _detect_sales_intent(
         # German
         "ich nehme", "ich will", "nehme ich", "das nehme", "ich hätte gerne",
         "ich kaufe", "ich bestelle", "ich möchte das",
+        "nehm ich", "kauf ich", "möchte ich", "will ich haben",
+        "will ich nehmen", "ich möchte kaufen",
         # English
         "i'll take", "i want this", "i want that", "i'll go with",
         "give me package", "i'd like this",
@@ -350,6 +393,11 @@ def _detect_sales_intent(
         "deine preise", "preis liste", "preisliste", "paketpreise",
         "was bietest du", "was gibt es", "was kann ich kaufen",
         "was kann ich sehen", "was kann man kaufen", "was verkaufst du",
+        # German — casual "show me / surprise me" phrasing
+        "zeig mir was", "überrasch mich", "was hast du da",
+        "was kannst du schicken", "hast du was für", "zeig mal was",
+        "schick mir was", "was schickst du", "was hast du an content",
+        "kauflink", "checkout",
         # English — price / package curiosity
         "what do you have", "what do you offer", "what videos do you have",
         "what packages", "your packages", "your prices", "price list",
@@ -357,6 +405,7 @@ def _detect_sales_intent(
         "show me your", "what content", "what can i buy", "do you have videos",
         "do you sell", "what do you sell", "what's available", "what is available",
         "what are your packages", "what are your prices",
+        "send me something", "surprise me", "checkout link",
     ]):
         return {"intent": "package_interest", "matched_package": matched_pkg, "package_index": matched_idx}
 
@@ -1134,26 +1183,22 @@ class MessageProcessor:
             tg_client = self._resolve_tg_client(creator_id)
 
             async with db_manager.get_session() as session:
-                result = await session.execute(select(Config).where(Config.key == "persona"))
-                cfg = result.scalars().first()
-                persona_data = cfg.value if cfg else {}
+                # Fix 3: use creator-scoped config with global fallback
+                _persona_val = await _load_creator_config("persona", creator_id, session)
+                persona_data: dict = _persona_val if isinstance(_persona_val, dict) else {}
 
                 if persona_data.get("ai_enabled") is False:
                     logger.debug("AI globally disabled — skipping")
                     return
 
                 # ── Load operator system rules (highest priority) ───────────
-                sys_rule_res = await session.execute(
-                    select(Config).where(Config.key == "system_prompt")
-                )
-                sys_rule_cfg = sys_rule_res.scalars().first()
+                _sys_prompt_val = await _load_creator_config("system_prompt", creator_id, session)
                 operator_rules: str = ""
-                if sys_rule_cfg:
-                    raw_val = sys_rule_cfg.value
-                    if isinstance(raw_val, str):
-                        operator_rules = raw_val.strip()
-                    elif isinstance(raw_val, dict):
-                        operator_rules = str(raw_val.get("value", "") or "").strip()
+                if _sys_prompt_val is not None:
+                    if isinstance(_sys_prompt_val, str):
+                        operator_rules = _sys_prompt_val.strip()
+                    elif isinstance(_sys_prompt_val, dict):
+                        operator_rules = str(_sys_prompt_val.get("value", "") or "").strip()
 
                 # ── Build system prompt from persona JSON ───────────────────
                 base_prompt = _build_system_prompt(persona_data)
@@ -1213,11 +1258,7 @@ class MessageProcessor:
                 user_extra = dict(user_obj.extra_data or {}) if user_obj else {}
 
                 # ── Load active packages + detect sales intent ──────────────
-                _sp_res = await session.execute(
-                    select(Config).where(Config.key == "packages")
-                )
-                _sp_cfg = _sp_res.scalars().first()
-                _pkg_raw = _sp_cfg.value if _sp_cfg else []
+                _pkg_raw = await _load_creator_config("packages", creator_id, session)
                 _active_pkgs: list = [
                     p for p in (_pkg_raw if isinstance(_pkg_raw, list) else [])
                     if p.get("active", True) and p.get("name")
@@ -1225,10 +1266,7 @@ class MessageProcessor:
                 sales_intent = _detect_sales_intent(incoming_text, _active_pkgs, user_extra)
 
                 # ── Load system behavior settings ───────────────────────────
-                ss_res = await session.execute(
-                    select(Config).where(Config.key == "system_settings")
-                )
-                ss_cfg = ss_res.scalars().first()
+                _ss_val = await _load_creator_config("system_settings", creator_id, session)
                 system_settings: dict = {
                     "autopilot_enabled":        True,
                     "use_persona":              True,
@@ -1241,17 +1279,14 @@ class MessageProcessor:
                     "never_ask_for_email":      True,
                     "never_send_paid_media":    True,
                 }
-                if ss_cfg and isinstance(ss_cfg.value, dict):
-                    system_settings.update(ss_cfg.value)
+                if isinstance(_ss_val, dict):
+                    system_settings.update(_ss_val)
 
                 # ── Load reply settings (blocked words, flirt level, etc.) ──
-                rs_res = await session.execute(
-                    select(Config).where(Config.key == "reply_settings")
-                )
-                rs_cfg = rs_res.scalars().first()
+                _rs_val = await _load_creator_config("reply_settings", creator_id, session)
                 reply_settings: dict = {}
-                if rs_cfg and isinstance(rs_cfg.value, dict):
-                    reply_settings = rs_cfg.value
+                if isinstance(_rs_val, dict):
+                    reply_settings = _rs_val
 
             # ── System settings: main autopilot switch ──────────────────────
             if not system_settings.get("autopilot_enabled", True):
@@ -1307,6 +1342,20 @@ class MessageProcessor:
                     "Do not say 'I will send you' or 'I can send you' about any paid content."
                 )
 
+            # ── PACKAGE RULE: prevent Claude from verbally listing packages ──
+            # The backend sends the package menu as a real Telegram message;
+            # Claude must not duplicate or promise it in plain text.
+            system_prompt += (
+                "\n\nPACKAGE RULE (absolute): If the user asks about packages, prices, content, "
+                "videos, photos, offers, links, checkout, or buying — do NOT list, describe, "
+                "promise, or imply sending packages in your text reply. The backend sends "
+                "packages separately and automatically. Write only ONE short teaser sentence at "
+                "most (e.g. 'hab da was geiles für dich' or 'schick ich dir gleich'). "
+                "NEVER write phrases like 'here are my packages', 'hier sind meine pakete', "
+                "'ich habe folgende angebote', or any list of package names, prices, or "
+                "descriptions."
+            )
+
             # ── Recent-replies context: inject last 3 bot messages so Claude ──
             # can self-check and avoid repetition
             recent_bot_replies = [m.text for m in recent if m.direction == "outgoing" and m.text][-3:]
@@ -1320,6 +1369,14 @@ class MessageProcessor:
             # ── Sales flow: intercept or inject based on detected intent ─────
             _si        = sales_intent["intent"]
             _si_pkg    = sales_intent.get("matched_package")
+
+            # Fix 7: structured intent log at routing entry
+            logger.info(
+                f"[intent] detected='{_si}' | "
+                f"pkg='{_si_pkg.get('name', 'none') if _si_pkg else 'none'}' | "
+                f"tg={telegram_id} | "
+                f"text='{incoming_text[:60]}{'...' if len(incoming_text) > 60 else ''}'"
+            )
 
             # ── package_interest → send the configured package menu directly ─
             # "was kostet", "deine pakete", "what do you have", etc.
@@ -1526,7 +1583,7 @@ class MessageProcessor:
                         f"\n\nPACKAGE SELECTED: user chose '{p_name}' ({p_price}). "
                         f"Confirm enthusiastically in persona. Sentence limit applies."
                     )
-                    logger.info(f"[sales-flow] selecting_package → no payment link, using Claude for '{p_name}'")
+                    logger.warning(f"[sales-flow] selecting_package → NO payment_link configured for '{p_name}' — falling back to Claude text")
 
             # ── ready_to_pay WITH a selected package → send Stripe link directly ─
             elif _si == "ready_to_pay" and user_extra.get("selected_package_id"):
@@ -1697,6 +1754,19 @@ class MessageProcessor:
 
             # ── Post-process: strip dashes + enforce sentence limit ────────
             ai_text = _clean_response(ai_text)
+
+            # Fix 4: Package promise guard — strip verbal package listings from
+            # Claude's output when no package-menu backend action was executed.
+            # This catches the case where Claude says "hier sind meine pakete..."
+            # despite the PACKAGE RULE in the system prompt.
+            if _si == "browsing" and _PACKAGE_PROMISE_RE.search(ai_text):
+                logger.warning(
+                    f"[package-guard] stripped package promise from Claude output for tg={telegram_id} | "
+                    f"original='{ai_text[:80]}'"
+                )
+                ai_text = _PACKAGE_PROMISE_RE.sub("", ai_text).strip()
+                if not ai_text:
+                    ai_text = "hab da was geiles für dich 😌"
 
             max_sents = int(persona_data.get("max_sentences", 3))
             if max_sents > 0:

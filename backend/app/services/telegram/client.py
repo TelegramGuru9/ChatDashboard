@@ -48,6 +48,14 @@ class TelegramClientManager:
     async def connect(self) -> bool:
         """Connect using env-var credentials (default creator / legacy mode)."""
         self._last_error: str = ""
+        # Fix 6: disconnect existing client before creating a new one to prevent ghost clients
+        if self.client:
+            try:
+                await self.client.disconnect()
+            except Exception:
+                pass
+            self.client = None
+        self._is_connected = False
         try:
             if not settings.TELEGRAM_API_ID or not settings.TELEGRAM_API_HASH:
                 self._last_error = "TELEGRAM_API_ID or TELEGRAM_API_HASH not set in Railway env vars"
@@ -181,14 +189,19 @@ class TelegramClientManager:
 
     # ── Messaging helpers ────────────────────────────────────────────────
 
-    async def send_message(self, user_id: int, text: str, reply_to: Optional[int] = None) -> Optional[int]:
+    async def send_message(self, user_id: int, text: str, reply_to: Optional[int] = None, buttons=None) -> Optional[int]:
         if not await self.ensure_connected():
             return None
         try:
-            message = await self.client.send_message(entity=user_id, message=text, reply_to=reply_to)
+            kwargs: Dict[str, Any] = {}
+            if reply_to is not None:
+                kwargs["reply_to"] = reply_to
+            if buttons is not None:
+                kwargs["buttons"] = buttons
+            message = await self.client.send_message(entity=user_id, message=text, **kwargs)
             return message.id
         except Exception as e:
-            logger.error(f"Failed to send message to {user_id}: {e}")
+            logger.error(f"Failed to send message to {user_id} (buttons={'yes' if buttons else 'no'}): {e}")
             return None
 
     async def send_file(self, user_id: int, file_bytes, caption: str = "", file_name: str = "file") -> Optional[int]:

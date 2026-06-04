@@ -416,6 +416,7 @@ async def _seed_default_packages():
             "currency": "EUR",
             "active": True,
             "auto_send": False,
+            "payment_link": "",
             "pitch_message": PITCH_DE,
             "translations": {
                 "de": {
@@ -447,6 +448,7 @@ async def _seed_default_packages():
             "currency": "EUR",
             "active": True,
             "auto_send": False,
+            "payment_link": "",
             "pitch_message": PITCH_DE,
             "translations": {
                 "de": {
@@ -478,6 +480,7 @@ async def _seed_default_packages():
             "currency": "EUR",
             "active": True,
             "auto_send": False,
+            "payment_link": "",
             "pitch_message": PITCH_DE,
             "translations": {
                 "de": {
