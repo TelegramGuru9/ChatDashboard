@@ -1265,6 +1265,19 @@ class MessageProcessor:
                 ]
                 sales_intent = _detect_sales_intent(incoming_text, _active_pkgs, user_extra)
 
+                # ── Load list_message config ────────────────────────────────
+                _list_msg_raw = await _load_creator_config("list_message", creator_id, session)
+                _list_cfg: dict = _list_msg_raw if isinstance(_list_msg_raw, dict) else {}
+                _list_msg_text: str = str(_list_cfg.get("message", "")).strip()
+                _list_kw_str: str = str(_list_cfg.get("keywords", ""))
+                _list_keywords: list = [k.strip().lower() for k in _list_kw_str.split(",") if k.strip()]
+                _list_auto_at: int = int(_list_cfg.get("auto_send_at", 30) or 30)
+                _list_active: bool = bool(_list_cfg.get("active", True))
+
+                # ── Grab user message count for auto-send threshold ─────────
+                _user_msg_count: int = int(user_obj.total_messages or 0) if user_obj else 0
+                _list_already_sent: bool = bool(user_extra.get("list_message_sent_at"))
+
                 # ── Load system behavior settings ───────────────────────────
                 _ss_val = await _load_creator_config("system_settings", creator_id, session)
                 system_settings: dict = {
@@ -1295,6 +1308,116 @@ class MessageProcessor:
                     f"skipping for user={str(user_id)[:8]}…"
                 )
                 return
+
+            # ── Pre-AI: keyword-triggered pre-written messages ────────────────────
+            # Package keyword match → send package.message verbatim, no AI call.
+            # List-message keyword match → send list_message verbatim, no AI call.
+            # Auto-send list_message at threshold (once per user), then continue to AI.
+            if system_settings.get("use_package_keywords", True):
+                _inc_lower = incoming_text.lower()
+
+                # 1. Per-package keyword → send that package's message verbatim
+                for _pkg in _active_pkgs:
+                    _pkg_msg = str(_pkg.get("message", "")).strip()
+                    _pkg_kws = [k.strip().lower() for k in str(_pkg.get("keywords", "")).split(",") if k.strip()]
+                    if _pkg_kws and _pkg_msg and any(k in _inc_lower for k in _pkg_kws):
+                        await _human_typing_delay(_pkg_msg, persona_data)
+                        _ptid = await self._send_with_retry(tg_client, telegram_id, _pkg_msg)
+                        if _ptid:
+                            async with db_manager.get_session() as _ps:
+                                _ps.add(Message(
+                                    message_id=_ptid, user_id=user_id, text=_pkg_msg,
+                                    direction="outgoing", has_media=False, is_ai_generated=False,
+                                    extra_data={"source": "package_keyword", "package_id": _pkg.get("id", "")},
+                                    created_at=_naive_utc(),
+                                ))
+                                if system_settings.get("auto_status_change", True):
+                                    _upr = await _ps.execute(select(User).where(User.id == user_id))
+                                    _up = _upr.scalars().first()
+                                    if _up:
+                                        _ep = dict(_up.extra_data or {})
+                                        if _ep.get("lead_label") not in ("HOT", "BUYER"):
+                                            _ep["lead_label"] = "HOT"
+                                            _up.extra_data = _ep
+                                await _ps.commit()
+                            try:
+                                import main as _main
+                                _main._broadcast_new_message(str(user_id), {
+                                    "id": str(_ptid), "text": _pkg_msg,
+                                    "direction": "outgoing", "is_ai_generated": False,
+                                    "created_at": _naive_utc().isoformat(),
+                                })
+                            except Exception:
+                                pass
+                            self._log_action(
+                                "send_pkg_msg", user_id, telegram_id, "keyword", "success",
+                                f"pkg={_pkg.get('name', '')}"
+                            )
+                        return  # do not also call AI
+
+                # 2. List-message keyword → send list_message verbatim
+                if _list_active and _list_msg_text and _list_keywords:
+                    if any(k in _inc_lower for k in _list_keywords):
+                        await _human_typing_delay(_list_msg_text, persona_data)
+                        _ltid = await self._send_with_retry(tg_client, telegram_id, _list_msg_text)
+                        if _ltid:
+                            async with db_manager.get_session() as _ls:
+                                _ls.add(Message(
+                                    message_id=_ltid, user_id=user_id, text=_list_msg_text,
+                                    direction="outgoing", has_media=False, is_ai_generated=False,
+                                    extra_data={"source": "list_keyword"},
+                                    created_at=_naive_utc(),
+                                ))
+                                await _ls.commit()
+                            try:
+                                import main as _main
+                                _main._broadcast_new_message(str(user_id), {
+                                    "id": str(_ltid), "text": _list_msg_text,
+                                    "direction": "outgoing", "is_ai_generated": False,
+                                    "created_at": _naive_utc().isoformat(),
+                                })
+                            except Exception:
+                                pass
+                            self._log_action(
+                                "send_list_msg", user_id, telegram_id, "keyword", "success",
+                                "list_keyword"
+                            )
+                        return  # do not also call AI
+
+                # 3. Auto-send list_message at threshold (once per user) — then fall through to AI
+                if _list_active and _list_msg_text and _list_auto_at > 0 and not _list_already_sent:
+                    if _user_msg_count >= _list_auto_at:
+                        await _human_typing_delay(_list_msg_text, persona_data)
+                        _atid = await self._send_with_retry(tg_client, telegram_id, _list_msg_text)
+                        if _atid:
+                            async with db_manager.get_session() as _aus:
+                                _aus.add(Message(
+                                    message_id=_atid, user_id=user_id, text=_list_msg_text,
+                                    direction="outgoing", has_media=False, is_ai_generated=False,
+                                    extra_data={"source": "list_auto", "msg_count": _user_msg_count},
+                                    created_at=_naive_utc(),
+                                ))
+                                _uar = await _aus.execute(select(User).where(User.id == user_id))
+                                _ua = _uar.scalars().first()
+                                if _ua:
+                                    _ea = dict(_ua.extra_data or {})
+                                    _ea["list_message_sent_at"] = _naive_utc().isoformat()
+                                    _ua.extra_data = _ea
+                                await _aus.commit()
+                            try:
+                                import main as _main
+                                _main._broadcast_new_message(str(user_id), {
+                                    "id": str(_atid), "text": _list_msg_text,
+                                    "direction": "outgoing", "is_ai_generated": False,
+                                    "created_at": _naive_utc().isoformat(),
+                                })
+                            except Exception:
+                                pass
+                            self._log_action(
+                                "send_list_auto", user_id, telegram_id, "threshold", "success",
+                                f"count={_user_msg_count}"
+                            )
+                        # NOT returning here — AI still replies naturally in the same turn
 
             # ── ABSOLUTE OUTPUT RULE — injected first, before everything else ──
             # This prevents internal reasoning / placeholder tokens from leaking
@@ -1354,6 +1477,24 @@ class MessageProcessor:
                 "NEVER write phrases like 'here are my packages', 'hier sind meine pakete', "
                 "'ich habe folgende angebote', or any list of package names, prices, or "
                 "descriptions."
+            )
+
+            # ── GHOST MODE: natural persona writing style (non-negotiable) ────────
+            # Prevents robotic AI filler phrases; enforces casual, on-brand tone.
+            _p_ident = persona_data.get("identity", persona_data.get("personal", {}))
+            _p_name = str(_p_ident.get("name", "")) if isinstance(_p_ident, dict) else ""
+            _p_name = _p_name or "the creator"
+            system_prompt += (
+                f"\n\nWRITING STYLE — GHOST MODE (mandatory): "
+                f"Write exactly like {_p_name} texts — short, direct, natural. "
+                f"BANNED PHRASES (never use in any language): "
+                f"'Certainly', 'Of course', 'I\\'d be happy to', 'Great question', "
+                f"'Absolutely', 'Feel free to', 'Don\\'t hesitate', 'I appreciate', "
+                f"'Thank you for reaching out', 'Let me know if you need anything', "
+                f"'Hope that helps', 'Ich helfe dir gern', 'Natürlich', "
+                f"'Selbstverständlich'. "
+                f"No corporate tone, no assistant tone, no formal openers. "
+                f"Write like you\\'re texting from your phone."
             )
 
             # ── Recent-replies context: inject last 3 bot messages so Claude ──

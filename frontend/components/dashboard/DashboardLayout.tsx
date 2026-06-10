@@ -29,16 +29,9 @@ const NAV_GROUPS = [
   {
     label: 'Content',
     items: [
-      { label: 'Media',      href: '/dashboard/media',      icon: Image },
-      {
-        label: 'Packages', href: '/dashboard/packages', icon: Package,
-        children: [
-          { label: 'Package 1', href: '/dashboard/packages/package1' },
-          { label: 'Package 2', href: '/dashboard/packages/package2' },
-          { label: 'Package 3', href: '/dashboard/packages/package3' },
-        ],
-      },
-      { label: 'Cash Alarm', href: '/dashboard/cash',       icon: DollarSign },
+      { label: 'Media',      href: '/dashboard/media',    icon: Image },
+      { label: 'Pakete',     href: '/dashboard/packages', icon: Package },
+      { label: 'Cash Alarm', href: '/dashboard/cash',     icon: DollarSign },
     ],
   },
   {

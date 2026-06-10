@@ -393,116 +393,15 @@ async def _seed_nika_persona():
 
 
 async def _seed_default_packages():
-    """Seed the 3 default content packages into the DB if they don't already exist."""
+    """Seed 4 blank packages with simplified {id, name, message, keywords} structure."""
     from app.db.models import Config
     from sqlalchemy import select
 
-    PITCH_DE = (
-        "Sag mir einfach womit ich dich heiß machen kann und ich schicke dir einen "
-        "sicheren Zahlungslink. Sobald ich die Bestätigung sehe sende ich dir alles 🔥"
-    )
-    PITCH_EN = (
-        "Just tell me what you're into and I'll send you a secure payment link. "
-        "Once I see the confirmation I'll send you everything 🔥"
-    )
-
     DEFAULT_PACKAGES = [
-        {
-            "id": "pkg_quick_tease",
-            "name": "Quick Tease",
-            "emoji": "🔞",
-            "description": "1 versautes Solo-Video (1:30 Min)",
-            "price": 20,
-            "currency": "EUR",
-            "active": True,
-            "auto_send": False,
-            "payment_link": "",
-            "pitch_message": PITCH_DE,
-            "translations": {
-                "de": {
-                    "name": "Quick Tease",
-                    "description": "1 versautes Solo-Video (1:30 Min)",
-                    "welcome_message": (
-                        "🔞 Quick Tease\n"
-                        "1 versautes Solo-Video (1:30 Min) → 20 €\n\n"
-                        + PITCH_DE
-                    ),
-                },
-                "en": {
-                    "name": "Quick Tease",
-                    "description": "1 naughty solo video (1:30 min)",
-                    "welcome_message": (
-                        "🔞 Quick Tease\n"
-                        "1 naughty solo video (1:30 min) → 20€\n\n"
-                        + PITCH_EN
-                    ),
-                },
-            },
-        },
-        {
-            "id": "pkg_hot_bundle",
-            "name": "Hot Bundle",
-            "emoji": "🔞",
-            "description": "2 versaute Videos + 8 heiße Fotos",
-            "price": 30,
-            "currency": "EUR",
-            "active": True,
-            "auto_send": False,
-            "payment_link": "",
-            "pitch_message": PITCH_DE,
-            "translations": {
-                "de": {
-                    "name": "Hot Bundle",
-                    "description": "2 versaute Videos + 8 heiße Fotos",
-                    "welcome_message": (
-                        "🔞 Hot Bundle\n"
-                        "2 versaute Videos + 8 heiße Fotos → 30 €\n\n"
-                        + PITCH_DE
-                    ),
-                },
-                "en": {
-                    "name": "Hot Bundle",
-                    "description": "2 naughty videos + 8 hot photos",
-                    "welcome_message": (
-                        "🔞 Hot Bundle\n"
-                        "2 naughty videos + 8 hot photos → 30€\n\n"
-                        + PITCH_EN
-                    ),
-                },
-            },
-        },
-        {
-            "id": "pkg_full_package",
-            "name": "Full Package",
-            "emoji": "🔞",
-            "description": "3 versaute Videos + 10 heiße Fotos",
-            "price": 40,
-            "currency": "EUR",
-            "active": True,
-            "auto_send": False,
-            "payment_link": "",
-            "pitch_message": PITCH_DE,
-            "translations": {
-                "de": {
-                    "name": "Full Package",
-                    "description": "3 versaute Videos + 10 heiße Fotos",
-                    "welcome_message": (
-                        "🔞 Full Package\n"
-                        "3 versaute Videos + 10 heiße Fotos → 40 €\n\n"
-                        + PITCH_DE
-                    ),
-                },
-                "en": {
-                    "name": "Full Package",
-                    "description": "3 naughty videos + 10 hot photos",
-                    "welcome_message": (
-                        "🔞 Full Package\n"
-                        "3 naughty videos + 10 hot photos → 40€\n\n"
-                        + PITCH_EN
-                    ),
-                },
-            },
-        },
+        {"id": "pkg-1", "name": "Paket 1", "message": "", "keywords": "paket 1, p1"},
+        {"id": "pkg-2", "name": "Paket 2", "message": "", "keywords": "paket 2, p2"},
+        {"id": "pkg-3", "name": "Paket 3", "message": "", "keywords": "paket 3, p3"},
+        {"id": "pkg-4", "name": "Paket 4", "message": "", "keywords": "paket 4, p4"},
     ]
 
     try:
@@ -510,7 +409,8 @@ async def _seed_default_packages():
             result = await session.execute(select(Config).where(Config.key == "packages"))
             cfg = result.scalars().first()
             if cfg and cfg.value:
-                logger.info(f"Packages already seeded ({len(cfg.value)} found) — skipping")
+                existing = len(cfg.value) if isinstance(cfg.value, list) else 1
+                logger.info(f"Packages already seeded ({existing} found) — skipping")
                 return
             if cfg:
                 cfg.value = DEFAULT_PACKAGES
@@ -518,9 +418,39 @@ async def _seed_default_packages():
                 cfg = Config(key="packages", value=DEFAULT_PACKAGES, description="Content packages for sale")
                 session.add(cfg)
             await session.commit()
-        logger.info(f"✓ Seeded {len(DEFAULT_PACKAGES)} default packages")
+        logger.info(f"✓ Seeded {len(DEFAULT_PACKAGES)} blank packages")
     except Exception as e:
         logger.error(f"Package seeding failed: {e}")
+
+
+async def _seed_list_message():
+    """Seed blank list_message config (auto-send overview message) if not present."""
+    from app.db.models import Config
+    from sqlalchemy import select
+
+    DEFAULT_LIST_MSG = {
+        "message": "",
+        "keywords": "liste, pakete, was hast du, angebote, what do you have, offerings",
+        "auto_send_at": 30,
+        "active": True,
+    }
+
+    try:
+        async with db_manager.get_session() as session:
+            result = await session.execute(select(Config).where(Config.key == "list_message"))
+            cfg = result.scalars().first()
+            if cfg and cfg.value:
+                logger.info("list_message already seeded — skipping")
+                return
+            if cfg:
+                cfg.value = DEFAULT_LIST_MSG
+            else:
+                cfg = Config(key="list_message", value=DEFAULT_LIST_MSG, description="Auto-send list message")
+                session.add(cfg)
+            await session.commit()
+        logger.info("✓ Seeded blank list_message config")
+    except Exception as e:
+        logger.error(f"list_message seeding failed: {e}")
 
 
 async def _startup_sync():
@@ -546,6 +476,7 @@ async def lifespan(app: FastAPI):
         logger.info("Database ready")
         await _seed_nika_persona()
         await _seed_default_packages()
+        await _seed_list_message()
     except Exception as e:
         logger.error(f"Database init failed: {e}")
 
