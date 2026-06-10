@@ -1310,10 +1310,15 @@ class MessageProcessor:
                 return
 
             # ── Pre-AI: keyword-triggered pre-written messages ────────────────────
-            # Package keyword match → send package.message verbatim, no AI call.
-            # List-message keyword match → send list_message verbatim, no AI call.
-            # Auto-send list_message at threshold (once per user), then continue to AI.
-            if system_settings.get("use_package_keywords", True):
+            # FIRST MESSAGE RULE: if this is the very first message from this user
+            # (_user_msg_count <= 1), skip ALL keyword checks and reply in persona only.
+            # After the first message, keyword matching is active.
+            #
+            # LIST MESSAGE RULE: only sent when keywords are explicitly triggered.
+            # No auto-send threshold — keyword match only.
+            _is_first_message = (_user_msg_count <= 1)
+
+            if system_settings.get("use_package_keywords", True) and not _is_first_message:
                 _inc_lower = incoming_text.lower()
 
                 # 1. Per-package keyword → send that package's message verbatim
@@ -1355,7 +1360,7 @@ class MessageProcessor:
                             )
                         return  # do not also call AI
 
-                # 2. List-message keyword → send list_message verbatim
+                # 2. List-message keyword → send list_message verbatim (keyword-only, no threshold)
                 if _list_active and _list_msg_text and _list_keywords:
                     if any(k in _inc_lower for k in _list_keywords):
                         await _human_typing_delay(_list_msg_text, persona_data)
@@ -1383,41 +1388,6 @@ class MessageProcessor:
                                 "list_keyword"
                             )
                         return  # do not also call AI
-
-                # 3. Auto-send list_message at threshold (once per user) — then fall through to AI
-                if _list_active and _list_msg_text and _list_auto_at > 0 and not _list_already_sent:
-                    if _user_msg_count >= _list_auto_at:
-                        await _human_typing_delay(_list_msg_text, persona_data)
-                        _atid = await self._send_with_retry(tg_client, telegram_id, _list_msg_text)
-                        if _atid:
-                            async with db_manager.get_session() as _aus:
-                                _aus.add(Message(
-                                    message_id=_atid, user_id=user_id, text=_list_msg_text,
-                                    direction="outgoing", has_media=False, is_ai_generated=False,
-                                    extra_data={"source": "list_auto", "msg_count": _user_msg_count},
-                                    created_at=_naive_utc(),
-                                ))
-                                _uar = await _aus.execute(select(User).where(User.id == user_id))
-                                _ua = _uar.scalars().first()
-                                if _ua:
-                                    _ea = dict(_ua.extra_data or {})
-                                    _ea["list_message_sent_at"] = _naive_utc().isoformat()
-                                    _ua.extra_data = _ea
-                                await _aus.commit()
-                            try:
-                                import main as _main
-                                _main._broadcast_new_message(str(user_id), {
-                                    "id": str(_atid), "text": _list_msg_text,
-                                    "direction": "outgoing", "is_ai_generated": False,
-                                    "created_at": _naive_utc().isoformat(),
-                                })
-                            except Exception:
-                                pass
-                            self._log_action(
-                                "send_list_auto", user_id, telegram_id, "threshold", "success",
-                                f"count={_user_msg_count}"
-                            )
-                        # NOT returning here — AI still replies naturally in the same turn
 
             # ── ABSOLUTE OUTPUT RULE — injected first, before everything else ──
             # This prevents internal reasoning / placeholder tokens from leaking
