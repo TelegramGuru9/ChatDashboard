@@ -881,6 +881,47 @@ class MessageProcessor:
             logger.warning(f"_load_packages error: {e}")
             return []
 
+    async def _fire_automessages(
+        self,
+        trigger: str,
+        automessages: list,
+        tg_client,
+        telegram_id: int,
+        user_id,
+        persona_data: dict,
+    ) -> None:
+        """Send all active automessages that match `trigger`, verbatim, with human-like delay."""
+        matches = [am for am in automessages if am.get("trigger") == trigger]
+        for am in matches:
+            msg = str(am.get("message", "")).strip()
+            if not msg:
+                continue
+            await asyncio.sleep(1)  # brief pause between chained messages
+            await _human_typing_delay(msg, persona_data)
+            tid = await self._send_with_retry(tg_client, telegram_id, msg)
+            if tid:
+                async with db_manager.get_session() as _ams:
+                    _ams.add(Message(
+                        message_id=tid, user_id=user_id, text=msg,
+                        direction="outgoing", has_media=False, is_ai_generated=False,
+                        extra_data={"source": "automessage", "trigger": trigger},
+                        created_at=_naive_utc(),
+                    ))
+                    await _ams.commit()
+                try:
+                    import main as _main
+                    _main._broadcast_new_message(str(user_id), {
+                        "id": str(tid), "text": msg,
+                        "direction": "outgoing", "is_ai_generated": False,
+                        "created_at": _naive_utc().isoformat(),
+                    })
+                except Exception:
+                    pass
+                self._log_action(
+                    f"automsg_{trigger}", user_id, telegram_id, trigger, "success",
+                    f"am_id={am.get('id','')}"
+                )
+
     def _build_package_menu_text(self, packages: list) -> str:
         """
         Build the package menu message from the real package config.
@@ -1278,6 +1319,13 @@ class MessageProcessor:
                 _user_msg_count: int = int(user_obj.total_messages or 0) if user_obj else 0
                 _list_already_sent: bool = bool(user_extra.get("list_message_sent_at"))
 
+                # ── Load automessage workflows ──────────────────────────────
+                _am_raw = await _load_creator_config("automessages", creator_id, session)
+                _automessages: list = [
+                    am for am in (_am_raw if isinstance(_am_raw, list) else [])
+                    if am.get("active") and str(am.get("message", "")).strip()
+                ]
+
                 # ── Load system behavior settings ───────────────────────────
                 _ss_val = await _load_creator_config("system_settings", creator_id, session)
                 system_settings: dict = {
@@ -1311,12 +1359,22 @@ class MessageProcessor:
 
             # ── Pre-AI: keyword-triggered pre-written messages ────────────────────
             # FIRST MESSAGE RULE: if this is the very first message from this user
-            # (_user_msg_count <= 1), skip ALL keyword checks and reply in persona only.
-            # After the first message, keyword matching is active.
+            # (_user_msg_count <= 1), fire the first_message automessage (if configured)
+            # and return — no keyword checks, no AI.
+            # If no first_message automessage is configured, fall through to AI persona.
             #
             # LIST MESSAGE RULE: only sent when keywords are explicitly triggered.
             # No auto-send threshold — keyword match only.
             _is_first_message = (_user_msg_count <= 1)
+
+            if _is_first_message:
+                _first_ams = [am for am in _automessages if am.get("trigger") == "first_message"]
+                if _first_ams:
+                    await self._fire_automessages(
+                        "first_message", _automessages, tg_client, telegram_id, user_id, persona_data
+                    )
+                    return  # configured welcome message sent — no AI
+                # else fall through to AI persona reply
 
             if system_settings.get("use_package_keywords", True) and not _is_first_message:
                 _inc_lower = incoming_text.lower()
@@ -1358,6 +1416,13 @@ class MessageProcessor:
                                 "send_pkg_msg", user_id, telegram_id, "keyword", "success",
                                 f"pkg={_pkg.get('name', '')}"
                             )
+                        # Fire after_package_sent + status_hot automessages
+                        await self._fire_automessages(
+                            "after_package_sent", _automessages, tg_client, telegram_id, user_id, persona_data
+                        )
+                        await self._fire_automessages(
+                            "status_hot", _automessages, tg_client, telegram_id, user_id, persona_data
+                        )
                         return  # do not also call AI
 
                 # 2. List-message keyword → send list_message verbatim (keyword-only, no threshold)
@@ -1387,6 +1452,10 @@ class MessageProcessor:
                                 "send_list_msg", user_id, telegram_id, "keyword", "success",
                                 "list_keyword"
                             )
+                        # Fire after_list_sent automessages
+                        await self._fire_automessages(
+                            "after_list_sent", _automessages, tg_client, telegram_id, user_id, persona_data
+                        )
                         return  # do not also call AI
 
             # ── ABSOLUTE OUTPUT RULE — injected first, before everything else ──

@@ -453,6 +453,113 @@ async def _seed_list_message():
         logger.error(f"list_message seeding failed: {e}")
 
 
+async def _seed_automessages():
+    """Seed empty automessages config (array) if not yet present."""
+    from app.db.models import Config
+    from sqlalchemy import select
+    try:
+        async with db_manager.get_session() as session:
+            result = await session.execute(select(Config).where(Config.key == "automessages"))
+            cfg = result.scalars().first()
+            if cfg and cfg.value:
+                logger.info("automessages already seeded — skipping")
+                return
+            if cfg:
+                cfg.value = []
+            else:
+                cfg = Config(key="automessages", value=[], description="Automessage workflow triggers")
+                session.add(cfg)
+            await session.commit()
+        logger.info("✓ Seeded blank automessages config")
+    except Exception as e:
+        logger.error(f"automessages seeding failed: {e}")
+
+
+async def _check_inactive_users():
+    """
+    Background loop (every 6 h): send inactive_days automessages to users
+    who have not sent a message in N days and haven't been re-triggered yet.
+    """
+    import datetime as dt
+    from app.db.models import Config, User as DBUser
+    from sqlalchemy import select
+
+    await asyncio.sleep(60)  # wait for startup to fully settle
+    logger.info("Inactive user checker started")
+
+    while True:
+        try:
+            from app.services.telegram.client import telegram_client
+            if not telegram_client.is_connected:
+                await asyncio.sleep(3600)
+                continue
+
+            async with db_manager.get_session() as session:
+                # Load inactive_days automessages (global key, first creator)
+                am_res = await session.execute(
+                    select(Config).where(Config.key == "automessages")
+                )
+                am_cfg = am_res.scalars().first()
+                if not am_cfg or not isinstance(am_cfg.value, list):
+                    await asyncio.sleep(6 * 3600)
+                    continue
+
+                inactive_ams = [
+                    am for am in am_cfg.value
+                    if am.get("trigger") == "inactive_days"
+                    and am.get("active")
+                    and str(am.get("message", "")).strip()
+                ]
+                if not inactive_ams:
+                    await asyncio.sleep(6 * 3600)
+                    continue
+
+                for am in inactive_ams:
+                    days     = int(am.get("inactive_days", 5) or 5)
+                    msg_text = str(am.get("message", "")).strip()
+                    cutoff   = dt.datetime.utcnow() - dt.timedelta(days=days)
+
+                    users_res = await session.execute(
+                        select(DBUser).where(DBUser.updated_at < cutoff).limit(100)
+                    )
+                    users = users_res.scalars().all()
+
+                    for user in users:
+                        extra = dict(user.extra_data or {})
+                        # Skip if already re-triggered after last activity
+                        last_sent_str = extra.get("inactive_trigger_sent_at")
+                        if last_sent_str:
+                            try:
+                                last_sent_dt = dt.datetime.fromisoformat(
+                                    last_sent_str.replace("Z", "")
+                                )
+                                if last_sent_dt > cutoff:
+                                    continue
+                            except Exception:
+                                pass
+
+                        try:
+                            tg_id = int(user.telegram_id)
+                            await telegram_client.client.send_message(tg_id, msg_text)
+                            extra["inactive_trigger_sent_at"] = dt.datetime.utcnow().isoformat()
+                            user.extra_data = extra
+                            logger.info(
+                                f"Inactive trigger sent → tg={tg_id} "
+                                f"(inactive {days}d)"
+                            )
+                        except Exception as _se:
+                            logger.warning(
+                                f"Inactive trigger send failed tg={user.telegram_id}: {_se}"
+                            )
+
+                    await session.commit()
+
+        except Exception as e:
+            logger.error(f"Inactive user check error: {e}")
+
+        await asyncio.sleep(6 * 3600)  # run every 6 hours
+
+
 async def _startup_sync():
     """Run after startup — wait for Telegram to fully settle, then sync ALL dialogs + folders."""
     await asyncio.sleep(10)
@@ -477,6 +584,7 @@ async def lifespan(app: FastAPI):
         await _seed_nika_persona()
         await _seed_default_packages()
         await _seed_list_message()
+        await _seed_automessages()
     except Exception as e:
         logger.error(f"Database init failed: {e}")
 
@@ -491,6 +599,7 @@ async def lifespan(app: FastAPI):
             logger.info("Telegram connected ✓ (default creator)")
             asyncio.create_task(message_processor.start_processor())
             asyncio.create_task(_startup_sync())
+            asyncio.create_task(_check_inactive_users())
         else:
             logger.warning("Telegram NOT connected — session may be expired.")
 

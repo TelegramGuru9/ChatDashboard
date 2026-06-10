@@ -8,9 +8,9 @@ import { cn } from '@/lib/utils';
 import { Separator } from '@/components/ui/separator';
 import {
   LayoutDashboard, MessageSquare, Users, BarChart3,
-  Image, Package, UserCog, Settings, ChevronLeft,
+  Package, UserCog, Settings, ChevronLeft,
   ChevronRight, Menu, X, ChevronsUpDown, Check,
-  DollarSign, Flame, ChevronDown, ChevronUp,
+  DollarSign, Flame, ChevronDown, ChevronUp, Zap,
 } from 'lucide-react';
 
 interface DashboardLayoutProps { children: React.ReactNode; }
@@ -29,9 +29,9 @@ const NAV_GROUPS = [
   {
     label: 'Content',
     items: [
-      { label: 'Media',      href: '/dashboard/media',    icon: Image },
-      { label: 'Pakete',     href: '/dashboard/packages', icon: Package },
-      { label: 'Cash Alarm', href: '/dashboard/cash',     icon: DollarSign },
+      { label: 'Pakete',     href: '/dashboard/packages',     icon: Package },
+      { label: 'Automsg',   href: '/dashboard/automessages', icon: Zap },
+      { label: 'Cash Alarm', href: '/dashboard/cash',        icon: DollarSign },
     ],
   },
   {
