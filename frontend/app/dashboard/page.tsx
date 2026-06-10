@@ -17,11 +17,11 @@ const apiBase = () => {
 };
 
 const QUICK = [
-  { href: '/dashboard/inbox',     icon: MessageSquare, label: 'Inbox',     desc: 'All conversations',  color: 'bg-blue-500/10 text-blue-400' },
-  { href: '/dashboard/leads',     icon: Target,        label: 'Leads',     desc: 'Pipeline & scoring', color: 'bg-purple-500/10 text-purple-400' },
-  { href: '/dashboard/analytics', icon: BarChart3,     label: 'Analytics', desc: 'Conversion metrics', color: 'bg-emerald-500/10 text-emerald-400' },
-  { href: '/dashboard/media',     icon: Image,         label: 'Media',     desc: 'Teasers & files',    color: 'bg-pink-500/10 text-pink-400' },
-  { href: '/dashboard/packages',  icon: Package,       label: 'Packages',  desc: 'Offers & pricing',   color: 'bg-amber-500/10 text-amber-400' },
+  { href: '/dashboard/inbox',     icon: MessageSquare, label: 'Inbox',     desc: 'All conversations',  color: 'bg-brand-50 text-brand-600' },
+  { href: '/dashboard/leads',     icon: Target,        label: 'Leads',     desc: 'Pipeline & scoring', color: 'bg-purple-50 text-purple-600' },
+  { href: '/dashboard/analytics', icon: BarChart3,     label: 'Analytics', desc: 'Conversion metrics', color: 'bg-emerald-50 text-emerald-600' },
+  { href: '/dashboard/media',     icon: Image,         label: 'Media',     desc: 'Teasers & files',    color: 'bg-pink-50 text-pink-600' },
+  { href: '/dashboard/packages',  icon: Package,       label: 'Packages',  desc: 'Offers & pricing',   color: 'bg-amber-50 text-amber-600' },
 ];
 
 function AutopilotToggle({ on, loading, onChange }: { on: boolean; loading: boolean; onChange: () => void }) {
@@ -52,18 +52,18 @@ function StatCard({
   iconBg: string; sub?: string; trend?: string;
 }) {
   return (
-    <div className="rounded-xl border border-border bg-card p-5 hover:shadow-md transition-shadow">
-      <div className="flex items-start justify-between mb-3">
-        <p className="text-sm font-medium text-muted-foreground">{label}</p>
-        <div className={cn('w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0', iconBg)}>
-          <Icon className="h-[18px] w-[18px]" />
+    <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-theme-sm hover:shadow-theme-md transition-shadow">
+      <div className="flex items-start justify-between mb-4">
+        <p className="text-sm font-medium text-gray-500">{label}</p>
+        <div className={cn('w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0', iconBg)}>
+          <Icon className="h-5 w-5" />
         </div>
       </div>
-      <p className="text-[28px] font-bold tracking-tight leading-none">{value}</p>
+      <p className="text-3xl font-bold tracking-tight text-gray-900 leading-none">{value}</p>
       {(sub || trend) && (
-        <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
-          {trend && <TrendingUp className="h-3 w-3 text-emerald-400 flex-shrink-0" />}
-          <span>{trend || sub}</span>
+        <p className="text-xs text-gray-400 mt-2.5 flex items-center gap-1">
+          {trend && <TrendingUp className="h-3 w-3 text-emerald-500 flex-shrink-0" />}
+          <span className={trend ? 'text-emerald-600 font-medium' : ''}>{trend || sub}</span>
         </p>
       )}
     </div>
@@ -142,21 +142,21 @@ export default function DashboardPage() {
   const tgName    = tg?.account?.name || tg?.account?.username;
 
   const KPIS = [
-    { label: 'Total Messages', value: stats.messages.toLocaleString(), icon: MessageSquare, iconBg: 'bg-blue-500/10 text-blue-400',    sub: 'All time' },
-    { label: 'Total Users',    value: stats.users.toLocaleString(),    icon: Users,         iconBg: 'bg-violet-500/10 text-violet-400', sub: 'Unique contacts' },
-    { label: 'HOT Leads',      value: hotCount.toLocaleString(),       icon: Flame,         iconBg: 'bg-orange-500/10 text-orange-400', trend: hotCount > 0 ? 'Ready to convert' : undefined, sub: hotCount === 0 ? 'None yet' : undefined },
-    { label: 'Last Order',     value: `#${String(orderCount).padStart(6, '0')}`, icon: Hash, iconBg: 'bg-amber-500/10 text-amber-400', sub: 'Order counter' },
+    { label: 'Total Messages', value: stats.messages.toLocaleString(), icon: MessageSquare, iconBg: 'bg-brand-50 text-brand-600',     sub: 'All time' },
+    { label: 'Total Users',    value: stats.users.toLocaleString(),    icon: Users,         iconBg: 'bg-violet-50 text-violet-600',   sub: 'Unique contacts' },
+    { label: 'HOT Leads',      value: hotCount.toLocaleString(),       icon: Flame,         iconBg: 'bg-orange-50 text-orange-500',   trend: hotCount > 0 ? 'Ready to convert' : undefined, sub: hotCount === 0 ? 'None yet' : undefined },
+    { label: 'Last Order',     value: `#${String(orderCount).padStart(6, '0')}`, icon: Hash, iconBg: 'bg-amber-50 text-amber-600',  sub: 'Order counter' },
   ];
 
   return (
     <DashboardLayout>
-      <div className="p-6 space-y-6 max-w-5xl">
+      <div className="p-6 md:p-8 space-y-6 max-w-5xl">
 
         {/* ── Header ── */}
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Overview</h1>
-            <p className="text-sm text-muted-foreground mt-0.5">Your AI Telegram CRM at a glance</p>
+            <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Overview</h1>
+            <p className="text-sm text-gray-500 mt-0.5">Your AI Telegram CRM at a glance</p>
           </div>
 
           {/* Status pills */}
@@ -168,10 +168,10 @@ export default function DashboardPage() {
             ].map(s => (
               <div key={s.label} className={cn(
                 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border',
-                s.ok ? 'bg-emerald-500/8 border-emerald-500/20 text-emerald-400'
-                     : 'bg-red-500/8 border-red-500/20 text-red-400'
+                s.ok ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                     : 'bg-red-50 border-red-200 text-red-600'
               )}>
-                <span className={cn('w-1.5 h-1.5 rounded-full', s.ok ? 'bg-emerald-400' : 'bg-red-400')} />
+                <span className={cn('w-1.5 h-1.5 rounded-full', s.ok ? 'bg-emerald-500' : 'bg-red-500')} />
                 {s.label}: <strong className="ml-0.5">{s.val}</strong>
               </div>
             ))}
@@ -188,62 +188,62 @@ export default function DashboardPage() {
 
           {/* Autopilot */}
           <div className={cn(
-            'rounded-xl border bg-card p-5 flex flex-col gap-4 transition-colors',
-            autopilot ? 'border-emerald-500/25 bg-emerald-500/[0.03]' : 'border-border'
+            'rounded-2xl border bg-white p-5 flex flex-col gap-4 shadow-theme-sm transition-colors',
+            autopilot ? 'border-emerald-200 bg-emerald-50/40' : 'border-gray-200'
           )}>
             <div className="flex items-center gap-3">
               <div className={cn(
                 'w-10 h-10 rounded-xl flex items-center justify-center text-xl flex-shrink-0 transition-colors',
-                autopilot ? 'bg-emerald-500/15' : 'bg-muted'
+                autopilot ? 'bg-emerald-100' : 'bg-gray-100'
               )}>
                 🤖
               </div>
               <div className="flex-1 min-w-0">
-                <div className="font-semibold text-sm">AI Autopilot</div>
-                <div className={cn('text-xs mt-0.5 font-medium', autopilot ? 'text-emerald-400' : 'text-muted-foreground')}>
+                <div className="font-semibold text-sm text-gray-900">AI Autopilot</div>
+                <div className={cn('text-xs mt-0.5 font-medium', autopilot ? 'text-emerald-600' : 'text-gray-400')}>
                   {apLoading ? 'Loading…' : autopilot ? '● Active' : '○ Paused'}
                 </div>
               </div>
               <AutopilotToggle on={autopilot} loading={apLoading || apToggling} onChange={toggleAutopilot} />
             </div>
 
-            <p className="text-xs text-muted-foreground leading-relaxed">
+            <p className="text-xs text-gray-500 leading-relaxed">
               {autopilot
                 ? 'Nika is replying automatically. Disable per-chat in Inbox.'
                 : 'Turn on for Nika to reply to all incoming messages automatically.'}
             </p>
 
             {apStatus && (
-              <div className="text-xs bg-muted rounded-lg px-3 py-2 text-muted-foreground">
+              <div className="text-xs bg-gray-100 rounded-lg px-3 py-2 text-gray-500">
                 {apStatus}
               </div>
             )}
 
             {!tgOk && (
               <Link href="/dashboard/inbox"
-                className="text-xs text-primary font-medium hover:underline self-start">
+                className="text-xs text-brand-600 font-medium hover:underline self-start">
                 Connect Telegram first →
               </Link>
             )}
           </div>
 
           {/* Quick Access */}
-          <div className="lg:col-span-2 rounded-xl border border-border bg-card p-5">
-            <p className="text-sm font-semibold mb-3.5">Quick Access</p>
+          <div className="lg:col-span-2 rounded-2xl border border-gray-200 bg-white p-5 shadow-theme-sm">
+            <p className="text-sm font-semibold text-gray-900 mb-3.5">Quick Access</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {QUICK.map(q => {
                 const Icon = q.icon;
                 return (
                   <Link key={q.href} href={q.href}
-                    className="group flex items-center gap-3 px-3.5 py-3 rounded-lg border border-border hover:border-primary/40 hover:bg-accent/60 transition-all">
+                    className="group flex items-center gap-3 px-3.5 py-3 rounded-xl border border-gray-200 hover:border-brand-200 hover:bg-brand-50/30 transition-all">
                     <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0', q.color)}>
                       <Icon className="h-3.5 w-3.5" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium leading-tight">{q.label}</div>
-                      <div className="text-[11px] text-muted-foreground mt-0.5">{q.desc}</div>
+                      <div className="text-sm font-medium text-gray-800 leading-tight">{q.label}</div>
+                      <div className="text-[11px] text-gray-400 mt-0.5">{q.desc}</div>
                     </div>
-                    <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground/30 group-hover:text-primary transition-colors flex-shrink-0" />
+                    <ArrowUpRight className="h-3.5 w-3.5 text-gray-300 group-hover:text-brand-500 transition-colors flex-shrink-0" />
                   </Link>
                 );
               })}
@@ -253,21 +253,21 @@ export default function DashboardPage() {
 
         {/* ── Telegram not connected ── */}
         {!tgOk && (
-          <div className="rounded-xl border border-primary/15 bg-primary/5 p-4">
+          <div className="rounded-2xl border border-brand-200 bg-brand-50 p-4 shadow-theme-sm">
             <div className="flex items-center gap-4">
-              <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
-                <WifiOff size={18} className="text-primary" />
+              <div className="w-10 h-10 rounded-xl bg-brand-100 flex items-center justify-center flex-shrink-0">
+                <WifiOff size={18} className="text-brand-600" />
               </div>
               <div className="flex-1">
-                <p className="font-semibold text-sm">Telegram not connected</p>
-                <p className="text-sm text-muted-foreground mt-0.5">
+                <p className="font-semibold text-sm text-gray-900">Telegram not connected</p>
+                <p className="text-sm text-gray-500 mt-0.5">
                   Go to{' '}
-                  <Link href="/dashboard/inbox" className="text-primary hover:underline font-medium">Inbox</Link>
+                  <Link href="/dashboard/inbox" className="text-brand-600 hover:underline font-medium">Inbox</Link>
                   {' '}and click Reconnect to enable chats and autopilot.
                 </p>
               </div>
               <Link href="/dashboard/inbox"
-                className="shrink-0 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors flex items-center gap-1.5">
+                className="shrink-0 px-4 py-2 rounded-xl bg-brand-500 text-white text-xs font-semibold hover:bg-brand-600 transition-colors flex items-center gap-1.5">
                 Reconnect <ArrowUpRight size={12} />
               </Link>
             </div>

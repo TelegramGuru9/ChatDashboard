@@ -11,6 +11,36 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        /* ── TailAdmin brand palette ─────────────────────────────── */
+        brand: {
+          25:  '#f2f7ff',
+          50:  '#ecf3ff',
+          100: '#dde9ff',
+          200: '#c2d6ff',
+          300: '#9cb9ff',
+          400: '#7592ff',
+          500: '#465fff',
+          600: '#3641f5',
+          700: '#2a31d8',
+          800: '#252dae',
+          900: '#262e89',
+          950: '#161950',
+        },
+        /* ── TailAdmin gray scale ────────────────────────────────── */
+        gray: {
+          25:  '#fcfcfd',
+          50:  '#f9fafb',
+          100: '#f2f4f7',
+          200: '#e4e7ec',
+          300: '#d0d5dd',
+          400: '#98a2b3',
+          500: '#667085',
+          600: '#475467',
+          700: '#344054',
+          800: '#1d2939',
+          900: '#101828',
+          950: '#0c111d',
+        },
         background:  'hsl(var(--background))',
         foreground:  'hsl(var(--foreground))',
         card: {
@@ -50,8 +80,12 @@ const config: Config = {
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
       },
+      boxShadow: {
+        'theme-sm': '0px 1px 3px rgba(16, 24, 40, 0.05), 0px 1px 2px rgba(16, 24, 40, 0.06)',
+        'theme-md': '0px 4px 8px -2px rgba(16, 24, 40, 0.10), 0px 2px 4px -2px rgba(16, 24, 40, 0.06)',
+      },
       fontFamily: {
-        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+        sans: ['var(--font-sans)', 'Outfit', 'Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
       },
     },
   },
