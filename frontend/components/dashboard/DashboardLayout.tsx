@@ -42,6 +42,7 @@ const NAV_GROUPS = [
       {
         label: 'Settings', href: '/dashboard/settings', icon: Settings,
         children: [
+          { label: 'Appearance',       href: '/dashboard/settings/appearance' },
           { label: 'System Prompt',    href: '/dashboard/settings/systemprompt' },
           { label: 'Persona',          href: '/dashboard/settings/persona' },
           { label: 'Reply Settings',   href: '/dashboard/settings/replysettings' },
