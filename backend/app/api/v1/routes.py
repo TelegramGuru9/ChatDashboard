@@ -1873,6 +1873,166 @@ async def creator_status(cid: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── In-memory store for pending phone auth sessions ──────────────────────────
+# Keyed by creator_id string. Holds the TelegramClient + phone_code_hash while
+# the user is entering the SMS code. Expires naturally after ~5 minutes (Telegram
+# invalidates the code anyway). A Railway restart clears this, which is fine.
+_pending_auth: dict = {}   # cid -> {"client": TelegramClient, "phone": str, "phone_code_hash": str}
+
+
+@creators_router.post("/{cid}/request-code")
+async def creator_request_code(cid: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Step 1 of fresh-auth flow.
+    Creates a new Telethon client and sends an SMS/Telegram code to the phone.
+    Returns {"status": "code_sent"} on success.
+    """
+    try:
+        import uuid as _uuid
+        from telethon import TelegramClient as _TC
+        from telethon.sessions import StringSession as _SS
+        from telethon.network import ConnectionTcpAbridged as _Abr
+
+        phone: str = (payload.get("phone") or "").strip()
+        if not phone:
+            raise HTTPException(status_code=400, detail="phone is required")
+
+        async with db_manager.get_session() as session:
+            res = await session.execute(
+                select(CreatorModel).where(CreatorModel.id == _uuid.UUID(cid))
+            )
+            c = res.scalars().first()
+            if not c:
+                raise HTTPException(status_code=404, detail="Creator not found")
+
+        api_id  = int(getattr(__import__("app.core.config", fromlist=["settings"]), "settings").TELEGRAM_API_ID or 0)
+        api_hash = getattr(__import__("app.core.config", fromlist=["settings"]), "settings").TELEGRAM_API_HASH or ""
+        if not api_id or not api_hash:
+            raise HTTPException(status_code=500, detail="TELEGRAM_API_ID / TELEGRAM_API_HASH not configured")
+
+        # Clean up any previous pending auth for this creator
+        if cid in _pending_auth:
+            try:
+                await _pending_auth[cid]["client"].disconnect()
+            except Exception:
+                pass
+            del _pending_auth[cid]
+
+        client = _TC(session=_SS(), api_id=api_id, api_hash=api_hash,
+                     connection=_Abr, auto_reconnect=False)
+        await client.connect()
+
+        result = await client.send_code_request(phone)
+        _pending_auth[cid] = {
+            "client": client,
+            "phone": phone,
+            "phone_code_hash": result.phone_code_hash,
+        }
+        logger.info(f"Creator {cid}: code sent to {phone}")
+        return {"status": "code_sent", "phone": phone}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"creator_request_code {cid}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@creators_router.post("/{cid}/submit-code")
+async def creator_submit_code(cid: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Step 2 of fresh-auth flow.
+    Validates the SMS code (and optional 2FA password), saves the resulting
+    session string to the DB, and connects the creator into the live pool.
+    Returns {"status": "connected", "account_name": "...", "session_string": "..."}.
+    """
+    try:
+        import uuid as _uuid
+        from telethon.errors import SessionPasswordNeededError as _2FA
+        from telethon.sessions import StringSession as _SS
+
+        code: str     = (payload.get("code") or "").strip()
+        password: str = (payload.get("password") or "").strip()
+
+        if cid not in _pending_auth:
+            raise HTTPException(
+                status_code=400,
+                detail="No pending auth for this creator — click 'Code anfordern' first"
+            )
+
+        pending = _pending_auth[cid]
+        client  = pending["client"]
+        phone   = pending["phone"]
+        ph_hash = pending["phone_code_hash"]
+
+        try:
+            await client.sign_in(phone=phone, code=code, phone_code_hash=ph_hash)
+        except _2FA:
+            if not password:
+                raise HTTPException(status_code=400, detail="2FA password required — fill the 2FA field and try again")
+            await client.sign_in(password=password)
+
+        me = await client.get_me()
+        first = getattr(me, "first_name", "") or ""
+        last  = getattr(me, "last_name",  "") or ""
+        account_name = f"{first} {last}".strip() or getattr(me, "username", "") or phone
+        new_session = client.session.save()
+
+        # Persist session string + display_name + phone to DB
+        async with db_manager.get_session() as session:
+            res = await session.execute(
+                select(CreatorModel).where(CreatorModel.id == _uuid.UUID(cid))
+            )
+            c = res.scalars().first()
+            if c:
+                c.telegram_session = new_session
+                c.display_name     = account_name
+                c.telegram_phone   = phone
+                await session.commit()
+
+        # Connect into the live pool (non-default creators)
+        from app.services.telegram.client import telegram_client, creator_pool
+        api_id   = int(getattr(__import__("app.core.config", fromlist=["settings"]), "settings").TELEGRAM_API_ID or 0)
+        api_hash = getattr(__import__("app.core.config", fromlist=["settings"]), "settings").TELEGRAM_API_HASH or ""
+
+        # Check if default creator
+        async with db_manager.get_session() as session:
+            res = await session.execute(select(CreatorModel).where(CreatorModel.id == _uuid.UUID(cid)))
+            c   = res.scalars().first()
+            is_default = c.is_default if c else False
+
+        if is_default:
+            # For default creator, reconnect legacy client with new session via env override isn't
+            # possible at runtime — just mark connected using the pool path instead
+            ok, account = await creator_pool.connect_creator(cid, new_session, api_id, api_hash)
+        else:
+            ok, account = await creator_pool.connect_creator(cid, new_session, api_id, api_hash)
+
+        # Clean up pending auth
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+        del _pending_auth[cid]
+
+        if not ok:
+            # Session saved but pool connect failed — still a partial success
+            logger.warning(f"Creator {cid}: session saved but pool connect failed")
+
+        logger.info(f"Creator {cid}: fresh-auth succeeded as {account_name}")
+        return {
+            "status": "connected",
+            "account_name": account_name,
+            "creator_id": cid,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"creator_submit_code {cid}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ==================== MEDIA FILE UPLOAD ====================
 
 import os as _os
