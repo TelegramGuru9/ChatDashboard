@@ -101,7 +101,7 @@ const apiBase = () => {
 function InboxContent() {
   const searchParams = useSearchParams();
   const autoSelectUserId = searchParams?.get('user') ?? null;
-  const { withCreator } = useCreator();
+  const { withCreator, selectedId: creatorId } = useCreator();
 
   const [tgConnected, setTgConnected]   = useState<boolean | null>(null);
   const [tgAccount,   setTgAccount]     = useState('');
@@ -146,12 +146,18 @@ function InboxContent() {
 
   const checkStatus = useCallback(async () => {
     try {
-      const d = await fetch(`${api}/telegram/status`).then(r => r.json());
+      // Use the creator-scoped status endpoint so non-default creators (pool clients)
+      // are checked correctly instead of always checking the default env-var client.
+      const url = creatorId
+        ? `${api}/creators/${creatorId}/status`
+        : `${api}/telegram/status`;
+      const d = await fetch(url).then(r => r.json());
       setTgConnected(d.connected);
-      if (d.account?.name) setTgAccount(d.account.name);
+      const name = d.account?.name || d.account?.username || '';
+      if (name) setTgAccount(name);
       return d.connected as boolean;
     } catch { setTgConnected(false); return false; }
-  }, [api]);
+  }, [api, creatorId]);
 
   const loadFolders = useCallback(async () => {
     try {
@@ -285,16 +291,22 @@ function InboxContent() {
   const reconnect = async () => {
     setReconnecting(true); setSyncStatus('Attempting reconnect…');
     try {
-      const d = await fetch(`${api}/telegram/reconnect`, { method: 'POST' }).then(r => r.json());
-      if (d.status === 'reconnected') {
-        setTgConnected(true); setTgAccount(d.account || '');
+      // Use creator-scoped connect so the right client (pool vs default) is reconnected
+      const url = creatorId
+        ? `${api}/creators/${creatorId}/connect`
+        : `${api}/telegram/reconnect`;
+      const d = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(r => r.json());
+      const ok = d.status === 'connected' || d.status === 'reconnected';
+      if (ok) {
+        setTgConnected(true);
+        setTgAccount(d.account_name || d.account || '');
         setSyncStatus('✓ Reconnected — syncing chats…');
         await sync();
       } else {
         const detail = d.detail || 'Unknown error';
         const isSession = /session|unauthorized|auth_key/i.test(detail);
         const isConfig  = /api_id|api_hash|env var/i.test(detail);
-        const hint = isSession ? ' → Generate a new TELEGRAM_SESSION_STRING in Railway'
+        const hint = isSession ? ' → Go to Creators page and re-authenticate with phone + SMS code'
                    : isConfig  ? ' → Check Railway → Variables'
                    : ' → Check Railway → Logs for full stack trace';
         setSyncStatus(`⚠ ${detail}${hint}`);
@@ -382,20 +394,25 @@ function InboxContent() {
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior:'smooth' }); }, [messages]);
 
+  // Re-run startup whenever the selected creator changes (e.g. on first load when
+  // creatorId becomes available, or when user switches creators)
   useEffect(() => {
+    if (creatorId === null) return; // still loading creator list — wait
     (async () => {
       let connected = await checkStatus();
       loadFolders();
       loadPackages();
 
-      // Auto-reconnect silently so navigating to inbox doesn't need manual action
+      // Auto-reconnect silently using the creator-scoped connect endpoint
       if (!connected) {
         try {
-          const d = await fetch(`${api}/telegram/reconnect`, { method: 'POST' }).then(r => r.json());
-          if (d.status === 'reconnected') {
+          const url = `${api}/creators/${creatorId}/connect`;
+          const d = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(r => r.json());
+          const ok = d.status === 'connected' || d.status === 'reconnected';
+          if (ok) {
             connected = true;
             setTgConnected(true);
-            if (d.account) setTgAccount(d.account);
+            if (d.account_name || d.account) setTgAccount(d.account_name || d.account || '');
           }
         } catch {}
       }
@@ -403,7 +420,7 @@ function InboxContent() {
       const count = await loadConvos();
       if (connected && count === 0) await sync(true);
     })();
-  }, []); // eslint-disable-line
+  }, [creatorId]); // eslint-disable-line
 
   useEffect(() => {
     if (!autoSelectUserId || convos.length === 0) return;
