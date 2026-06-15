@@ -1,8 +1,8 @@
 'use client';
 
 import Link from 'next/link';
+import { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
-import { useTheme, type Appearance } from '@/contexts/ThemeContext';
 import { cn } from '@/lib/utils';
 import {
   Shield, Bot, MessageSquare, Globe, Eye,
@@ -47,14 +47,34 @@ const CARDS = [
   },
 ];
 
-const APPEARANCE_OPTIONS: { value: Appearance; label: string; icon: React.FC<{ className?: string }> }[] = [
-  { value: 'light',  label: 'Light',  icon: Sun },
-  { value: 'dark',   label: 'Dark',   icon: Moon },
-  { value: 'system', label: 'System', icon: Monitor },
+type Appearance = 'light' | 'dark' | 'system';
+
+const MODES: { value: Appearance; label: string; Icon: typeof Sun }[] = [
+  { value: 'light',  label: 'Light',  Icon: Sun },
+  { value: 'dark',   label: 'Dark',   Icon: Moon },
+  { value: 'system', label: 'System', Icon: Monitor },
 ];
 
+function applyTheme(a: Appearance) {
+  const dark =
+    a === 'dark' ||
+    (a === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.classList.toggle('dark', dark);
+}
+
 export default function SettingsHubPage() {
-  const { appearance, setAppearance } = useTheme();
+  const [appearance, setAppearanceState] = useState<Appearance>('system');
+
+  useEffect(() => {
+    const saved = (localStorage.getItem('appearance') as Appearance) || 'system';
+    setAppearanceState(saved);
+  }, []);
+
+  const pick = (a: Appearance) => {
+    setAppearanceState(a);
+    localStorage.setItem('appearance', a);
+    applyTheme(a);
+  };
 
   return (
     <DashboardLayout>
@@ -71,41 +91,40 @@ export default function SettingsHubPage() {
           </div>
         </div>
 
-        {/* Appearance */}
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-9 h-9 rounded-lg bg-muted flex items-center justify-center">
+        {/* ── Appearance ── */}
+        <div className="rounded-2xl border border-border bg-card p-5">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center">
               <Sun className="h-4 w-4 text-muted-foreground" />
             </div>
             <div>
-              <div className="font-semibold text-sm">Appearance</div>
-              <div className="text-xs text-muted-foreground">Choose how the dashboard looks</div>
+              <div className="text-sm font-semibold">Appearance</div>
+              <div className="text-xs text-muted-foreground mt-0.5">Choose how the dashboard looks</div>
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-2">
-            {APPEARANCE_OPTIONS.map(opt => {
-              const Icon = opt.icon;
-              const active = appearance === opt.value;
+          <div className="grid grid-cols-3 gap-3">
+            {MODES.map(({ value, label, Icon }) => {
+              const active = appearance === value;
               return (
                 <button
-                  key={opt.value}
-                  onClick={() => setAppearance(opt.value)}
+                  key={value}
+                  onClick={() => pick(value)}
                   className={cn(
-                    'flex flex-col items-center gap-2 py-3 px-2 rounded-xl border text-sm font-medium transition-all',
+                    'flex flex-col items-center gap-2.5 py-4 rounded-xl border text-sm font-semibold transition-all',
                     active
                       ? 'border-primary bg-primary/10 text-primary'
-                      : 'border-border text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground'
+                      : 'border-border text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground'
                   )}
                 >
                   <Icon className="h-5 w-5" />
-                  {opt.label}
+                  {label}
                 </button>
               );
             })}
           </div>
         </div>
 
-        {/* Nav cards */}
+        {/* ── Nav cards ── */}
         <div className="grid gap-3">
           {CARDS.map(card => {
             const Icon = card.icon;
