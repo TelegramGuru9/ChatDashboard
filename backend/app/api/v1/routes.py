@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, UploadFile, File, Form
-from sqlalchemy import select, and_, func, update
+from sqlalchemy import select, and_, or_, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db, db_manager
@@ -634,12 +634,13 @@ async def list_hot_users(
         warm, hot, sale = [], [], []
         for u in users:
             extra = u.extra_data or {}
-            label = extra.get("lead_label", "")
+            label = str(extra.get("lead_label") or "").strip().upper()
             # conversation_state fallback
             if not label:
                 cs = u.conversation_state or ""
                 if cs == "customer":          label = "BUYER"
                 elif "hot" in cs.lower():     label = "HOT"
+                else:                         label = "WARM"
 
             row = {
                 "id":              str(u.id),
