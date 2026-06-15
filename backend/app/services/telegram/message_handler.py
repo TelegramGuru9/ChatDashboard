@@ -881,6 +881,57 @@ class MessageProcessor:
             logger.warning(f"_load_packages error: {e}")
             return []
 
+    async def _fire_cash_alarm(
+        self,
+        creator_id: Optional[str],
+        telegram_id: int,
+        event: str,          # "list_sent" | "package" | "sale"
+        pkg_name: str = "",
+    ) -> None:
+        """
+        Send a Cash Alarm notification to all configured cash_notify_users.
+        Call via asyncio.create_task() so it never blocks the main flow.
+        """
+        try:
+            async with db_manager.get_session() as _cas:
+                _notify_raw = await _load_creator_config("cash_notify_users", creator_id, _cas)
+                notify_users: list = _notify_raw if isinstance(_notify_raw, list) else []
+
+            if not notify_users:
+                return
+
+            if event == "list_sent":
+                msg = (
+                    "💵💵💵 $ CASH CASH CASH $ 💵💵💵\n\n"
+                    "🌡️ Warm Lead — Liste angefragt!\n"
+                    f"👤 Telegram ID: {telegram_id}"
+                )
+            elif event == "package":
+                msg = (
+                    "💵💵💵 $ CASH CASH CASH $ 💵💵💵\n\n"
+                    f"🔥 HOT Lead — {pkg_name} gesendet!\n"
+                    f"👤 Telegram ID: {telegram_id}"
+                )
+            else:  # generic / sale
+                msg = (
+                    "💵💵💵 $ CASH CASH CASH $ 💵💵💵\n\n"
+                    f"🎉 Kauf bestätigt!\n"
+                    f"👤 Telegram ID: {telegram_id}"
+                )
+
+            _tgc = self._resolve_tg_client(creator_id)
+            for raw_user in notify_users:
+                uname = str(raw_user).lstrip("@").strip()
+                if not uname:
+                    continue
+                try:
+                    await _tgc.send_message(uname, msg)
+                    logger.info(f"[cash-alarm] ✓ event={event} pkg='{pkg_name}' → @{uname}")
+                except Exception as _e:
+                    logger.warning(f"[cash-alarm] ✗ @{uname}: {_e}")
+        except Exception as e:
+            logger.warning(f"[cash-alarm] error: {e}")
+
     async def _fire_automessages(
         self,
         trigger: str,
@@ -1423,6 +1474,13 @@ class MessageProcessor:
                         await self._fire_automessages(
                             "status_hot", _automessages, tg_client, telegram_id, user_id, persona_data
                         )
+                        # Cash Alarm — HOT Lead, package sent
+                        asyncio.create_task(
+                            self._fire_cash_alarm(
+                                creator_id, telegram_id, "package",
+                                pkg_name=_pkg.get("name", "Paket"),
+                            )
+                        )
                         return  # do not also call AI
 
                 # 2. List-message keyword → send list_message verbatim (keyword-only, no threshold)
@@ -1455,6 +1513,10 @@ class MessageProcessor:
                         # Fire after_list_sent automessages
                         await self._fire_automessages(
                             "after_list_sent", _automessages, tg_client, telegram_id, user_id, persona_data
+                        )
+                        # Cash Alarm — Warm Lead, list sent
+                        asyncio.create_task(
+                            self._fire_cash_alarm(creator_id, telegram_id, "list_sent")
                         )
                         return  # do not also call AI
 

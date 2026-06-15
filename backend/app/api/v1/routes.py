@@ -934,13 +934,26 @@ async def test_cash_alarm(
 
     amount       = str(payload.get("amount", "")).strip()
     package_name = str(payload.get("package_name", "")).strip()
+    event_type   = str(payload.get("event_type", "sale")).strip()
 
-    # Build the notification message
-    cash_msg = "💵💵💵 $ CASH CASH CASH $ 💵💵💵\n\n🎉 TEST — Kauf simuliert!"
-    if package_name:
-        cash_msg += f"\n📦 Paket: {package_name}"
-    if amount:
-        cash_msg += f"\n💰 Betrag: €{amount}"
+    # Build the notification message based on event type
+    if event_type == "list_sent":
+        cash_msg = (
+            "💵💵💵 $ CASH CASH CASH $ 💵💵💵\n\n"
+            "🌡️ TEST — Warm Lead — Liste angefragt!"
+        )
+    elif event_type.startswith("package"):
+        pkg_label = package_name or event_type.replace("_", " ").title()
+        cash_msg = (
+            "💵💵💵 $ CASH CASH CASH $ 💵💵💵\n\n"
+            f"🔥 TEST — HOT Lead — {pkg_label} gesendet!"
+        )
+    else:
+        cash_msg = "💵💵💵 $ CASH CASH CASH $ 💵💵💵\n\n🎉 TEST — Kauf simuliert!"
+        if package_name:
+            cash_msg += f"\n📦 Paket: {package_name}"
+        if amount:
+            cash_msg += f"\n💰 Betrag: €{amount}"
 
     # Load notify users from DB (scoped to creator if provided)
     notify_users: list = []
