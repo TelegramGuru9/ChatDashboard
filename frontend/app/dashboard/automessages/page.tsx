@@ -27,7 +27,7 @@ const TRIGGERS: Record<TriggerType, { label: string; desc: string; cardCls: stri
   after_package_sent: { label: 'Nach Paket',         desc: 'Direkt nachdem ein Paket-Keyword gesendet wurde',    cardCls: 'border-purple-200 bg-purple-50/40', badgeCls: 'bg-purple-100 text-purple-700' },
   after_list_sent:    { label: 'Nach Liste',         desc: 'Direkt nachdem die Listennachricht gesendet wurde',  cardCls: 'border-brand-200 bg-brand-50/40',  badgeCls: 'bg-brand-100 text-brand-700'  },
   status_hot:         { label: 'Status → HOT',       desc: 'Wenn User auf HOT gesetzt wird',                    cardCls: 'border-orange-200 bg-orange-50/40', badgeCls: 'bg-orange-100 text-orange-700' },
-  inactive_days:      { label: 'Inaktiv',            desc: 'Nach X Tagen ohne Nachricht',                       cardCls: 'border-gray-200 bg-gray-50/40',    badgeCls: 'bg-gray-100 text-gray-600'   },
+  inactive_days:      { label: 'Inaktiv',            desc: 'Nach X Tagen ohne Nachricht',                       cardCls: 'border-border bg-background/40',    badgeCls: 'bg-muted text-muted-foreground'   },
 };
 
 const mkNew = (): AutoMessage => ({
@@ -124,7 +124,7 @@ export default function AutoMessagesPage() {
   if (loading) {
     return (
       <DashboardLayout>
-        <div className="p-6 md:p-8 flex items-center gap-2 text-gray-400">
+        <div className="p-6 md:p-8 flex items-center gap-2 text-muted-foreground/60">
           <Loader2 className="h-4 w-4 animate-spin" />
           <span className="text-sm">Lade Automatisierungen…</span>
         </div>
@@ -139,8 +139,8 @@ export default function AutoMessagesPage() {
         {/* Header */}
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Automatische Nachrichten</h1>
-            <p className="text-sm text-gray-500 mt-0.5">
+            <h1 className="text-2xl font-semibold text-foreground tracking-tight">Automatische Nachrichten</h1>
+            <p className="text-sm text-muted-foreground mt-0.5">
               Vorgefertigte Nachrichten die bei bestimmten Ereignissen automatisch und exakt so gesendet werden — kein AI-Eingriff.
             </p>
           </div>
@@ -154,10 +154,10 @@ export default function AutoMessagesPage() {
 
         {/* Empty state */}
         {items.length === 0 && (
-          <div className="rounded-2xl border border-dashed border-gray-300 bg-white p-12 text-center shadow-theme-sm">
-            <Zap className="h-10 w-10 text-gray-200 mx-auto mb-3" />
-            <p className="text-sm font-semibold text-gray-500">Noch keine Automatisierungen</p>
-            <p className="text-xs text-gray-400 mt-1 mb-4">Klick auf "Hinzufügen" um eine neue Automatisierung zu erstellen.</p>
+          <div className="rounded-2xl border border-dashed border-border bg-card p-12 text-center shadow-theme-sm">
+            <Zap className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
+            <p className="text-sm font-semibold text-muted-foreground">Noch keine Automatisierungen</p>
+            <p className="text-xs text-muted-foreground/60 mt-1 mb-4">Klick auf "Hinzufügen" um eine neue Automatisierung zu erstellen.</p>
             <button onClick={add} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand-500 hover:bg-brand-600 text-white text-sm font-semibold transition-colors">
               <Plus className="h-3.5 w-3.5" />Erste Automatisierung
             </button>
@@ -180,7 +180,7 @@ export default function AutoMessagesPage() {
                     value={am.name}
                     onChange={e => update(am.id, 'name', e.target.value)}
                     placeholder="Name dieser Automatisierung…"
-                    className="flex-1 min-w-0 text-sm font-semibold text-gray-900 bg-transparent border-none outline-none focus:underline decoration-brand-400 placeholder:text-gray-400"
+                    className="flex-1 min-w-0 text-sm font-semibold text-foreground bg-transparent border-none outline-none focus:underline decoration-brand-400 placeholder:text-muted-foreground/60"
                   />
                   <div className="flex items-center gap-2 flex-shrink-0">
                     {/* Active toggle */}
@@ -190,11 +190,11 @@ export default function AutoMessagesPage() {
                       title={am.active ? 'Deaktivieren' : 'Aktivieren'}
                       className={cn(
                         'relative w-9 h-5 rounded-full transition-all flex-shrink-0 focus-visible:ring-2 focus-visible:ring-brand-400',
-                        am.active ? 'bg-emerald-500' : 'bg-gray-300'
+                        am.active ? 'bg-emerald-500' : 'bg-muted-foreground/30'
                       )}
                     >
                       <span className={cn(
-                        'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all',
+                        'absolute top-0.5 w-4 h-4 rounded-full bg-card shadow transition-all',
                         am.active ? 'left-[18px]' : 'left-0.5'
                       )} />
                     </button>
@@ -202,7 +202,7 @@ export default function AutoMessagesPage() {
                     <button
                       type="button"
                       onClick={() => remove(am.id)}
-                      className="p-1.5 rounded-lg hover:bg-red-50 hover:text-red-500 text-gray-400 transition-colors"
+                      className="p-1.5 rounded-lg hover:bg-red-50 hover:text-red-500 text-muted-foreground/60 transition-colors"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -213,11 +213,11 @@ export default function AutoMessagesPage() {
 
                   {/* Trigger selector */}
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1.5">Trigger</label>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1.5">Trigger</label>
                     <select
                       value={am.trigger}
                       onChange={e => update(am.id, 'trigger', e.target.value as TriggerType)}
-                      className="w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent"
+                      className="w-full rounded-xl border border-border bg-card px-3.5 py-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent"
                     >
                       {(Object.entries(TRIGGERS) as [TriggerType, typeof TRIGGERS[TriggerType]][]).map(([val, info]) => (
                         <option key={val} value={val}>{info.label} — {info.desc}</option>
@@ -228,7 +228,7 @@ export default function AutoMessagesPage() {
                   {/* Inactive days */}
                   {am.trigger === 'inactive_days' && (
                     <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1.5">Nach wie vielen Tagen inaktiv?</label>
+                      <label className="block text-xs font-medium text-muted-foreground mb-1.5">Nach wie vielen Tagen inaktiv?</label>
                       <div className="relative w-[150px]">
                         <input
                           type="number"
@@ -236,16 +236,16 @@ export default function AutoMessagesPage() {
                           max={365}
                           value={am.inactive_days}
                           onChange={e => update(am.id, 'inactive_days', Number(e.target.value))}
-                          className="w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent pr-14"
+                          className="w-full rounded-xl border border-border bg-card px-3.5 py-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent pr-14"
                         />
-                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">Tage</span>
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground/60 pointer-events-none">Tage</span>
                       </div>
                     </div>
                   )}
 
                   {/* Message */}
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                    <label className="block text-xs font-medium text-muted-foreground mb-1.5">
                       <MessageSquare className="h-3 w-3 inline mr-1" />Nachricht (wird exakt so gesendet — copy-paste)
                     </label>
                     <textarea
@@ -253,7 +253,7 @@ export default function AutoMessagesPage() {
                       onChange={e => update(am.id, 'message', e.target.value)}
                       rows={5}
                       placeholder="Nachricht die automatisch gesendet wird — inklusive Links falls nötig…"
-                      className="w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm text-gray-800 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent resize-none leading-relaxed"
+                      className="w-full rounded-xl border border-border bg-card px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent resize-none leading-relaxed"
                     />
                   </div>
 

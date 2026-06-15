@@ -38,7 +38,7 @@ function AutopilotToggle({ on, loading, onChange }: { on: boolean; loading: bool
       )}
     >
       <div className={cn(
-        'absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-all duration-300',
+        'absolute top-1 w-4 h-4 rounded-full bg-card shadow transition-all duration-300',
         on ? 'left-[26px]' : 'left-1'
       )} />
     </button>
@@ -52,16 +52,16 @@ function StatCard({
   iconBg: string; sub?: string; trend?: string;
 }) {
   return (
-    <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-theme-sm hover:shadow-theme-md transition-shadow">
+    <div className="rounded-2xl border border-border bg-card p-5 shadow-theme-sm hover:shadow-theme-md transition-shadow">
       <div className="flex items-start justify-between mb-4">
-        <p className="text-sm font-medium text-gray-500">{label}</p>
+        <p className="text-sm font-medium text-muted-foreground">{label}</p>
         <div className={cn('w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0', iconBg)}>
           <Icon className="h-5 w-5" />
         </div>
       </div>
-      <p className="text-3xl font-bold tracking-tight text-gray-900 leading-none">{value}</p>
+      <p className="text-3xl font-bold tracking-tight text-foreground leading-none">{value}</p>
       {(sub || trend) && (
-        <p className="text-xs text-gray-400 mt-2.5 flex items-center gap-1">
+        <p className="text-xs text-muted-foreground/60 mt-2.5 flex items-center gap-1">
           {trend && <TrendingUp className="h-3 w-3 text-emerald-500 flex-shrink-0" />}
           <span className={trend ? 'text-emerald-600 font-medium' : ''}>{trend || sub}</span>
         </p>
@@ -155,8 +155,8 @@ export default function DashboardPage() {
         {/* ── Header ── */}
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Overview</h1>
-            <p className="text-sm text-gray-500 mt-0.5">Your AI Telegram CRM at a glance</p>
+            <h1 className="text-2xl font-semibold text-foreground tracking-tight">Overview</h1>
+            <p className="text-sm text-muted-foreground mt-0.5">Your AI Telegram CRM at a glance</p>
           </div>
 
           {/* Status pills */}
@@ -188,33 +188,33 @@ export default function DashboardPage() {
 
           {/* Autopilot */}
           <div className={cn(
-            'rounded-2xl border bg-white p-5 flex flex-col gap-4 shadow-theme-sm transition-colors',
-            autopilot ? 'border-emerald-200 bg-emerald-50/40' : 'border-gray-200'
+            'rounded-2xl border bg-card p-5 flex flex-col gap-4 shadow-theme-sm transition-colors',
+            autopilot ? 'border-emerald-200 bg-emerald-50/40' : 'border-border'
           )}>
             <div className="flex items-center gap-3">
               <div className={cn(
                 'w-10 h-10 rounded-xl flex items-center justify-center text-xl flex-shrink-0 transition-colors',
-                autopilot ? 'bg-emerald-100' : 'bg-gray-100'
+                autopilot ? 'bg-emerald-100' : 'bg-muted'
               )}>
                 🤖
               </div>
               <div className="flex-1 min-w-0">
-                <div className="font-semibold text-sm text-gray-900">AI Autopilot</div>
-                <div className={cn('text-xs mt-0.5 font-medium', autopilot ? 'text-emerald-600' : 'text-gray-400')}>
+                <div className="font-semibold text-sm text-foreground">AI Autopilot</div>
+                <div className={cn('text-xs mt-0.5 font-medium', autopilot ? 'text-emerald-600' : 'text-muted-foreground/60')}>
                   {apLoading ? 'Loading…' : autopilot ? '● Active' : '○ Paused'}
                 </div>
               </div>
               <AutopilotToggle on={autopilot} loading={apLoading || apToggling} onChange={toggleAutopilot} />
             </div>
 
-            <p className="text-xs text-gray-500 leading-relaxed">
+            <p className="text-xs text-muted-foreground leading-relaxed">
               {autopilot
                 ? 'Nika is replying automatically. Disable per-chat in Inbox.'
                 : 'Turn on for Nika to reply to all incoming messages automatically.'}
             </p>
 
             {apStatus && (
-              <div className="text-xs bg-gray-100 rounded-lg px-3 py-2 text-gray-500">
+              <div className="text-xs bg-muted rounded-lg px-3 py-2 text-muted-foreground">
                 {apStatus}
               </div>
             )}
@@ -228,22 +228,22 @@ export default function DashboardPage() {
           </div>
 
           {/* Quick Access */}
-          <div className="lg:col-span-2 rounded-2xl border border-gray-200 bg-white p-5 shadow-theme-sm">
-            <p className="text-sm font-semibold text-gray-900 mb-3.5">Quick Access</p>
+          <div className="lg:col-span-2 rounded-2xl border border-border bg-card p-5 shadow-theme-sm">
+            <p className="text-sm font-semibold text-foreground mb-3.5">Quick Access</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {QUICK.map(q => {
                 const Icon = q.icon;
                 return (
                   <Link key={q.href} href={q.href}
-                    className="group flex items-center gap-3 px-3.5 py-3 rounded-xl border border-gray-200 hover:border-brand-200 hover:bg-brand-50/30 transition-all">
+                    className="group flex items-center gap-3 px-3.5 py-3 rounded-xl border border-border hover:border-brand-200 hover:bg-brand-50/30 transition-all">
                     <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0', q.color)}>
                       <Icon className="h-3.5 w-3.5" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-gray-800 leading-tight">{q.label}</div>
-                      <div className="text-[11px] text-gray-400 mt-0.5">{q.desc}</div>
+                      <div className="text-sm font-medium text-foreground leading-tight">{q.label}</div>
+                      <div className="text-[11px] text-muted-foreground/60 mt-0.5">{q.desc}</div>
                     </div>
-                    <ArrowUpRight className="h-3.5 w-3.5 text-gray-300 group-hover:text-brand-500 transition-colors flex-shrink-0" />
+                    <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground/40 group-hover:text-brand-500 transition-colors flex-shrink-0" />
                   </Link>
                 );
               })}
@@ -259,8 +259,8 @@ export default function DashboardPage() {
                 <WifiOff size={18} className="text-brand-600" />
               </div>
               <div className="flex-1">
-                <p className="font-semibold text-sm text-gray-900">Telegram not connected</p>
-                <p className="text-sm text-gray-500 mt-0.5">
+                <p className="font-semibold text-sm text-foreground">Telegram not connected</p>
+                <p className="text-sm text-muted-foreground mt-0.5">
                   Go to{' '}
                   <Link href="/dashboard/inbox" className="text-brand-600 hover:underline font-medium">Inbox</Link>
                   {' '}and click Reconnect to enable chats and autopilot.

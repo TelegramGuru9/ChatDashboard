@@ -687,7 +687,7 @@ function InboxContent() {
                   🤖 AI {insights?.ai_enabled ? 'ON' : 'OFF'}
                 </span>
                 <div className={cn("w-8 h-4 rounded-full relative transition-colors", insights?.ai_enabled ? "bg-green-500" : "bg-muted-foreground/30")}>
-                  <div className={cn("absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all", insights?.ai_enabled ? "left-4" : "left-0.5")} />
+                  <div className={cn("absolute top-0.5 w-3 h-3 rounded-full bg-card shadow transition-all", insights?.ai_enabled ? "left-4" : "left-0.5")} />
                 </div>
               </div>
               <button
@@ -722,7 +722,7 @@ function InboxContent() {
                         : msg.text || <em className="text-muted-foreground text-xs">[empty]</em>
                       }
                       <div className={cn("text-[10px] mt-1 flex gap-1 items-center opacity-60", out ? "justify-end" : "justify-start")}>
-                        {msg.is_ai_generated && <span className="bg-white/15 px-1 py-0.5 rounded">AI</span>}
+                        {msg.is_ai_generated && <span className="bg-card/15 px-1 py-0.5 rounded">AI</span>}
                         {formatTime(msg.created_at)}
                       </div>
                     </div>
@@ -853,7 +853,7 @@ function InboxContent() {
                         onClick={() => saveInsights({ ai_enabled: !insights?.ai_enabled })}
                         className={cn("w-10 h-6 rounded-full relative cursor-pointer transition-colors", insights?.ai_enabled ? "bg-green-500" : "bg-muted-foreground/30", insightsSaving && "opacity-50")}
                       >
-                        <div className={cn("absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-all", insights?.ai_enabled ? "left-5" : "left-1")} />
+                        <div className={cn("absolute top-1 w-4 h-4 rounded-full bg-card shadow transition-all", insights?.ai_enabled ? "left-5" : "left-1")} />
                       </div>
                     </div>
 

@@ -102,23 +102,23 @@ export default function AppearancePage() {
               'flex-1 rounded-xl border-2 overflow-hidden transition-all',
               appearance === 'light' ? 'border-primary' : 'border-border'
             )}>
-              <div className="bg-white p-3 space-y-1.5">
+              <div className="bg-card p-3 space-y-1.5">
                 <div className="flex gap-1.5">
-                  <div className="w-2 h-2 rounded-full bg-gray-200" />
-                  <div className="w-2 h-2 rounded-full bg-gray-200" />
+                  <div className="w-2 h-2 rounded-full bg-border" />
+                  <div className="w-2 h-2 rounded-full bg-border" />
                 </div>
-                <div className="h-2 w-2/3 rounded bg-gray-100" />
-                <div className="h-2 w-1/2 rounded bg-gray-100" />
+                <div className="h-2 w-2/3 rounded bg-muted" />
+                <div className="h-2 w-1/2 rounded bg-muted" />
                 <div className="h-2 w-3/4 rounded bg-blue-100" />
               </div>
-              <div className="bg-gray-50 px-3 py-1.5 text-[10px] font-medium text-gray-500 text-center">Light</div>
+              <div className="bg-background px-3 py-1.5 text-[10px] font-medium text-muted-foreground text-center">Light</div>
             </div>
             {/* Dark preview */}
             <div className={cn(
               'flex-1 rounded-xl border-2 overflow-hidden transition-all',
               appearance === 'dark' ? 'border-primary' : 'border-border'
             )}>
-              <div className="bg-gray-900 p-3 space-y-1.5">
+              <div className="bg-background p-3 space-y-1.5">
                 <div className="flex gap-1.5">
                   <div className="w-2 h-2 rounded-full bg-gray-700" />
                   <div className="w-2 h-2 rounded-full bg-gray-700" />
@@ -127,7 +127,7 @@ export default function AppearancePage() {
                 <div className="h-2 w-1/2 rounded bg-gray-800" />
                 <div className="h-2 w-3/4 rounded bg-blue-900/60" />
               </div>
-              <div className="bg-gray-950 px-3 py-1.5 text-[10px] font-medium text-gray-500 text-center">Dark</div>
+              <div className="bg-background px-3 py-1.5 text-[10px] font-medium text-muted-foreground text-center">Dark</div>
             </div>
             {/* System preview */}
             <div className={cn(

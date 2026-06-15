@@ -58,7 +58,7 @@ const NAV_GROUPS = [
 function WishperMELogo({ collapsed }: { collapsed: boolean }) {
   return (
     <div className={cn(
-      'flex items-center gap-2.5 px-5 h-[60px] border-b border-gray-200 flex-shrink-0',
+      'flex items-center gap-2.5 px-5 h-[60px] border-b border-border flex-shrink-0',
       collapsed && 'justify-center px-3'
     )}>
       <div className="w-8 h-8 rounded-xl bg-brand-500 flex items-center justify-center flex-shrink-0 shadow-theme-sm">
@@ -68,8 +68,8 @@ function WishperMELogo({ collapsed }: { collapsed: boolean }) {
       </div>
       {!collapsed && (
         <div className="min-w-0">
-          <div className="font-bold text-sm text-gray-900 tracking-tight leading-tight">WishperME</div>
-          <div className="text-[10px] text-gray-400 leading-tight">Telegram Autopilot</div>
+          <div className="font-bold text-sm text-foreground tracking-tight leading-tight">WishperME</div>
+          <div className="text-[10px] text-muted-foreground/60 leading-tight">Telegram Autopilot</div>
         </div>
       )}
     </div>
@@ -95,8 +95,8 @@ function CreatorSwitcher({ collapsed }: { collapsed: boolean }) {
       <button
         onClick={() => setOpen(o => !o)}
         className={cn(
-          'w-full flex items-center gap-2.5 rounded-lg border border-gray-200 bg-gray-50',
-          'hover:bg-gray-100 transition-colors text-sm px-3 py-2',
+          'w-full flex items-center gap-2.5 rounded-lg border border-border bg-background',
+          'hover:bg-accent transition-colors text-sm px-3 py-2',
           collapsed && 'justify-center px-2'
         )}
       >
@@ -107,14 +107,14 @@ function CreatorSwitcher({ collapsed }: { collapsed: boolean }) {
         {!collapsed && (
           <>
             <div className="flex-1 min-w-0 text-left">
-              <div className={cn('text-xs font-medium truncate leading-tight text-gray-700', isIncomplete && 'text-orange-500')}>
+              <div className={cn('text-xs font-medium truncate leading-tight text-foreground/80', isIncomplete && 'text-orange-500')}>
                 {selected?.display_name || selected?.name || 'Incomplete Creator'}
               </div>
               {selected?.telegram_phone && (
-                <div className="text-[10px] text-gray-400 truncate leading-tight">{selected.telegram_phone}</div>
+                <div className="text-[10px] text-muted-foreground/60 truncate leading-tight">{selected.telegram_phone}</div>
               )}
             </div>
-            <ChevronsUpDown className="h-3.5 w-3.5 text-gray-400 flex-shrink-0" />
+            <ChevronsUpDown className="h-3.5 w-3.5 text-muted-foreground/60 flex-shrink-0" />
           </>
         )}
       </button>
@@ -122,17 +122,17 @@ function CreatorSwitcher({ collapsed }: { collapsed: boolean }) {
       {open && (
         <>
           <div onClick={() => setOpen(false)} className="fixed inset-0 z-40" />
-          <div className="absolute top-full left-3 right-3 mt-1 bg-white border border-gray-200 rounded-xl shadow-theme-md z-50 overflow-hidden">
+          <div className="absolute top-full left-3 right-3 mt-1 bg-card border border-border rounded-xl shadow-theme-md z-50 overflow-hidden">
             {creators.map(c => (
               <button key={c.id} onClick={() => { switchCreator(c.id); setOpen(false); }}
-                className={cn('w-full flex items-center gap-2.5 px-3 py-2.5 text-sm hover:bg-gray-50 transition-colors', c.id === selected?.id && 'bg-brand-50')}>
+                className={cn('w-full flex items-center gap-2.5 px-3 py-2.5 text-sm hover:bg-accent/50 transition-colors', c.id === selected?.id && 'bg-brand-50')}>
                 <div className="w-7 h-7 rounded-md flex items-center justify-center text-sm flex-shrink-0 font-bold text-white"
                   style={{ background: c.color || '#465fff' }}>
                   {c.emoji || '🎭'}
                 </div>
                 <div className="flex-1 min-w-0 text-left">
-                  <div className="font-medium truncate text-sm text-gray-800">{c.display_name || c.name || 'Unnamed'}</div>
-                  <div className="text-xs text-gray-400 truncate">
+                  <div className="font-medium truncate text-sm text-foreground">{c.display_name || c.name || 'Unnamed'}</div>
+                  <div className="text-xs text-muted-foreground/60 truncate">
                     {c.telegram_phone || <span className="text-orange-500">No phone connected</span>}
                   </div>
                 </div>
@@ -180,29 +180,29 @@ function NavItem({
             'w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all',
             (isActive || childActive)
               ? 'bg-brand-50 text-brand-600'
-              : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+              : 'text-foreground/80 hover:bg-accent hover:text-foreground'
           )}
         >
           {Icon && (
             <Icon className={cn(
               'flex-shrink-0 h-4 w-4',
-              (isActive || childActive) ? 'text-brand-500' : 'text-gray-500'
+              (isActive || childActive) ? 'text-brand-500' : 'text-muted-foreground'
             )} />
           )}
           <span className="flex-1 text-left leading-none">{item.label}</span>
           {expanded
-            ? <ChevronUp className="h-3 w-3 text-gray-400" />
-            : <ChevronDown className="h-3 w-3 text-gray-400" />}
+            ? <ChevronUp className="h-3 w-3 text-muted-foreground/60" />
+            : <ChevronDown className="h-3 w-3 text-muted-foreground/60" />}
         </button>
         {expanded && (
-          <div className="ml-3 mt-0.5 pl-3 border-l border-gray-200 space-y-0.5">
+          <div className="ml-3 mt-0.5 pl-3 border-l border-border space-y-0.5">
             {item.children.map((child: any) => (
               <Link key={child.href} href={child.href} onClick={onNav}>
                 <div className={cn(
                   'flex items-center rounded-md px-2.5 py-1.5 text-xs font-medium transition-all',
                   pathname === child.href || pathname.startsWith(child.href + '/')
                     ? 'text-brand-600 font-semibold bg-brand-50/60'
-                    : 'text-gray-500 hover:text-gray-800 hover:bg-gray-100'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-accent'
                 )}>
                   {child.label}
                 </div>
@@ -223,12 +223,12 @@ function NavItem({
           ? 'bg-brand-50 text-brand-600'
           : childActive
           ? 'bg-brand-50/60 text-brand-500'
-          : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900',
+          : 'text-foreground/80 hover:bg-accent hover:text-foreground',
       )}>
         {Icon && (
           <Icon className={cn(
             'flex-shrink-0 h-4 w-4',
-            isActive ? 'text-brand-500' : childActive ? 'text-brand-400' : item.accent ?? 'text-gray-500'
+            isActive ? 'text-brand-500' : childActive ? 'text-brand-400' : item.accent ?? 'text-muted-foreground'
           )} />
         )}
         {!collapsed && <span className="leading-none">{item.label}</span>}
@@ -255,7 +255,7 @@ function DashboardInner({ children }: DashboardLayoutProps) {
       {NAV_GROUPS.map(group => (
         <div key={group.label}>
           {!collapsed && (
-            <div className="px-1 mb-2 text-[11px] font-semibold text-gray-400 uppercase tracking-widest select-none">
+            <div className="px-1 mb-2 text-[11px] font-semibold text-muted-foreground/60 uppercase tracking-widest select-none">
               {group.label}
             </div>
           )}
@@ -275,12 +275,12 @@ function DashboardInner({ children }: DashboardLayoutProps) {
       <div className="py-2">
         <CreatorSwitcher collapsed={collapsed && !isMobile} />
       </div>
-      <div className="mx-4 h-px bg-gray-100" />
+      <div className="mx-4 h-px bg-muted" />
       <NavContent onNav={isMobile ? () => setDrawer(false) : undefined} />
       {!isMobile && (
-        <div className="p-3 border-t border-gray-200">
+        <div className="p-3 border-t border-border">
           <button onClick={() => setCollapsed(c => !c)}
-            className={cn('w-full flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors', collapsed ? 'justify-center' : '')}>
+            className={cn('w-full flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground/80 transition-colors', collapsed ? 'justify-center' : '')}>
             {collapsed ? <ChevronRight size={14} /> : <><ChevronLeft size={14} /><span>Collapse</span></>}
           </button>
         </div>
@@ -289,18 +289,18 @@ function DashboardInner({ children }: DashboardLayoutProps) {
   );
 
   return (
-    <div className="flex min-h-screen bg-gray-50 text-gray-900">
+    <div className="flex min-h-screen bg-background text-foreground">
       {!mobile && (
         <aside className={cn(
-          'flex flex-col flex-shrink-0 bg-white border-r border-gray-200 sticky top-0 h-screen transition-all duration-200 overflow-hidden shadow-theme-sm',
+          'flex flex-col flex-shrink-0 bg-card border-r border-border sticky top-0 h-screen transition-all duration-200 overflow-hidden shadow-theme-sm',
           collapsed ? 'w-[56px]' : 'w-[240px]'
         )}>
           <SidebarContent />
         </aside>
       )}
       {mobile && (
-        <div className="fixed top-0 left-0 right-0 z-50 h-14 flex items-center gap-3 px-4 bg-white border-b border-gray-200 shadow-theme-sm">
-          <button onClick={() => setDrawer(d => !d)} className="p-1.5 rounded-md hover:bg-gray-100 transition-colors text-gray-600">
+        <div className="fixed top-0 left-0 right-0 z-50 h-14 flex items-center gap-3 px-4 bg-card border-b border-border shadow-theme-sm">
+          <button onClick={() => setDrawer(d => !d)} className="p-1.5 rounded-md hover:bg-accent transition-colors text-muted-foreground">
             {drawer ? <X size={18} /> : <Menu size={18} />}
           </button>
           <div className="flex items-center gap-2">
@@ -309,14 +309,14 @@ function DashboardInner({ children }: DashboardLayoutProps) {
                 <path d="M9 1.5C5.134 1.5 2 4.41 2 8C2 9.8 2.78 11.42 4.04 12.57L3 16.5L7.18 14.87C7.76 15.01 8.37 15.08 9 15.08C12.866 15.08 16 12.17 16 8.58C16 4.99 12.866 1.5 9 1.5Z" fill="white"/>
               </svg>
             </div>
-            <span className="font-bold text-sm text-gray-900">WishperME</span>
+            <span className="font-bold text-sm text-foreground">WishperME</span>
           </div>
         </div>
       )}
       {mobile && drawer && (
         <>
           <div onClick={() => setDrawer(false)} className="fixed inset-0 bg-black/40 z-50" />
-          <aside className="fixed top-0 left-0 bottom-0 z-[60] w-[240px] flex flex-col bg-white border-r border-gray-200 shadow-theme-md slide-in-from-left">
+          <aside className="fixed top-0 left-0 bottom-0 z-[60] w-[240px] flex flex-col bg-card border-r border-border shadow-theme-md slide-in-from-left">
             <SidebarContent isMobile />
           </aside>
         </>

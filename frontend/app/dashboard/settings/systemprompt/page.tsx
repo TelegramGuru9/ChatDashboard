@@ -194,7 +194,7 @@ export default function SystemPromptPage() {
                   model === m.id ? 'border-primary bg-primary' : 'border-muted-foreground/30'
                 )}>
                   {model === m.id && (
-                    <div className="w-full h-full rounded-full bg-white scale-[0.45] block" />
+                    <div className="w-full h-full rounded-full bg-card scale-[0.45] block" />
                   )}
                 </div>
               </button>
@@ -229,7 +229,7 @@ export default function SystemPromptPage() {
                   )}
                 >
                   <div className={cn(
-                    'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all',
+                    'absolute top-0.5 w-4 h-4 rounded-full bg-card shadow transition-all',
                     settings[t.key as keyof typeof settings] ? 'left-5' : 'left-0.5'
                   )} />
                 </button>

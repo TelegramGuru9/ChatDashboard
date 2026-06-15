@@ -138,7 +138,7 @@ export default function PackageEditor({ slot, label }: { slot: number; label: st
             <span className="text-xs text-muted-foreground">{pkg.active ? 'Active' : 'Paused'}</span>
             <button onClick={() => set('active', !pkg.active)}
               className={cn('w-10 h-5 rounded-full relative transition-colors', pkg.active ? 'bg-primary' : 'bg-muted-foreground/25')}>
-              <div className={cn('absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all', pkg.active ? 'left-5' : 'left-0.5')} />
+              <div className={cn('absolute top-0.5 w-4 h-4 rounded-full bg-card shadow transition-all', pkg.active ? 'left-5' : 'left-0.5')} />
             </button>
           </div>
         </div>
@@ -238,7 +238,7 @@ export default function PackageEditor({ slot, label }: { slot: number; label: st
                 <span className="text-xs text-muted-foreground">Dynamic</span>
                 <button onClick={() => set('dynamic', !pkg.dynamic)}
                   className={cn('w-9 h-5 rounded-full relative transition-colors', pkg.dynamic ? 'bg-primary' : 'bg-muted-foreground/25')}>
-                  <div className={cn('absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all', pkg.dynamic ? 'left-4' : 'left-0.5')} />
+                  <div className={cn('absolute top-0.5 w-4 h-4 rounded-full bg-card shadow transition-all', pkg.dynamic ? 'left-4' : 'left-0.5')} />
                 </button>
               </div>
             </div>

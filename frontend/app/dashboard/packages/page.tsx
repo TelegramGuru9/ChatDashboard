@@ -215,7 +215,7 @@ export default function PackagesPage() {
   if (loading) {
     return (
       <DashboardLayout>
-        <div className="p-6 md:p-8 flex items-center gap-2 text-gray-400">
+        <div className="p-6 md:p-8 flex items-center gap-2 text-muted-foreground/60">
           <Loader2 className="h-4 w-4 animate-spin" />
           <span className="text-sm">Lade Pakete…</span>
         </div>
@@ -229,8 +229,8 @@ export default function PackagesPage() {
 
         {/* ── Header ── */}
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Pakete</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
+          <h1 className="text-2xl font-semibold text-foreground tracking-tight">Pakete</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
             Vorgefertigte Nachrichten — werden automatisch gesendet wenn Keywords erkannt werden. Kein AI-Eingriff.
           </p>
         </div>
@@ -242,8 +242,8 @@ export default function PackagesPage() {
               <ListOrdered className="h-4 w-4 text-brand-600" />
             </div>
             <div>
-              <h2 className="font-semibold text-sm text-gray-900">Listennachricht</h2>
-              <p className="text-xs text-gray-500 mt-0.5">
+              <h2 className="font-semibold text-sm text-foreground">Listennachricht</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
                 Bei Keywords sofort gesendet — und automatisch einmalig bei ~{listMsg.auto_send_at} Nachrichten (pro Nutzer).
               </p>
             </div>
@@ -251,7 +251,7 @@ export default function PackagesPage() {
 
           <form onSubmit={e => { e.preventDefault(); saveList(); }} className="space-y-3">
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1.5">
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">
                 Nachricht (copy-paste — exakt so wie sie gesendet wird)
               </label>
               <textarea
@@ -259,24 +259,24 @@ export default function PackagesPage() {
                 onChange={e => setListMsg(m => ({ ...m, message: e.target.value }))}
                 rows={6}
                 placeholder="Hier deine Listennachricht mit allen Paketen und Links eintragen..."
-                className="w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm text-gray-800 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent resize-none leading-relaxed"
+                className="w-full rounded-xl border border-border bg-card px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent resize-none leading-relaxed"
               />
             </div>
 
             <div className="flex gap-3 flex-wrap">
               <div className="flex-1 min-w-[200px]">
-                <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">
                   <Hash className="h-3 w-3 inline mr-1" />Keywords (komma-getrennt)
                 </label>
                 <input
                   value={listMsg.keywords}
                   onChange={e => setListMsg(m => ({ ...m, keywords: e.target.value }))}
                   placeholder="liste, pakete, was hast du, angebote"
-                  className="w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm text-gray-800 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent"
+                  className="w-full rounded-xl border border-border bg-card px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent"
                 />
               </div>
               <div className="w-[140px]">
-                <label className="block text-xs font-medium text-gray-600 mb-1.5">Auto-Senden bei</label>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Auto-Senden bei</label>
                 <div className="relative">
                   <input
                     type="number"
@@ -284,9 +284,9 @@ export default function PackagesPage() {
                     max={500}
                     value={listMsg.auto_send_at}
                     onChange={e => setListMsg(m => ({ ...m, auto_send_at: Number(e.target.value) }))}
-                    className="w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent pr-12"
+                    className="w-full rounded-xl border border-border bg-card px-3.5 py-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent pr-12"
                   />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground/60 pointer-events-none">
                     Msg
                   </span>
                 </div>
@@ -303,7 +303,7 @@ export default function PackagesPage() {
                     'inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all border',
                     listTesting === 'ok'  ? 'bg-emerald-50 border-emerald-300 text-emerald-700' :
                     listTesting === 'err' ? 'bg-red-50 border-red-300 text-red-700' :
-                    'border-gray-200 text-gray-600 hover:bg-gray-50',
+                    'border-border text-muted-foreground hover:bg-accent/50',
                     (listTesting === 'sending' || !listMsg.message.trim()) && 'opacity-50 cursor-not-allowed'
                   )}
                 >
@@ -325,7 +325,7 @@ export default function PackagesPage() {
           {packages.map((pkg, idx) => (
             <div
               key={pkg.id}
-              className="rounded-2xl border border-gray-200 bg-white p-5 shadow-theme-sm hover:shadow-theme-md transition-shadow"
+              className="rounded-2xl border border-border bg-card p-5 shadow-theme-sm hover:shadow-theme-md transition-shadow"
             >
               {/* Editable name */}
               <div className="flex items-center gap-2.5 mb-4">
@@ -335,14 +335,14 @@ export default function PackagesPage() {
                 <input
                   value={pkg.name}
                   onChange={e => updatePkg(idx, 'name', e.target.value)}
-                  className="flex-1 text-sm font-semibold text-gray-900 bg-transparent border-none outline-none hover:underline focus:underline decoration-brand-400 placeholder:text-gray-400"
+                  className="flex-1 text-sm font-semibold text-foreground bg-transparent border-none outline-none hover:underline focus:underline decoration-brand-400 placeholder:text-muted-foreground/60"
                   placeholder={`Paket ${idx + 1}`}
                 />
               </div>
 
               <form onSubmit={e => { e.preventDefault(); savePkg(idx); }} className="space-y-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">
                     Nachricht an Kunde (copy-paste)
                   </label>
                   <textarea
@@ -350,19 +350,19 @@ export default function PackagesPage() {
                     onChange={e => updatePkg(idx, 'message', e.target.value)}
                     rows={6}
                     placeholder="Schreib die Nachricht exakt so wie sie gesendet wird — inklusive deinem Link..."
-                    className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3.5 py-2.5 text-sm text-gray-800 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent resize-none leading-relaxed focus:bg-white transition-colors"
+                    className="w-full rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent resize-none leading-relaxed focus:bg-card transition-colors"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">
                     <Hash className="h-3 w-3 inline mr-1" />Keywords (komma-getrennt)
                   </label>
                   <input
                     value={pkg.keywords}
                     onChange={e => updatePkg(idx, 'keywords', e.target.value)}
                     placeholder={`paket ${idx + 1}, p${idx + 1}`}
-                    className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3.5 py-2.5 text-sm text-gray-800 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent focus:bg-white transition-colors"
+                    className="w-full rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent focus:bg-card transition-colors"
                   />
                 </div>
 
@@ -377,7 +377,7 @@ export default function PackagesPage() {
                         'inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all border',
                         pkgTesting[pkg.id] === 'ok'  ? 'bg-emerald-50 border-emerald-300 text-emerald-700' :
                         pkgTesting[pkg.id] === 'err' ? 'bg-red-50 border-red-300 text-red-700' :
-                        'border-gray-200 text-gray-600 hover:bg-gray-50',
+                        'border-border text-muted-foreground hover:bg-accent/50',
                         (pkgTesting[pkg.id] === 'sending' || !pkg.message.trim()) && 'opacity-50 cursor-not-allowed'
                       )}
                     >

@@ -297,7 +297,7 @@ export default function MessagePreviewPage() {
                                 💳 Stripe Buy Button (live)
                               </div>
                               <div
-                                className="rounded-xl overflow-hidden bg-white p-3 border border-border"
+                                className="rounded-xl overflow-hidden bg-card p-3 border border-border"
                                 dangerouslySetInnerHTML={{ __html: stripeEl }}
                               />
                             </div>

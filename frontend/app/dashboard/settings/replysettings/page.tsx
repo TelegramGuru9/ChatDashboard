@@ -60,7 +60,7 @@ function Toggle({ on, onChange, label, desc }: { on: boolean; onChange: () => vo
       </div>
       <button onClick={onChange}
         className={cn('w-10 h-5 rounded-full relative flex-shrink-0 transition-colors', on ? 'bg-primary' : 'bg-muted-foreground/25')}>
-        <div className={cn('absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all', on ? 'left-5' : 'left-0.5')} />
+        <div className={cn('absolute top-0.5 w-4 h-4 rounded-full bg-card shadow transition-all', on ? 'left-5' : 'left-0.5')} />
       </button>
     </div>
   );

@@ -57,7 +57,7 @@ function LeadCard({ u, accent }: { u: LeadUser; accent: string }) {
     >
       <div className="flex items-start gap-3">
         {/* Avatar */}
-        <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 text-sm font-bold bg-white/60 border border-current/20">
+        <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 text-sm font-bold bg-card/60 border border-current/20">
           {initials}
         </div>
 
@@ -65,7 +65,7 @@ function LeadCard({ u, accent }: { u: LeadUser; accent: string }) {
         <div className="flex-1 min-w-0">
           <div className="text-sm font-semibold truncate">{displayName(u)}</div>
           {u.username && u.name && u.name !== 'Unknown' && (
-            <div className="text-xs text-gray-500 truncate">@{u.username}</div>
+            <div className="text-xs text-muted-foreground truncate">@{u.username}</div>
           )}
 
           {/* Trigger label */}
@@ -86,7 +86,7 @@ function LeadCard({ u, accent }: { u: LeadUser; accent: string }) {
           )}
 
           {/* Meta row */}
-          <div className="flex items-center gap-3 mt-1.5 text-xs text-gray-500">
+          <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground">
             {u.message_count != null && (
               <span className="flex items-center gap-1">
                 <MessageSquare className="h-3 w-3" />{u.message_count}
@@ -98,7 +98,7 @@ function LeadCard({ u, accent }: { u: LeadUser; accent: string }) {
               </span>
             )}
             {!u.ai_enabled && (
-              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">manual</span>
+              <span className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wide">manual</span>
             )}
           </div>
         </div>
@@ -130,8 +130,8 @@ function Column({
 
       {/* Cards */}
       {users.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-6 text-center">
-          <div className="text-gray-400 text-xs">{emptyText}</div>
+        <div className="rounded-2xl border border-dashed border-border bg-card p-6 text-center">
+          <div className="text-muted-foreground/60 text-xs">{emptyText}</div>
         </div>
       ) : (
         users.map(u => <LeadCard key={u.id} u={u} accent={accent} />)
@@ -179,7 +179,7 @@ export default function HotPage() {
             </div>
             <div>
               <h1 className="text-2xl font-bold tracking-tight">Lead Pipeline</h1>
-              <p className="text-sm text-gray-500 mt-0.5">
+              <p className="text-sm text-muted-foreground mt-0.5">
                 {loading ? 'Laden…' : `${total} lead${total !== 1 ? 's' : ''} total`}
               </p>
             </div>
@@ -187,7 +187,7 @@ export default function HotPage() {
           <button
             onClick={() => load(true)}
             disabled={refreshing}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 bg-white text-xs font-medium text-gray-500 hover:bg-gray-50 transition-colors disabled:opacity-40"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-border bg-card text-xs font-medium text-muted-foreground hover:bg-accent/50 transition-colors disabled:opacity-40"
           >
             <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
             Refresh
@@ -210,12 +210,12 @@ export default function HotPage() {
         )}
 
         {loading ? (
-          <div className="text-center py-24 text-gray-400">Leads laden…</div>
+          <div className="text-center py-24 text-muted-foreground/60">Leads laden…</div>
         ) : total === 0 ? (
           <div className="text-center py-24">
             <div className="text-5xl mb-3">🔥</div>
-            <div className="font-semibold text-gray-700 mb-1">Noch keine Leads</div>
-            <div className="text-sm text-gray-400">
+            <div className="font-semibold text-foreground/80 mb-1">Noch keine Leads</div>
+            <div className="text-sm text-muted-foreground/60">
               Sobald der Bot eine Liste oder ein Paket sendet, tauchen Leads hier auf.
             </div>
           </div>
