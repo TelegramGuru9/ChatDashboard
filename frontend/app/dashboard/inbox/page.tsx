@@ -384,9 +384,22 @@ function InboxContent() {
 
   useEffect(() => {
     (async () => {
-      const connected = await checkStatus();
+      let connected = await checkStatus();
       loadFolders();
       loadPackages();
+
+      // Auto-reconnect silently so navigating to inbox doesn't need manual action
+      if (!connected) {
+        try {
+          const d = await fetch(`${api}/telegram/reconnect`, { method: 'POST' }).then(r => r.json());
+          if (d.status === 'reconnected') {
+            connected = true;
+            setTgConnected(true);
+            if (d.account) setTgAccount(d.account);
+          }
+        } catch {}
+      }
+
       const count = await loadConvos();
       if (connected && count === 0) await sync(true);
     })();
@@ -398,10 +411,21 @@ function InboxContent() {
     if (target) setSelected(target);
   }, [autoSelectUserId, convos]); // eslint-disable-line
 
-  // Pre-fetch photos for the first 60 conversations whenever the list changes
+  // Pre-fetch photos — throttled 5 at a time with 200ms spacing to avoid
+  // flooding the Telegram client with concurrent download_profile_photo calls
   useEffect(() => {
     const top = convos.slice(0, 60);
-    top.forEach(c => fetchPhoto(c.user_id));
+    if (top.length === 0) return;
+    let i = 0;
+    let cancelled = false;
+    const fetchBatch = () => {
+      if (cancelled) return;
+      top.slice(i, i + 5).forEach(c => fetchPhoto(c.user_id));
+      i += 5;
+      if (i < top.length) setTimeout(fetchBatch, 200);
+    };
+    fetchBatch();
+    return () => { cancelled = true; };
   }, [convos, fetchPhoto]);
 
   useEffect(() => {
