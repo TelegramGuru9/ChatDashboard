@@ -1452,7 +1452,10 @@ class MessageProcessor:
                                         _ep = dict(_up.extra_data or {})
                                         if _ep.get("lead_label") not in ("HOT", "BUYER"):
                                             _ep["lead_label"] = "HOT"
-                                            _up.extra_data = _ep
+                                        # Store the package name sent for the HOT page
+                                        _ep["hot_pkg_name"] = _pkg.get("name", "")
+                                        _ep["pkg_sent_at"] = _naive_utc().isoformat()
+                                        _up.extra_data = _ep
                                 await _ps.commit()
                             try:
                                 import main as _main
@@ -1496,6 +1499,15 @@ class MessageProcessor:
                                     extra_data={"source": "list_keyword"},
                                     created_at=_naive_utc(),
                                 ))
+                                # Tag as WARM lead
+                                _lu_res = await _ls.execute(select(User).where(User.id == user_id))
+                                _lu = _lu_res.scalars().first()
+                                if _lu:
+                                    _le = dict(_lu.extra_data or {})
+                                    if _le.get("lead_label") not in ("HOT", "BUYER"):
+                                        _le["lead_label"] = "WARM"
+                                    _le["list_sent_at"] = _naive_utc().isoformat()
+                                    _lu.extra_data = _le
                                 await _ls.commit()
                             try:
                                 import main as _main
@@ -1804,6 +1816,10 @@ class MessageProcessor:
                                     )
                             await _ps.commit()
                         asyncio.create_task(self._update_lead_funnel(user_id, "payment_link_sent"))
+                        # Cash Alarm — HOT Lead, payment link sent
+                        asyncio.create_task(
+                            self._fire_cash_alarm(creator_id, telegram_id, "package", pkg_name=p_name)
+                        )
                         try:
                             import main as _main
                             _main._broadcast_new_message(str(user_id), {

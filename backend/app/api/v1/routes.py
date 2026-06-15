@@ -450,16 +450,23 @@ async def reset_user_conversation(
 async def list_hot_users(
     creator_id: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(200, ge=1, le=500),
     session: AsyncSession = Depends(get_db),
 ):
-    """Return users with lead_label=HOT or conversation_state containing hot — for the HOT inbox."""
+    """
+    Return leads bucketed into WARM / HOT / SALE for the HOT inbox pipeline.
+    WARM  = lead_label WARM  (list message sent)
+    HOT   = lead_label HOT   (package message sent)
+    SALE  = lead_label BUYER (payment confirmed)
+    """
     try:
         import uuid as _uuid
         q = select(User).where(
             or_(
+                User.extra_data["lead_label"].astext == "WARM",
                 User.extra_data["lead_label"].astext == "HOT",
-                User.conversation_state.in_(["hot", "lead_hot"]),
+                User.extra_data["lead_label"].astext == "BUYER",
+                User.conversation_state.in_(["hot", "lead_hot", "customer"]),
             )
         )
         if creator_id:
@@ -471,23 +478,46 @@ async def list_hot_users(
         res = await session.execute(q)
         users = res.scalars().all()
 
-        items = []
+        warm, hot, sale = [], [], []
         for u in users:
             extra = u.extra_data or {}
-            items.append({
-                "id": str(u.id),
-                "telegram_id": u.user_id,
-                "name": f"{u.first_name or ''} {u.last_name or ''}".strip() or "Unknown",
-                "username": u.username,
-                "lead_label": extra.get("lead_label", ""),
-                "conversation_state": u.conversation_state,
-                "lead_score": u.lead_score,
+            label = extra.get("lead_label", "")
+            # conversation_state fallback
+            if not label:
+                cs = u.conversation_state or ""
+                if cs == "customer":          label = "BUYER"
+                elif "hot" in cs.lower():     label = "HOT"
+
+            row = {
+                "id":              str(u.id),
+                "telegram_id":     u.user_id,
+                "name":            f"{u.first_name or ''} {u.last_name or ''}".strip() or "Unknown",
+                "username":        u.username,
+                "lead_label":      label,
                 "last_message_at": u.last_message_at.isoformat() if u.last_message_at else None,
-                "ai_enabled": u.ai_enabled,
-                "selected_package": extra.get("selected_package_name", ""),
-                "offer_number": extra.get("last_offer_number", ""),
-            })
-        return {"items": items, "total": len(items)}
+                "message_count":   u.total_messages or 0,
+                "ai_enabled":      u.ai_enabled,
+                # WARM specific
+                "list_sent_at":    extra.get("list_sent_at"),
+                # HOT specific
+                "hot_pkg_name":    extra.get("hot_pkg_name", ""),
+                "pkg_sent_at":     extra.get("pkg_sent_at"),
+                # SALE specific
+                "sale_completed_at": extra.get("sale_completed_at"),
+            }
+            if label == "BUYER":
+                sale.append(row)
+            elif label == "HOT":
+                hot.append(row)
+            else:  # WARM or fallback
+                warm.append(row)
+
+        return {
+            "warm": warm,
+            "hot":  hot,
+            "sale": sale,
+            "total": len(warm) + len(hot) + len(sale),
+        }
     except Exception as e:
         logger.error(f"list_hot_users error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
