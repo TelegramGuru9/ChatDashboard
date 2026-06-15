@@ -277,7 +277,9 @@ function InboxContent() {
   const sync = useCallback(async (silent = false) => {
     if (!silent) { setSyncing(true); setSyncStatus('Syncing all chats…'); }
     try {
-      const res = await fetch(`${api}/telegram/sync?limit_per_chat=150&max_dialogs=0`, { method:'POST' });
+      // Pass creator_id so sync uses the right pool client and scopes users correctly
+      const cidParam = creatorId ? `&creator_id=${creatorId}` : '';
+      const res = await fetch(`${api}/telegram/sync?limit_per_chat=150&max_dialogs=0${cidParam}`, { method:'POST' });
       const d = await res.json();
       if (res.ok) {
         if (!silent) setSyncStatus(`✓ Found ${d.total_dialogs || 0} chats · ${d.synced_messages || 0} new msgs`);
@@ -286,7 +288,7 @@ function InboxContent() {
       } else { if (!silent) setSyncStatus(`⚠ ${d.detail || 'Sync failed'}`); }
     } catch (e: any) { if (!silent) setSyncStatus(`⚠ ${e.message}`); }
     finally { if (!silent) setSyncing(false); }
-  }, [api, loadConvos, loadFolders, activeFolder]);
+  }, [api, creatorId, loadConvos, loadFolders, activeFolder]);
 
   const reconnect = async () => {
     setReconnecting(true); setSyncStatus('Attempting reconnect…');

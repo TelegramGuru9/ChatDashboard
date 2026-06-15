@@ -15,20 +15,36 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-async def _sync_one_entity(client, entity, limit_per_chat: int):
-    """Sync a single user entity into the DB. Returns (is_new_user, new_msg_count)."""
+async def _sync_one_entity(client, entity, limit_per_chat: int, creator_id=None):
+    """Sync a single user entity into the DB. Returns (is_new_user, new_msg_count).
+    creator_id: UUID string — when set, users are stored scoped to that creator.
+    """
+    import uuid as _uuid
     from sqlalchemy import select, and_, func as sqlfunc
     from app.db.models import User, Message
     tg_id = entity.id
     new_msgs = 0
+    creator_uuid = None
+    if creator_id:
+        try:
+            creator_uuid = _uuid.UUID(str(creator_id))
+        except Exception:
+            pass
     try:
         async with db_manager.get_session() as session:
-            res = await session.execute(select(User).where(User.user_id == tg_id))
+            # Look up by (tg_id, creator_id) so each creator has their own user rows
+            q = select(User).where(User.user_id == tg_id)
+            if creator_uuid is not None:
+                q = q.where(User.creator_id == creator_uuid)
+            else:
+                q = q.where(User.creator_id.is_(None))
+            res = await session.execute(q)
             user = res.scalars().first()
             is_new = not user
             if not user:
                 user = User(
                     user_id=tg_id,
+                    creator_id=creator_uuid,
                     first_name=getattr(entity, "first_name", None) or "Unknown",
                     last_name=getattr(entity, "last_name", None),
                     username=getattr(entity, "username", None),
@@ -174,11 +190,12 @@ async def _get_all_dialogs_raw(client, folder_id: int = 0):
     return all_entities
 
 
-async def _do_sync(client, limit_per_chat: int = 100, max_dialogs: int = 0):
+async def _do_sync(client, limit_per_chat: int = 100, max_dialogs: int = 0, creator_id=None):
     """
     Pull ALL Telegram dialogs into DB using raw GetDialogsRequest pagination.
     Fetches both main folder (0) and archived folder (1).
     max_dialogs=0 means unlimited.
+    creator_id: when set, users are stored scoped to that creator.
     """
     synced_users = 0
     synced_messages = 0
@@ -197,7 +214,7 @@ async def _do_sync(client, limit_per_chat: int = 100, max_dialogs: int = 0):
             seen_ids.add(tg_id)
             if max_dialogs and len(seen_ids) > max_dialogs:
                 break
-            is_new, nm = await _sync_one_entity(client, entity, limit_per_chat)
+            is_new, nm = await _sync_one_entity(client, entity, limit_per_chat, creator_id=creator_id)
             if is_new:
                 synced_users += 1
             synced_messages += nm

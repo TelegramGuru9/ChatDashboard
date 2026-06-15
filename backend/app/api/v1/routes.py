@@ -873,25 +873,39 @@ telegram_router = APIRouter(prefix="/telegram", tags=["Telegram"])
 async def sync_telegram_chats(
     limit_per_chat: int = Query(150, ge=1, le=1000),
     max_dialogs: int = Query(0, ge=0, le=100000),
+    creator_id: Optional[str] = Query(None),
 ):
     """
     Pull ALL Telegram chat history into the database — main AND archived folders.
     max_dialogs=0 means unlimited (recommended).
     Safe to call multiple times — skips already-stored messages.
+    When creator_id is provided, uses that creator's pool client and scopes users to that creator.
     """
-    from app.services.telegram.client import telegram_client
+    from app.services.telegram.client import telegram_client, creator_pool
 
-    if not telegram_client.is_connected:
-        raise HTTPException(
-            status_code=503,
-            detail="Telegram not connected."
-        )
+    # Resolve the right Telethon client + creator scope
+    tg_client = None
+    resolved_creator_id = None
+
+    if creator_id:
+        mgr = creator_pool.get_client(creator_id)
+        if mgr and mgr.is_connected:
+            tg_client = mgr.client
+            resolved_creator_id = creator_id
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Creator not connected — connect it first on the Creators page.",
+            )
+    else:
+        if not telegram_client.is_connected:
+            raise HTTPException(status_code=503, detail="Telegram not connected.")
+        tg_client = telegram_client.client
 
     try:
         import main as app_main
-        u, m, total = await app_main._do_sync(telegram_client.client, limit_per_chat, max_dialogs)
-        # Also sync folders in background
-        asyncio.create_task(app_main._sync_telegram_folders(telegram_client.client))
+        u, m, total = await app_main._do_sync(tg_client, limit_per_chat, max_dialogs, creator_id=resolved_creator_id)
+        asyncio.create_task(app_main._sync_telegram_folders(tg_client))
         return {"status": "ok", "synced_users": u, "synced_messages": m, "total_dialogs": total}
     except Exception as ex:
         logger.error(f"Sync failed: {ex}", exc_info=True)
