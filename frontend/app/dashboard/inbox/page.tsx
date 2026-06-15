@@ -136,10 +136,11 @@ function InboxContent() {
   const [pkgOpen,     setPkgOpen]       = useState(false);
   const [sendingFile, setSendingFile]   = useState(false);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef       = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef   = useRef<HTMLInputElement>(null);
-  const lastMsgTimeRef = useRef<string>('');
+  const messagesEndRef    = useRef<HTMLDivElement>(null);
+  const inputRef          = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef      = useRef<HTMLInputElement>(null);
+  const lastMsgTimeRef    = useRef<string>('');
+  const fetchingPhotosRef = useRef<Set<string>>(new Set());
 
   const api = apiBase();
 
@@ -322,15 +323,16 @@ function InboxContent() {
   };
 
   const fetchPhoto = useCallback(async (userId: string) => {
-    if (userId in photoCache) return; // already fetched
-    setPhotoCache(prev => ({ ...prev, [userId]: null })); // mark as fetching
+    // Use a ref for deduplication — avoids stale closure on photoCache
+    if (fetchingPhotosRef.current.has(userId)) return;
+    fetchingPhotosRef.current.add(userId);
     try {
       const d = await fetch(`${api}/users/${userId}/photo`).then(r => r.json());
       setPhotoCache(prev => ({ ...prev, [userId]: d.photo_url || null }));
     } catch {
       setPhotoCache(prev => ({ ...prev, [userId]: null }));
     }
-  }, [api, photoCache]);
+  }, [api]); // stable — no photoCache dep
 
   const loadPackages = useCallback(async () => {
     try {
@@ -395,6 +397,12 @@ function InboxContent() {
     const target = convos.find(c => c.user_id === autoSelectUserId);
     if (target) setSelected(target);
   }, [autoSelectUserId, convos]); // eslint-disable-line
+
+  // Pre-fetch photos for the first 60 conversations whenever the list changes
+  useEffect(() => {
+    const top = convos.slice(0, 60);
+    top.forEach(c => fetchPhoto(c.user_id));
+  }, [convos, fetchPhoto]);
 
   useEffect(() => {
     if (selected) {

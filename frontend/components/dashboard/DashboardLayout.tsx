@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { CreatorProvider, useCreator } from '@/contexts/CreatorContext';
+import { ThemeProvider } from '@/contexts/ThemeContext';
 import { cn } from '@/lib/utils';
 import { Separator } from '@/components/ui/separator';
 import {
@@ -328,8 +329,10 @@ function DashboardInner({ children }: DashboardLayoutProps) {
 
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   return (
-    <CreatorProvider>
-      <DashboardInner>{children}</DashboardInner>
-    </CreatorProvider>
+    <ThemeProvider>
+      <CreatorProvider>
+        <DashboardInner>{children}</DashboardInner>
+      </CreatorProvider>
+    </ThemeProvider>
   );
 }
