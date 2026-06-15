@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { useCreator } from '@/contexts/CreatorContext';
 import { cn } from '@/lib/utils';
-import { Save, MessageSquare, Hash, ListOrdered, Loader2, Check } from 'lucide-react';
+import { Save, MessageSquare, Hash, ListOrdered, Loader2, Check, Send, RefreshCw } from 'lucide-react';
 
 const apiBase = () => {
   const raw = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -71,8 +71,12 @@ export default function PackagesPage() {
   const [loading,    setLoading]    = useState(true);
   const [pkgSaving,  setPkgSaving]  = useState<Record<string, boolean>>({});
   const [pkgSaved,   setPkgSaved]   = useState<Record<string, boolean>>({});
-  const [listSaving, setListSaving] = useState(false);
-  const [listSaved,  setListSaved]  = useState(false);
+  const [pkgTesting, setPkgTesting] = useState<Record<string, 'idle'|'sending'|'ok'|'err'>>({});
+  const [pkgTestMsg, setPkgTestMsg] = useState<Record<string, string>>({});
+  const [listSaving,   setListSaving]   = useState(false);
+  const [listSaved,    setListSaved]    = useState(false);
+  const [listTesting,  setListTesting]  = useState<'idle'|'sending'|'ok'|'err'>('idle');
+  const [listTestMsg,  setListTestMsg]  = useState('');
 
   const base = apiBase();
   const api  = `${base}/api/v1`;
@@ -160,6 +164,54 @@ export default function PackagesPage() {
       return n;
     });
 
+  const testSendList = async () => {
+    if (!listMsg.message.trim()) { setListTestMsg('Keine Nachricht konfiguriert.'); setListTesting('err'); setTimeout(() => { setListTesting('idle'); setListTestMsg(''); }, 4000); return; }
+    setListTesting('sending'); setListTestMsg('');
+    try {
+      const res = await fetch(withCreator(`${api}/telegram/test-send-message`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: listMsg.message }),
+      });
+      const d = await res.json();
+      if (res.ok) { setListTesting('ok'); setListTestMsg(`✓ Gesendet an ${d.sent_to} User${d.sent_to !== 1 ? 's' : ''}`); }
+      else { setListTesting('err'); setListTestMsg(d.detail || 'Fehler'); }
+    } catch (e: any) { setListTesting('err'); setListTestMsg(e.message); }
+    setTimeout(() => { setListTesting('idle'); setListTestMsg(''); }, 6000);
+  };
+
+  const testSendPkg = async (idx: number) => {
+    const pkg = packages[idx];
+    const key = pkg.id;
+    if (!pkg.message.trim()) {
+      setPkgTestMsg(m => ({ ...m, [key]: 'Keine Nachricht konfiguriert.' }));
+      setPkgTesting(s => ({ ...s, [key]: 'err' }));
+      setTimeout(() => { setPkgTesting(s => ({ ...s, [key]: 'idle' })); setPkgTestMsg(m => ({ ...m, [key]: '' })); }, 4000);
+      return;
+    }
+    setPkgTesting(s => ({ ...s, [key]: 'sending' }));
+    setPkgTestMsg(m => ({ ...m, [key]: '' }));
+    try {
+      const res = await fetch(withCreator(`${api}/telegram/test-send-message`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: pkg.message }),
+      });
+      const d = await res.json();
+      if (res.ok) {
+        setPkgTesting(s => ({ ...s, [key]: 'ok' }));
+        setPkgTestMsg(m => ({ ...m, [key]: `✓ Gesendet an ${d.sent_to} User${d.sent_to !== 1 ? 's' : ''}` }));
+      } else {
+        setPkgTesting(s => ({ ...s, [key]: 'err' }));
+        setPkgTestMsg(m => ({ ...m, [key]: d.detail || 'Fehler' }));
+      }
+    } catch (e: any) {
+      setPkgTesting(s => ({ ...s, [key]: 'err' }));
+      setPkgTestMsg(m => ({ ...m, [key]: e.message }));
+    }
+    setTimeout(() => { setPkgTesting(s => ({ ...s, [key]: 'idle' })); setPkgTestMsg(m => ({ ...m, [key]: '' })); }, 6000);
+  };
+
   if (loading) {
     return (
       <DashboardLayout>
@@ -241,7 +293,28 @@ export default function PackagesPage() {
               </div>
             </div>
 
-            <div className="flex justify-end pt-1">
+            <div className="flex items-center justify-between pt-1 gap-2 flex-wrap">
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <button
+                  type="button"
+                  onClick={testSendList}
+                  disabled={listTesting === 'sending' || !listMsg.message.trim()}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all border',
+                    listTesting === 'ok'  ? 'bg-emerald-50 border-emerald-300 text-emerald-700' :
+                    listTesting === 'err' ? 'bg-red-50 border-red-300 text-red-700' :
+                    'border-gray-200 text-gray-600 hover:bg-gray-50',
+                    (listTesting === 'sending' || !listMsg.message.trim()) && 'opacity-50 cursor-not-allowed'
+                  )}
+                >
+                  {listTesting === 'sending' ? <><RefreshCw className="h-3.5 w-3.5 animate-spin" />Senden…</> :
+                   listTesting === 'ok'      ? <><Check className="h-3.5 w-3.5" />Gesendet</> :
+                                               <><Send className="h-3.5 w-3.5" />Test senden</>}
+                </button>
+                {listTestMsg && (
+                  <span className={cn('text-xs truncate', listTesting === 'err' ? 'text-red-600' : 'text-emerald-600')}>{listTestMsg}</span>
+                )}
+              </div>
               <SaveButton saving={listSaving} saved={listSaved} />
             </div>
           </form>
@@ -293,7 +366,36 @@ export default function PackagesPage() {
                   />
                 </div>
 
-                <div className="flex justify-end pt-1">
+                <div className="flex items-center justify-between pt-1 gap-2 flex-wrap">
+                  {/* Test send */}
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => testSendPkg(idx)}
+                      disabled={pkgTesting[pkg.id] === 'sending' || !pkg.message.trim()}
+                      className={cn(
+                        'inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all border',
+                        pkgTesting[pkg.id] === 'ok'  ? 'bg-emerald-50 border-emerald-300 text-emerald-700' :
+                        pkgTesting[pkg.id] === 'err' ? 'bg-red-50 border-red-300 text-red-700' :
+                        'border-gray-200 text-gray-600 hover:bg-gray-50',
+                        (pkgTesting[pkg.id] === 'sending' || !pkg.message.trim()) && 'opacity-50 cursor-not-allowed'
+                      )}
+                    >
+                      {pkgTesting[pkg.id] === 'sending' ? (
+                        <><RefreshCw className="h-3.5 w-3.5 animate-spin" />Senden…</>
+                      ) : pkgTesting[pkg.id] === 'ok' ? (
+                        <><Check className="h-3.5 w-3.5" />Gesendet</>
+                      ) : (
+                        <><Send className="h-3.5 w-3.5" />Test senden</>
+                      )}
+                    </button>
+                    {pkgTestMsg[pkg.id] && (
+                      <span className={cn(
+                        'text-xs truncate',
+                        pkgTesting[pkg.id] === 'err' ? 'text-red-600' : 'text-emerald-600'
+                      )}>{pkgTestMsg[pkg.id]}</span>
+                    )}
+                  </div>
                   <SaveButton saving={!!pkgSaving[pkg.id]} saved={!!pkgSaved[pkg.id]} />
                 </div>
               </form>

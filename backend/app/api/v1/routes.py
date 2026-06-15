@@ -9,7 +9,7 @@ from typing import Optional, Any, Dict
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Body
+from fastapi import APIRouter, Depends, HTTPException, Query, Body, UploadFile, File, Form
 from sqlalchemy import select, and_, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -267,6 +267,115 @@ async def send_message(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/send-file")
+async def send_file(
+    user_id: str = Form(...),
+    file: UploadFile = File(...),
+    caption: str = Form(default=""),
+    session: AsyncSession = Depends(get_db),
+):
+    """Upload a file and send it to a user via Telegram."""
+    try:
+        uid = UUID(user_id)
+        result = await session.execute(select(User).where(User.id == uid))
+        user = result.scalars().first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        from app.services.telegram.client import telegram_client
+        if not telegram_client.is_connected:
+            raise HTTPException(status_code=503, detail="Telegram not connected")
+
+        file_bytes = await file.read()
+        tg_msg_id = await telegram_client.send_file(
+            user.user_id, file_bytes,
+            caption=caption.strip(),
+            file_name=file.filename or "file",
+        )
+        if tg_msg_id is None:
+            raise HTTPException(status_code=503, detail="Failed to send file via Telegram")
+
+        msg = Message(
+            message_id=tg_msg_id,
+            user_id=user.id,
+            text=caption.strip() or None,
+            direction="outgoing",
+            has_media=True,
+            media_type=file.content_type or "file",
+            is_ai_generated=False,
+            extra_data={"file_name": file.filename or "file"},
+            created_at=datetime.utcnow(),
+        )
+        session.add(msg)
+        user.total_messages = (user.total_messages or 0) + 1
+        await session.commit()
+        await session.refresh(msg)
+        return MessageDetailResponse.model_validate(msg)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error sending file: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/send-package")
+async def send_package_manual(
+    payload: Dict[str, Any] = Body(...),
+    session: AsyncSession = Depends(get_db),
+):
+    """Send a configured package message manually from the inbox."""
+    try:
+        user_id = UUID(str(payload.get("user_id", "")))
+        pkg_index = int(payload.get("pkg_index", 0))
+
+        result = await session.execute(select(User).where(User.id == user_id))
+        user = result.scalars().first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Load packages from config
+        cfg_result = await session.execute(select(Config).where(Config.key == "packages"))
+        cfg = cfg_result.scalars().first()
+        packages = cfg.value if cfg and isinstance(cfg.value, list) else []
+        if pkg_index < 0 or pkg_index >= len(packages):
+            raise HTTPException(status_code=400, detail="Package not found")
+
+        pkg = packages[pkg_index]
+        pkg_message = pkg.get("message", "")
+        pkg_name = pkg.get("name", f"Paket {pkg_index + 1}")
+        if not pkg_message:
+            raise HTTPException(status_code=400, detail="Package has no message configured")
+
+        from app.services.telegram.client import telegram_client
+        if not telegram_client.is_connected:
+            raise HTTPException(status_code=503, detail="Telegram not connected")
+
+        tg_msg_id = await telegram_client.send_message(user.user_id, pkg_message)
+        if tg_msg_id is None:
+            raise HTTPException(status_code=503, detail="Failed to send via Telegram")
+
+        msg = Message(
+            message_id=tg_msg_id,
+            user_id=user.id,
+            text=pkg_message,
+            direction="outgoing",
+            has_media=False,
+            is_ai_generated=False,
+            extra_data={"pkg_name": pkg_name, "pkg_index": pkg_index},
+            created_at=datetime.utcnow(),
+        )
+        session.add(msg)
+        user.total_messages = (user.total_messages or 0) + 1
+        await session.commit()
+        await session.refresh(msg)
+        return MessageDetailResponse.model_validate(msg)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error sending package: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ==================== USER ROUTES ====================
 
 user_router = APIRouter(prefix="/users", tags=["Users"])
@@ -444,6 +553,50 @@ async def reset_user_conversation(
     except Exception as e:
         logger.error(f"Error deleting user {user_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to delete user")
+
+
+@user_router.get("/{user_id}/photo")
+async def get_user_photo(user_id: UUID, session: AsyncSession = Depends(get_db)):
+    """Fetch Telegram profile photo for a user and return as base64 data URL."""
+    try:
+        result = await session.execute(select(User).where(User.id == user_id))
+        user = result.scalars().first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Check cached photo URL in extra_data
+        extra = user.extra_data or {}
+        cached = extra.get("tg_photo_url")
+        if cached:
+            return {"photo_url": cached}
+
+        from app.services.telegram.client import telegram_client
+        if not telegram_client.is_connected or not user.user_id:
+            return {"photo_url": None}
+
+        try:
+            import io, base64
+            bio = io.BytesIO()
+            path = await telegram_client.client.download_profile_photo(user.user_id, file=bio)
+            if path is None:
+                return {"photo_url": None}
+            bio.seek(0)
+            b64 = base64.b64encode(bio.read()).decode()
+            data_url = f"data:image/jpeg;base64,{b64}"
+            # Cache in extra_data
+            new_extra = dict(extra)
+            new_extra["tg_photo_url"] = data_url
+            user.extra_data = new_extra
+            await session.commit()
+            return {"photo_url": data_url}
+        except Exception:
+            return {"photo_url": None}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching photo for {user_id}: {e}")
+        return {"photo_url": None}
 
 
 @user_router.get("/hot/list")
@@ -1047,6 +1200,72 @@ async def test_cash_alarm(
         "failed": failed,
         "errors": errors,
     }
+
+
+@telegram_router.post("/test-send-message")
+async def test_send_message(
+    payload: Dict[str, Any] = Body(...),
+    creator_id: Optional[str] = Query(None),
+):
+    """
+    Send an arbitrary text message to all configured cash_notify_users.
+    Used by the Packages page to preview a package message.
+    """
+    from app.services.telegram.client import telegram_client
+    from app.services.telegram.client import creator_pool as creator_client_pool
+
+    text = str(payload.get("text", "")).strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    # Load notify users
+    notify_users: list = []
+    try:
+        async with db_manager.get_session() as session:
+            from sqlalchemy import select as sa_select
+            q = sa_select(Config).where(Config.key == "cash_notify_users")
+            if creator_id:
+                q = q.where(Config.creator_id == creator_id)
+            cfg_res = await session.execute(q)
+            cfg = cfg_res.scalars().first()
+            if cfg and isinstance(cfg.value, list):
+                notify_users = cfg.value
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"DB error: {e}")
+
+    if not notify_users:
+        raise HTTPException(status_code=400, detail="No cash_notify_users configured — add users in the Cash Alarm page first.")
+
+    # Resolve client
+    tg = None
+    if creator_id:
+        try:
+            mgr = creator_client_pool.get_client(creator_id)
+            if mgr and mgr.is_connected:
+                tg = mgr.client
+        except Exception:
+            pass
+    if tg is None:
+        if not telegram_client.is_connected:
+            raise HTTPException(status_code=503, detail="Telegram not connected.")
+        tg = telegram_client.client
+
+    sent, failed, errors = 0, 0, []
+    for raw_user in notify_users:
+        uname = str(raw_user).lstrip("@").strip()
+        if not uname:
+            continue
+        try:
+            await tg.send_message(uname, text)
+            sent += 1
+        except Exception as e:
+            failed += 1
+            errors.append(f"@{uname}: {e}")
+
+    if sent == 0:
+        raise HTTPException(status_code=500, detail=f"All sends failed: {'; '.join(errors)}")
+
+    return {"status": "ok", "sent_to": sent, "failed": failed, "errors": errors}
 
 
 @telegram_router.post("/reconnect")

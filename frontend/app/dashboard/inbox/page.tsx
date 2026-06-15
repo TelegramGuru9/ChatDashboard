@@ -6,7 +6,7 @@ import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { useCreator } from '@/contexts/CreatorContext';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, X } from 'lucide-react';
+import { RefreshCw, X, Paperclip, Package } from 'lucide-react';
 
 interface Conversation {
   user_id: string;
@@ -21,6 +21,12 @@ interface Conversation {
   ai_enabled?: boolean;
   tg_folders?: string[];
   lead_label?: string;
+  photo_url?: string | null;
+}
+
+interface PkgConfig {
+  name: string;
+  message: string;
 }
 
 interface Message {
@@ -125,9 +131,14 @@ function InboxContent() {
   const [broadcasting,    setBroadcasting]    = useState(false);
   const [broadcastResult, setBroadcastResult] = useState('');
   const [resetting,   setResetting]     = useState(false);
+  const [photoCache,  setPhotoCache]    = useState<Record<string, string | null>>({});
+  const [packages,    setPackages]      = useState<PkgConfig[]>([]);
+  const [pkgOpen,     setPkgOpen]       = useState(false);
+  const [sendingFile, setSendingFile]   = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef       = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef   = useRef<HTMLInputElement>(null);
   const lastMsgTimeRef = useRef<string>('');
 
   const api = apiBase();
@@ -310,12 +321,70 @@ function InboxContent() {
     finally { setSending(false); }
   };
 
+  const fetchPhoto = useCallback(async (userId: string) => {
+    if (userId in photoCache) return; // already fetched
+    setPhotoCache(prev => ({ ...prev, [userId]: null })); // mark as fetching
+    try {
+      const d = await fetch(`${api}/users/${userId}/photo`).then(r => r.json());
+      setPhotoCache(prev => ({ ...prev, [userId]: d.photo_url || null }));
+    } catch {
+      setPhotoCache(prev => ({ ...prev, [userId]: null }));
+    }
+  }, [api, photoCache]);
+
+  const loadPackages = useCallback(async () => {
+    try {
+      const d = await fetch(withCreator(`${api}/config/packages`)).then(r => r.json());
+      if (Array.isArray(d?.value)) setPackages(d.value.filter((p: PkgConfig) => p.message));
+    } catch {}
+  }, [api, withCreator]);
+
+  const sendFile = async (file: File) => {
+    if (!selected || sendingFile) return;
+    setSendingFile(true); setSendError('');
+    const form = new FormData();
+    form.append('user_id', selected.user_id);
+    form.append('file', file);
+    const tempId = `temp-file-${Date.now()}`;
+    const opt: Message = { id: tempId, text: null, direction: 'outgoing', is_ai_generated: false, created_at: new Date().toISOString(), has_media: true, media_type: file.type };
+    setMessages(prev => [...prev, opt]);
+    try {
+      const res = await fetch(`${api}/messages/send-file`, { method: 'POST', body: form });
+      const d = await res.json();
+      if (!res.ok) { setSendError(d.detail || 'File send failed'); setMessages(prev => prev.filter(m => m.id !== tempId)); }
+      else setMessages(prev => prev.map(m => m.id === tempId ? d : m));
+    } catch (e: any) { setSendError(e.message); setMessages(prev => prev.filter(m => m.id !== tempId)); }
+    finally { setSendingFile(false); }
+  };
+
+  const sendPackage = async (pkg: PkgConfig, idx: number) => {
+    if (!selected || sending) return;
+    setPkgOpen(false); setSending(true); setSendError('');
+    const tempId = `temp-pkg-${Date.now()}`;
+    const opt: Message = { id: tempId, text: pkg.message, direction: 'outgoing', is_ai_generated: false, created_at: new Date().toISOString() };
+    setMessages(prev => [...prev, opt]);
+    try {
+      const res = await fetch(`${api}/messages/send-package`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: selected.user_id, pkg_index: idx }),
+      });
+      const d = await res.json();
+      if (!res.ok) { setSendError(d.detail || 'Package send failed'); setMessages(prev => prev.filter(m => m.id !== tempId)); }
+      else {
+        setMessages(prev => prev.map(m => m.id === tempId ? d : m));
+        setConvos(prev => sortByRecent(prev.map(c => c.user_id === selected.user_id ? { ...c, last_message: pkg.message, last_message_direction: 'outgoing', last_message_at: new Date().toISOString() } : c)));
+      }
+    } catch (e: any) { setSendError(e.message); setMessages(prev => prev.filter(m => m.id !== tempId)); }
+    finally { setSending(false); }
+  };
+
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior:'smooth' }); }, [messages]);
 
   useEffect(() => {
     (async () => {
       const connected = await checkStatus();
       loadFolders();
+      loadPackages();
       const count = await loadConvos();
       if (connected && count === 0) await sync(true);
     })();
@@ -328,7 +397,12 @@ function InboxContent() {
   }, [autoSelectUserId, convos]); // eslint-disable-line
 
   useEffect(() => {
-    if (selected) { lastMsgTimeRef.current = ''; loadMessages(selected.user_id); loadInsights(selected.user_id); }
+    if (selected) {
+      lastMsgTimeRef.current = '';
+      loadMessages(selected.user_id);
+      loadInsights(selected.user_id);
+      fetchPhoto(selected.user_id);
+    }
   }, [selected]); // eslint-disable-line
 
   useEffect(() => {
@@ -491,18 +565,25 @@ function InboxContent() {
             ) : filtered.map(c => {
               const active = selected?.user_id === c.user_id;
               const avCls  = avatarColorClass(c.telegram_id || 0);
+              const photo  = photoCache[c.user_id];
               return (
                 <div
                   key={c.user_id}
-                  onClick={() => setSelected(c)}
+                  onClick={() => { setSelected(c); fetchPhoto(c.user_id); }}
                   className={cn(
                     "flex items-center gap-2.5 px-3.5 py-2.5 cursor-pointer border-b border-border/40 transition-colors",
                     active ? "bg-primary/10" : "hover:bg-muted/40"
                   )}
                 >
                   {/* Avatar */}
-                  <div className={cn("w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white flex-shrink-0 relative", avCls)}>
-                    {(c.name||'?')[0].toUpperCase()}
+                  <div className="w-9 h-9 rounded-full flex-shrink-0 relative">
+                    {photo ? (
+                      <img src={photo} alt={c.name} className="w-9 h-9 rounded-full object-cover" />
+                    ) : (
+                      <div className={cn("w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white", avCls)}>
+                        {(c.name||'?')[0].toUpperCase()}
+                      </div>
+                    )}
                     {c.ai_enabled && (
                       <div className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-green-500 border-2 border-background" />
                     )}
@@ -577,9 +658,13 @@ function InboxContent() {
             {/* Thread header */}
             <div className="px-3.5 py-2.5 border-b border-border flex items-center gap-2.5 flex-shrink-0">
               <button onClick={() => setSelected(null)} className="sm:hidden text-primary text-xl px-1">←</button>
-              <div className={cn("w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-sm flex-shrink-0", avatarColorClass(selected.telegram_id||0))}>
-                {(selected.name||'?')[0].toUpperCase()}
-              </div>
+              {photoCache[selected.user_id] ? (
+                <img src={photoCache[selected.user_id]!} alt={selected.name} className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
+              ) : (
+                <div className={cn("w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-sm flex-shrink-0", avatarColorClass(selected.telegram_id||0))}>
+                  {(selected.name||'?')[0].toUpperCase()}
+                </div>
+              )}
               <div className="flex-1 min-w-0">
                 <div className="font-semibold truncate">{selected.name}</div>
                 <div className="text-xs text-muted-foreground">{selected.username ? `@${selected.username} · ` : ''}{selected.total_messages} msgs · Score {Math.round(selected.lead_score)}</div>
@@ -622,7 +707,12 @@ function InboxContent() {
                         ? msg.is_ai_generated ? "bg-purple-500/55 text-white" : "bg-primary text-white"
                         : "bg-card text-foreground"
                     )}>
-                      {msg.text || <em className="text-muted-foreground text-xs">[{msg.media_type||'media'}]</em>}
+                      {msg.has_media && out
+                        ? <span className="flex items-center gap-1.5 opacity-90"><Paperclip className="w-3.5 h-3.5" />Datei gesendet{msg.text ? ` — ${msg.text}` : ''}</span>
+                        : msg.has_media && !out
+                        ? <em className="text-muted-foreground text-xs">[{msg.media_type||'media'}]</em>
+                        : msg.text || <em className="text-muted-foreground text-xs">[empty]</em>
+                      }
                       <div className={cn("text-[10px] mt-1 flex gap-1 items-center opacity-60", out ? "justify-end" : "justify-start")}>
                         {msg.is_ai_generated && <span className="bg-white/15 px-1 py-0.5 rounded">AI</span>}
                         {formatTime(msg.created_at)}
@@ -637,7 +727,59 @@ function InboxContent() {
             {/* Compose */}
             <div className="border-t border-border px-3 py-2.5 bg-card flex-shrink-0">
               {sendError && <div className="text-xs text-red-400 mb-1.5 px-2 py-1 rounded bg-red-500/10">⚠ {sendError}</div>}
+
+              {/* Package dropdown */}
+              {pkgOpen && packages.length > 0 && (
+                <div className="mb-2 border border-border rounded-2xl overflow-hidden bg-card shadow-md">
+                  <div className="px-3 py-2 text-[11px] font-semibold text-muted-foreground border-b border-border">Paket senden</div>
+                  {packages.map((pkg, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => sendPackage(pkg, idx)}
+                      className="w-full text-left px-3.5 py-2.5 text-sm hover:bg-muted transition-colors border-b border-border/40 last:border-0"
+                    >
+                      <div className="font-semibold text-foreground">{pkg.name || `Paket ${idx + 1}`}</div>
+                      <div className="text-xs text-muted-foreground truncate mt-0.5">{pkg.message?.slice(0, 80)}…</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+
               <div className="flex gap-2 items-end">
+                {/* File upload button */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  className="hidden"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) sendFile(f); e.target.value = ''; }}
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={sendingFile || !tgConnected}
+                  title="Datei hochladen"
+                  className={cn(
+                    "w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 transition-colors border",
+                    sendingFile ? "bg-muted text-muted-foreground cursor-default" : "bg-muted border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 cursor-pointer"
+                  )}
+                >
+                  {sendingFile ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
+                </button>
+
+                {/* Package button */}
+                {packages.length > 0 && (
+                  <button
+                    onClick={() => setPkgOpen(v => !v)}
+                    disabled={!tgConnected}
+                    title="Paket senden"
+                    className={cn(
+                      "w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 transition-colors border",
+                      pkgOpen ? "bg-primary/15 border-primary/40 text-primary" : "bg-muted border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 cursor-pointer"
+                    )}
+                  >
+                    <Package className="w-4 h-4" />
+                  </button>
+                )}
+
                 <textarea
                   ref={inputRef}
                   value={draft}
