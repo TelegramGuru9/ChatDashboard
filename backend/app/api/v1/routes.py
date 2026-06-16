@@ -1647,12 +1647,10 @@ async def reset_all_creators():
             pass
 
         async with db_manager.get_session() as session:
-            # 3. Null out creator_id on all users so they aren't orphaned
             from sqlalchemy import text as _text
+            # Null out creator_id on users (FK is SET NULL, but be explicit)
             await session.execute(_text("UPDATE users SET creator_id = NULL"))
-            await session.execute(_text("UPDATE config SET creator_id = NULL WHERE creator_id IS NOT NULL"))
-
-            # 4. Delete every creator
+            # Delete every creator
             await session.execute(_text("DELETE FROM creators"))
 
             # 5. Reseed one clean default creator
