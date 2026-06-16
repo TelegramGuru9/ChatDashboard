@@ -1862,12 +1862,16 @@ async def connect_creator(cid: str, payload: Dict[str, Any] = Body(default={})):
             session_str = payload.get("session_string") or c.telegram_session
             if payload.get("session_string"):
                 c.telegram_session = payload["session_string"]
+                await session.commit()
 
-            if c.is_default:
-                # Default creator → use the legacy telegram_client (env vars)
+            api_id  = int(getattr(__import__("app.core.config", fromlist=["settings"]), "settings").TELEGRAM_API_ID or 0)
+            api_hash = getattr(__import__("app.core.config", fromlist=["settings"]), "settings").TELEGRAM_API_HASH or ""
+
+            if c.is_default and not session_str:
+                # Default creator with no saved session → fall back to env-var singleton
                 success = await telegram_client.connect()
                 if not success:
-                    raise HTTPException(status_code=400, detail="Connection failed — check session string in Railway env vars")
+                    raise HTTPException(status_code=400, detail="Connection failed — check TELEGRAM_SESSION in Railway env vars")
                 me = await telegram_client.client.get_me()
                 name = f"{getattr(me,'first_name','') or ''} {getattr(me,'last_name','') or ''}".strip()
                 account_name = name or getattr(me, "username", "") or c.name
@@ -1875,12 +1879,9 @@ async def connect_creator(cid: str, payload: Dict[str, Any] = Body(default={})):
                 await session.commit()
                 return {"status": "connected", "account_name": account_name, "creator_id": cid}
 
-            # Non-default creator
+            # Use pool for all creators that have a session string (default or not)
             if not session_str:
                 raise HTTPException(status_code=400, detail="No session string stored for this creator. Save a session string first.")
-
-            api_id  = int(getattr(__import__("app.core.config", fromlist=["settings"]), "settings").TELEGRAM_API_ID or 0)
-            api_hash = getattr(__import__("app.core.config", fromlist=["settings"]), "settings").TELEGRAM_API_HASH or ""
 
             ok, account = await creator_pool.connect_creator(cid, session_str, api_id, api_hash)
             if not ok:
