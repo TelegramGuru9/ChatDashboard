@@ -1640,7 +1640,6 @@ from app.db.models import Creator as CreatorModel
 creators_router = APIRouter(prefix="/creators", tags=["Creators"])
 
 
-@creators_router.get("/reset-all")
 @creators_router.post("/reset-all")
 async def reset_all_creators():
     """
