@@ -416,8 +416,9 @@ function InboxContent() {
     (async () => {
       let connected = await checkStatus();
 
-      // Auto-reconnect silently using the creator-scoped connect endpoint
+      // Try to reconnect from saved session
       if (!connected) {
+        setSyncStatus('Reconnecting…');
         try {
           const d = await fetch(`${api}/creators/${creatorId}/connect`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
@@ -427,8 +428,14 @@ function InboxContent() {
             connected = true;
             setTgConnected(true);
             if (d.account_name || d.account) setTgAccount(d.account_name || d.account || '');
+            setSyncStatus('');
+          } else {
+            // Session expired — user must re-authenticate via phone+SMS
+            setSyncStatus('⚠ Session expired — use 📱 Auth on the Creators page');
           }
-        } catch {}
+        } catch (e: any) {
+          setSyncStatus(`⚠ Reconnect failed: ${e?.message || 'unknown error'}`);
+        }
       }
 
       // If connected and still no chats in DB, run a full sync to pull them in
@@ -582,17 +589,18 @@ function InboxContent() {
               {tgConnected === false && (
                 <div className="p-3 rounded-xl bg-red-500/8 border border-red-500/25 space-y-2">
                   <div className="flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
                     <span className="text-xs font-semibold text-red-400">Telegram not connected</span>
                     <Button size="sm" className="ml-auto h-6 text-xs" onClick={reconnect} disabled={reconnecting}>
                       {reconnecting ? 'Connecting…' : '↺ Reconnect'}
                     </Button>
                   </div>
-                  <p className="text-[11px] text-red-400/70 leading-relaxed">
-                    Session may have expired. Go to{' '}
-                    <a href="/dashboard/creators" className="underline font-semibold">Creators page</a>
-                    {' '}→ click <strong>📱 Auth</strong> to re-authenticate with phone + SMS code.
-                  </p>
+                  <a
+                    href="/dashboard/creators"
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/10 border border-primary/30 hover:bg-primary/20 transition-colors text-xs text-primary font-semibold"
+                  >
+                    📱 Re-authenticate with phone + SMS code →
+                  </a>
                 </div>
               )}
               {tgConnected === true && (
