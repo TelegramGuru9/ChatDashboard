@@ -1947,9 +1947,13 @@ async def creator_status(cid: str):
             if not c:
                 raise HTTPException(status_code=404, detail="Creator not found")
 
-        if c.is_default:
+        # Always check pool first (works for both default and non-default creators)
+        connected = creator_pool.is_connected(cid)
+        account = creator_pool.get_account(cid) or {}
+
+        if not connected and c.is_default:
+            # Fallback: check legacy env-var singleton for old-style default connections
             connected = telegram_client.is_connected
-            account = {}
             if connected:
                 try:
                     me = await telegram_client.client.get_me()
@@ -1957,9 +1961,6 @@ async def creator_status(cid: str):
                     account = {"name": name or getattr(me,"username",""), "username": getattr(me,"username",None), "phone": getattr(me,"phone",None)}
                 except Exception:
                     pass
-        else:
-            connected = creator_pool.is_connected(cid)
-            account = creator_pool.get_account(cid) or {}
 
         return {
             "creator_id": cid,

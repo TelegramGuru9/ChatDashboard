@@ -399,8 +399,9 @@ class CreatorClientPool:
 
     async def startup_connect_all(self) -> None:
         """
-        Called at app startup: load all non-default creators that have a session
-        string stored in the DB and connect them.
+        Called at app startup: load ALL active creators that have a session
+        string stored in the DB and connect them via the pool.
+        This includes the default creator when its session_string is saved in DB.
         """
         try:
             from app.db.models import Creator
@@ -411,7 +412,6 @@ class CreatorClientPool:
                 res = await session.execute(
                     sa_select(Creator).where(
                         Creator.is_active == True,
-                        Creator.is_default == False,
                         Creator.telegram_session.isnot(None),
                     )
                 )
