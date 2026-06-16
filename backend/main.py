@@ -577,6 +577,154 @@ async def _check_inactive_users():
         await asyncio.sleep(6 * 3600)  # run every 6 hours
 
 
+async def _generate_memory_for_user(user_id_str: str, messages: list, user_name: str) -> str:
+    """
+    Call Claude to produce a concise relationship memory for one user.
+    Returns the summary text (stored in user.extra_data["ai_summary"]).
+    """
+    import anthropic
+    from app.core.config import settings
+
+    if not messages:
+        return ""
+
+    # Build a compact transcript (last 300 messages max)
+    lines = []
+    for m in messages[-300:]:
+        direction = "Fan" if m.get("direction") == "incoming" else "Nika"
+        text = (m.get("text") or "").strip()
+        if text:
+            lines.append(f"{direction}: {text}")
+    transcript = "\n".join(lines)
+    if not transcript:
+        return ""
+
+    prompt = f"""Du analysierst einen Telegram-Chat zwischen einer Creator (Nika) und einem Fan ({user_name}).
+
+AUFGABE: Erstelle eine kompakte Gedächtnis-Zusammenfassung (Memory) für diesen Fan. Diese wird später dem KI-Assistenten übergeben, damit er den Kontext kennt.
+
+FORMAT:
+• Interessen & Vorlieben: [was interessiert den Fan]
+• Kaufstatus: [hat gekauft / will kaufen / noch nicht interessiert]
+• Persönlichkeit: [kurze Beschreibung des Kommunikationsstils]
+• Wichtige Fakten: [Name, Beruf, Beziehungsstatus o.ä. falls erwähnt]
+• Letzter Stand: [wo stehen die beiden gerade in der Konversation]
+• Nächster Schritt: [was wäre sinnvoll als nächstes]
+
+CHAT-VERLAUF:
+{transcript}
+
+Antworte NUR mit der Zusammenfassung, kein Präambel."""
+
+    try:
+        client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=500,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.content[0].text.strip()
+    except Exception as e:
+        logger.error(f"Memory generation failed for {user_id_str}: {e}")
+        return ""
+
+
+async def _run_deep_memory_sync(creator_id: str | None = None):
+    """
+    For every user (optionally scoped to creator_id):
+    1. Load all messages from DB
+    2. Generate a Claude summary
+    3. Store it in user.extra_data["ai_summary"]
+    Returns (processed, skipped) counts.
+    """
+    from sqlalchemy import select
+    from app.db.models import User, Message
+    import uuid as _uuid
+
+    processed = 0
+    skipped = 0
+
+    async with db_manager.get_session() as session:
+        q = select(User).where((User.is_bot == False) | (User.is_bot == None))
+        if creator_id:
+            try:
+                q = q.where(User.creator_id == _uuid.UUID(creator_id))
+            except Exception:
+                pass
+        users = (await session.execute(q)).scalars().all()
+
+    for user in users:
+        try:
+            async with db_manager.get_session() as session:
+                msgs_res = await session.execute(
+                    select(Message)
+                    .where(Message.user_id == user.id)
+                    .order_by(Message.created_at)
+                )
+                msgs = [
+                    {"text": m.text, "direction": m.direction, "created_at": str(m.created_at)}
+                    for m in msgs_res.scalars().all()
+                    if m.text
+                ]
+
+            if not msgs:
+                skipped += 1
+                continue
+
+            name = f"{user.first_name or ''} {user.last_name or ''}".strip() or f"User {user.user_id}"
+            summary = await _generate_memory_for_user(str(user.id), msgs, name)
+
+            if summary:
+                async with db_manager.get_session() as session:
+                    u = await session.get(User, user.id)
+                    if u:
+                        ed = dict(u.extra_data or {})
+                        ed["ai_summary"] = summary
+                        ed["ai_summary_updated_at"] = datetime.utcnow().isoformat()
+                        u.extra_data = ed
+                        await session.commit()
+                processed += 1
+                logger.info(f"[MemorySync] ✓ {name}")
+            else:
+                skipped += 1
+
+        except Exception as e:
+            logger.error(f"[MemorySync] Error for user {user.id}: {e}")
+            skipped += 1
+
+    logger.info(f"[MemorySync] Done — {processed} generated, {skipped} skipped")
+    return processed, skipped
+
+
+async def _daily_memory_loop():
+    """
+    Background loop: runs _run_deep_memory_sync every day at 00:00 CEST (22:00 UTC).
+    """
+    import datetime as dt
+
+    await asyncio.sleep(90)  # wait for full startup
+    logger.info("[DailyMemory] Scheduler started — fires daily at 22:00 UTC (00:00 CEST)")
+
+    while True:
+        try:
+            now = dt.datetime.utcnow()
+            # Next 22:00 UTC
+            target = now.replace(hour=22, minute=0, second=0, microsecond=0)
+            if now >= target:
+                target += dt.timedelta(days=1)
+            wait_secs = (target - now).total_seconds()
+            logger.info(f"[DailyMemory] Next run in {wait_secs/3600:.1f}h at {target} UTC")
+            await asyncio.sleep(wait_secs)
+
+            logger.info("[DailyMemory] Starting nightly memory generation…")
+            processed, skipped = await _run_deep_memory_sync()
+            logger.info(f"[DailyMemory] Complete — {processed} memories generated, {skipped} skipped")
+
+        except Exception as e:
+            logger.error(f"[DailyMemory] Error: {e}", exc_info=True)
+            await asyncio.sleep(3600)  # retry in 1h on error
+
+
 async def _startup_sync():
     """Run after startup — wait for Telegram to fully settle, then sync ALL dialogs + folders."""
     await asyncio.sleep(10)
@@ -617,6 +765,7 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(message_processor.start_processor())
             asyncio.create_task(_startup_sync())
             asyncio.create_task(_check_inactive_users())
+            asyncio.create_task(_daily_memory_loop())
         else:
             logger.warning("Telegram NOT connected — session may be expired.")
 

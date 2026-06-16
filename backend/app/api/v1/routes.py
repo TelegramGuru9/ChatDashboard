@@ -511,6 +511,28 @@ async def update_user_insights(
         raise HTTPException(status_code=500, detail="Failed to update insights")
 
 
+@user_router.post("/generate-memories")
+async def generate_all_memories(
+    creator_id: Optional[str] = Query(None),
+):
+    """
+    Deep memory sync: for every user, generate a Claude AI summary of their
+    full chat history and store it in extra_data["ai_summary"].
+    Runs in the background and returns immediately with a job confirmation.
+    """
+    import asyncio
+    try:
+        import main as app_main
+        asyncio.create_task(app_main._run_deep_memory_sync(creator_id=creator_id))
+        return {
+            "status": "started",
+            "message": "Memory generation running in background. Check Railway logs for progress.",
+        }
+    except Exception as e:
+        logger.error(f"generate_all_memories error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @user_router.post("/{user_id}/reset")
 async def reset_user_conversation(
     user_id: UUID,
@@ -1622,38 +1644,42 @@ creators_router = APIRouter(prefix="/creators", tags=["Creators"])
 @creators_router.post("/reset-all")
 async def reset_all_creators():
     """
-    Wipe ALL creators from the DB, disconnect all pool clients,
-    and reseed a single clean default creator.
-    Call once from browser to start fresh.
+    Full clean slate:
+    - Wipe ALL chat data: users, messages, memories, leads, analytics, conversations
+    - Wipe ALL creators + disconnect pool clients
+    - Keep config intact (persona, packages, system prompt, reply settings)
+    - Reseed one fresh default creator
     """
     import uuid as _uuid
     from app.services.telegram.client import telegram_client, creator_pool
+    from sqlalchemy import text as _text
 
     try:
         # 1. Disconnect every pool client
-        try:
-            for cid in list(creator_pool._clients.keys()):
-                try:
-                    await creator_pool.disconnect_creator(cid)
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        for cid in list(creator_pool._clients.keys()):
+            try:
+                await creator_pool.disconnect_creator(cid)
+            except Exception:
+                pass
 
-        # 2. Disconnect the default singleton client
+        # 2. Disconnect default singleton
         try:
             await telegram_client.disconnect()
         except Exception:
             pass
 
         async with db_manager.get_session() as session:
-            from sqlalchemy import text as _text
-            # Null out creator_id on users (FK is SET NULL, but be explicit)
-            await session.execute(_text("UPDATE users SET creator_id = NULL"))
-            # Delete every creator
+            # 3. Wipe all chat data (order matters for FK constraints)
+            await session.execute(_text("DELETE FROM analytics"))
+            await session.execute(_text("DELETE FROM leads"))
+            await session.execute(_text("DELETE FROM memories"))
+            await session.execute(_text("DELETE FROM conversations"))
+            await session.execute(_text("DELETE FROM messages"))
+            await session.execute(_text("DELETE FROM users"))
+            # 4. Wipe creators
             await session.execute(_text("DELETE FROM creators"))
 
-            # 5. Reseed one clean default creator
+            # 5. Fresh default creator
             new_creator = CreatorModel(
                 id=_uuid.uuid4(),
                 name="default",
@@ -1669,9 +1695,10 @@ async def reset_all_creators():
 
             return {
                 "status": "ok",
-                "message": "All creators wiped. Fresh default creator created.",
+                "message": "Clean slate. All chat data wiped. Config (persona/packages) kept intact.",
                 "creator_id": str(new_creator.id),
-                "next_step": "Go to /dashboard/creators and click Auth to connect via phone+SMS",
+                "clear_storage_script": f"localStorage.setItem('selectedCreatorId','{new_creator.id}'); location.reload();",
+                "next_step": "Run clear_storage_script in browser console, then go to /dashboard/creators and click Auth",
             }
 
     except Exception as e:

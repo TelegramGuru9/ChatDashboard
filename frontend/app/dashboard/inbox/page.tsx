@@ -604,10 +604,27 @@ function InboxContent() {
                 </div>
               )}
               {tgConnected === true && (
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-green-500/8 border border-green-500/20 text-xs text-green-400">
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.6)] flex-shrink-0" />
-                  {tgAccount || 'Connected'}
-                  <button onClick={() => sync()} disabled={syncing} className="ml-auto text-primary font-semibold disabled:opacity-50">{syncing ? 'Syncing…' : '⬇ Sync'}</button>
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-green-500/8 border border-green-500/20 text-xs text-green-400">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.6)] flex-shrink-0" />
+                    {tgAccount || 'Connected'}
+                    <button onClick={() => sync()} disabled={syncing} className="ml-auto text-primary font-semibold disabled:opacity-50">
+                      {syncing ? 'Syncing…' : '⬇ Sync'}
+                    </button>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      setSyncStatus('🧠 Generating memories… (runs in background)');
+                      try {
+                        const cidParam = creatorId ? `?creator_id=${creatorId}` : '';
+                        await fetch(`${api}/users/generate-memories${cidParam}`, { method: 'POST' });
+                        setSyncStatus('🧠 Memory generation started — check back in a few minutes');
+                      } catch { setSyncStatus('⚠ Memory generation failed'); }
+                    }}
+                    className="w-full text-left px-3 py-1.5 rounded-lg bg-purple-500/8 border border-purple-500/20 text-xs text-purple-400 font-semibold hover:bg-purple-500/15 transition-colors"
+                  >
+                    🧠 Deep Sync — Generate Memories
+                  </button>
                 </div>
               )}
               {syncStatus && (
