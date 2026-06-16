@@ -1618,6 +1618,68 @@ from app.db.models import Creator as CreatorModel
 creators_router = APIRouter(prefix="/creators", tags=["Creators"])
 
 
+@creators_router.post("/reset-all")
+async def reset_all_creators():
+    """
+    Wipe ALL creators from the DB, disconnect all pool clients,
+    and reseed a single clean default creator.
+    Call once from browser to start fresh.
+    """
+    import uuid as _uuid
+    from app.services.telegram.client import telegram_client, creator_pool
+
+    try:
+        # 1. Disconnect every pool client
+        try:
+            for cid in list(creator_pool._clients.keys()):
+                try:
+                    await creator_pool.disconnect_creator(cid)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # 2. Disconnect the default singleton client
+        try:
+            await telegram_client.disconnect()
+        except Exception:
+            pass
+
+        async with db_manager.get_session() as session:
+            # 3. Null out creator_id on all users so they aren't orphaned
+            from sqlalchemy import text as _text
+            await session.execute(_text("UPDATE users SET creator_id = NULL"))
+            await session.execute(_text("UPDATE configs SET creator_id = NULL WHERE creator_id IS NOT NULL"))
+
+            # 4. Delete every creator
+            await session.execute(_text("DELETE FROM creators"))
+
+            # 5. Reseed one clean default creator
+            new_creator = CreatorModel(
+                id=_uuid.uuid4(),
+                name="default",
+                display_name="Creator",
+                color="#465fff",
+                emoji="🎭",
+                is_active=True,
+                is_default=True,
+            )
+            session.add(new_creator)
+            await session.commit()
+            await session.refresh(new_creator)
+
+            return {
+                "status": "ok",
+                "message": "All creators wiped. Fresh default creator created.",
+                "creator_id": str(new_creator.id),
+                "next_step": "Go to /dashboard/creators and click Auth to connect via phone+SMS",
+            }
+
+    except Exception as e:
+        logger.error(f"reset_all_creators failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @creators_router.get("")
 async def list_creators():
     """List all creators with live connection status."""
