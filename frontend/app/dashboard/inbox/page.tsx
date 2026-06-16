@@ -167,14 +167,19 @@ function InboxContent() {
   }, [api]);
 
   const loadConvos = useCallback(async (folder?: string) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000); // 15s hard timeout
     try {
       setLoadingConvos(true);
       const fp = (folder && folder !== 'All') ? `&folder=${encodeURIComponent(folder)}` : '';
-      const data = await fetch(withCreator(`${api}/messages/conversations?limit=500${fp}`)).then(r => r.json());
+      const data = await fetch(
+        withCreator(`${api}/messages/conversations?limit=500${fp}`),
+        { signal: controller.signal }
+      ).then(r => r.json());
       setConvos(data.items || []);
       return (data.items || []).length as number;
     } catch { setConvos([]); return 0; }
-    finally { setLoadingConvos(false); }
+    finally { clearTimeout(timeout); setLoadingConvos(false); }
   }, [api, withCreator]);
 
   const loadMessages = useCallback(async (userId: string, append = false) => {
@@ -396,20 +401,27 @@ function InboxContent() {
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior:'smooth' }); }, [messages]);
 
-  // Re-run startup whenever the selected creator changes (e.g. on first load when
-  // creatorId becomes available, or when user switches creators)
+  // Step 1: load chats from DB immediately — pure DB query, no Telegram needed.
+  // Runs on mount unconditionally so the list is never stuck in loading state.
   useEffect(() => {
-    if (creatorId === null) return; // still loading creator list — wait
+    loadFolders();
+    loadPackages();
+    loadConvos();
+  }, []); // eslint-disable-line
+
+  // Step 2: check Telegram status + auto-reconnect once the creator is known.
+  // Runs separately so a slow/hanging reconnect never blocks the chat list.
+  useEffect(() => {
+    if (!creatorId) return;
     (async () => {
       let connected = await checkStatus();
-      loadFolders();
-      loadPackages();
 
       // Auto-reconnect silently using the creator-scoped connect endpoint
       if (!connected) {
         try {
-          const url = `${api}/creators/${creatorId}/connect`;
-          const d = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(r => r.json());
+          const d = await fetch(`${api}/creators/${creatorId}/connect`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+          }).then(r => r.json());
           const ok = d.status === 'connected' || d.status === 'reconnected';
           if (ok) {
             connected = true;
@@ -419,8 +431,11 @@ function InboxContent() {
         } catch {}
       }
 
-      const count = await loadConvos();
-      if (connected && count === 0) await sync(true);
+      // If connected and still no chats in DB, run a full sync to pull them in
+      if (connected) {
+        const count = await loadConvos();
+        if (count === 0) await sync(true);
+      }
     })();
   }, [creatorId]); // eslint-disable-line
 
@@ -565,14 +580,19 @@ function InboxContent() {
             <div className="px-3.5 pt-2 pb-3 space-y-2">
               {/* Status banner */}
               {tgConnected === false && (
-                <div className="p-3 rounded-xl bg-red-500/8 border border-red-500/25">
-                  <div className="flex items-center gap-2 mb-2">
+                <div className="p-3 rounded-xl bg-red-500/8 border border-red-500/25 space-y-2">
+                  <div className="flex items-center gap-2">
                     <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />
-                    <span className="text-sm font-semibold text-red-400">Telegram not connected</span>
-                    <Button size="sm" className="ml-auto" onClick={reconnect} disabled={reconnecting}>
-                      {reconnecting ? 'Reconnecting…' : '↺ Reconnect'}
+                    <span className="text-xs font-semibold text-red-400">Telegram not connected</span>
+                    <Button size="sm" className="ml-auto h-6 text-xs" onClick={reconnect} disabled={reconnecting}>
+                      {reconnecting ? 'Connecting…' : '↺ Reconnect'}
                     </Button>
                   </div>
+                  <p className="text-[11px] text-red-400/70 leading-relaxed">
+                    Session may have expired. Go to{' '}
+                    <a href="/dashboard/creators" className="underline font-semibold">Creators page</a>
+                    {' '}→ click <strong>📱 Auth</strong> to re-authenticate with phone + SMS code.
+                  </p>
                 </div>
               )}
               {tgConnected === true && (
@@ -597,20 +617,29 @@ function InboxContent() {
           {/* List */}
           <div className="flex-1 overflow-y-auto">
             {loadingConvos && convos.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground text-sm">Loading chats…</div>
+              <div className="p-7 text-center text-muted-foreground">
+                <div className="text-2xl mb-2 animate-pulse">⏳</div>
+                <div className="text-sm">Loading chats…</div>
+              </div>
             ) : filtered.length === 0 ? (
               <div className="p-7 text-center text-muted-foreground">
                 <div className="text-4xl mb-3">✉</div>
                 <div className="font-semibold text-foreground mb-2">No chats yet</div>
                 {tgConnected ? (
                   <>
-                    <div className="text-xs mb-3">Tap below to import all existing conversations.</div>
+                    <div className="text-xs mb-3">Import all conversations from Telegram.</div>
                     <Button size="sm" onClick={() => sync()} disabled={syncing}>
                       {syncing ? '⏳ Syncing…' : '⬇ Import All Chats'}
                     </Button>
                   </>
                 ) : (
-                  <div className="text-xs">Connect Telegram first.</div>
+                  <div className="text-xs space-y-2">
+                    <p>Telegram not connected — session may have expired.</p>
+                    <a href="/dashboard/creators"
+                       className="inline-block mt-1 px-3 py-1.5 rounded-lg bg-primary/10 text-primary text-xs font-semibold hover:bg-primary/20 transition-colors">
+                      → Go to Creators to re-authenticate
+                    </a>
+                  </div>
                 )}
               </div>
             ) : filtered.map(c => {
