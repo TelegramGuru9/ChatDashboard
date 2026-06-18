@@ -1863,14 +1863,22 @@ async def connect_creator(cid: str, payload: Dict[str, Any] = Body(default={})):
                 c.telegram_session = payload["session_string"]
                 await session.commit()
 
-            api_id  = int(getattr(__import__("app.core.config", fromlist=["settings"]), "settings").TELEGRAM_API_ID or 0)
-            api_hash = getattr(__import__("app.core.config", fromlist=["settings"]), "settings").TELEGRAM_API_HASH or ""
-
-            if c.is_default and not session_str:
-                # Default creator with no saved session → fall back to env-var singleton
+            if c.is_default:
+                # Default creator ALWAYS uses the telegram_client singleton (env-var session).
+                # Never use the pool for the default creator — that would create a duplicate
+                # connection from the same session key → AuthKeyDuplicatedError.
+                if session_str and session_str != getattr(__import__("app.core.config", fromlist=["settings"]), "settings").TELEGRAM_SESSION_STRING:
+                    # A new session string was saved in DB — update env-var singleton to use it
+                    telegram_client.client = None
+                    telegram_client._is_connected = False
+                    import os
+                    os.environ["TELEGRAM_SESSION_STRING"] = session_str
+                    from app.core.config import settings as _s
+                    _s.TELEGRAM_SESSION_STRING = session_str
                 success = await telegram_client.connect()
                 if not success:
-                    raise HTTPException(status_code=400, detail="Connection failed — check TELEGRAM_SESSION in Railway env vars")
+                    reason = getattr(telegram_client, "_last_error", "") or "Session invalid or missing"
+                    raise HTTPException(status_code=400, detail=f"Connection failed — {reason}")
                 me = await telegram_client.client.get_me()
                 name = f"{getattr(me,'first_name','') or ''} {getattr(me,'last_name','') or ''}".strip()
                 account_name = name or getattr(me, "username", "") or c.name
@@ -1878,7 +1886,10 @@ async def connect_creator(cid: str, payload: Dict[str, Any] = Body(default={})):
                 await session.commit()
                 return {"status": "connected", "account_name": account_name, "creator_id": cid}
 
-            # Use pool for all creators that have a session string (default or not)
+            # Non-default creator — use pool
+            api_id  = int(getattr(__import__("app.core.config", fromlist=["settings"]), "settings").TELEGRAM_API_ID or 0)
+            api_hash = getattr(__import__("app.core.config", fromlist=["settings"]), "settings").TELEGRAM_API_HASH or ""
+
             if not session_str:
                 raise HTTPException(status_code=400, detail="No session string stored for this creator. Save a session string first.")
 
@@ -1946,13 +1957,10 @@ async def creator_status(cid: str):
             if not c:
                 raise HTTPException(status_code=404, detail="Creator not found")
 
-        # Always check pool first (works for both default and non-default creators)
-        connected = creator_pool.is_connected(cid)
-        account = creator_pool.get_account(cid) or {}
-
-        if not connected and c.is_default:
-            # Fallback: check legacy env-var singleton for old-style default connections
+        if c.is_default:
+            # Default creator uses the singleton, never the pool
             connected = telegram_client.is_connected
+            account = {}
             if connected:
                 try:
                     me = await telegram_client.client.get_me()
@@ -1960,6 +1968,9 @@ async def creator_status(cid: str):
                     account = {"name": name or getattr(me,"username",""), "username": getattr(me,"username",None), "phone": getattr(me,"phone",None)}
                 except Exception:
                     pass
+        else:
+            connected = creator_pool.is_connected(cid)
+            account = creator_pool.get_account(cid) or {}
 
         return {
             "creator_id": cid,

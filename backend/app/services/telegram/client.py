@@ -399,9 +399,11 @@ class CreatorClientPool:
 
     async def startup_connect_all(self) -> None:
         """
-        Called at app startup: load ALL active creators that have a session
-        string stored in the DB and connect them via the pool.
-        This includes the default creator when its session_string is saved in DB.
+        Called at app startup: load all NON-DEFAULT active creators that have
+        a session string stored in the DB and connect them via the pool.
+        The default creator is handled by the telegram_client singleton (env vars).
+        NEVER connect a creator via the pool if telegram_client already uses the
+        same session — that causes AuthKeyDuplicatedError.
         """
         try:
             from app.db.models import Creator
@@ -412,6 +414,7 @@ class CreatorClientPool:
                 res = await session.execute(
                     sa_select(Creator).where(
                         Creator.is_active == True,
+                        Creator.is_default == False,
                         Creator.telegram_session.isnot(None),
                     )
                 )
