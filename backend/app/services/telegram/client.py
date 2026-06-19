@@ -280,6 +280,11 @@ class TelegramClientManager:
         @self.client.on(events.NewMessage(incoming=True))
         async def handle_new_message(event):
             try:
+                # Cache the sender entity so we can reply later (fixes "Could not find entity")
+                try:
+                    await event.get_input_sender()
+                except Exception:
+                    pass
                 await self._emit_event("message_new", {
                     "event": event,
                     "message": event.message,
