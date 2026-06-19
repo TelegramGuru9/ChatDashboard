@@ -726,16 +726,9 @@ async def _daily_memory_loop():
 
 
 async def _startup_sync():
-    """Run after startup — wait for Telegram to fully settle, then sync ALL dialogs + folders."""
-    await asyncio.sleep(10)
-    from app.services.telegram.client import telegram_client
-    if telegram_client.is_connected:
-        logger.info("Auto-syncing ALL existing Telegram chats on startup…")
-        await _do_sync(telegram_client.client, limit_per_chat=150)
-        logger.info("Auto-syncing Telegram folders…")
-        await _sync_telegram_folders(telegram_client.client)
-    else:
-        logger.warning("Startup sync skipped — Telegram not connected")
+    """Skipped on startup to prevent Railway crashes — use /api/v1/telegram/sync manually."""
+    logger.info("Startup sync disabled — use POST /api/v1/telegram/sync to sync manually")
+    return
 
 
 @asynccontextmanager
