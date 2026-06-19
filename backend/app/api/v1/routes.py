@@ -1332,13 +1332,33 @@ async def test_ai_reply(payload: Dict[str, Any] = Body(...)):
         user_id     = user.id
         creator_id  = str(user.creator_id) if user.creator_id else None
 
+    # Also test direct send
+    from app.services.telegram.client import telegram_client
+    send_error = None
+    try:
+        msg_id = await telegram_client.send_message(tg_id, "🤖 TEST DIRECT SEND")
+        if msg_id is None:
+            # Try resolving entity first
+            try:
+                entity = await telegram_client.client.get_input_entity(tg_id)
+                msg_id = await telegram_client.send_message(tg_id, "🤖 TEST DIRECT SEND 2")
+            except Exception as e2:
+                send_error = f"Entity resolve failed: {e2}"
+    except Exception as e:
+        send_error = str(e)
+
     try:
         await message_processor._generate_and_send_ai_response(
             user_id, tg_id, text, creator_id
         )
-        return {"status": "ok", "message": f"AI response triggered for tg_id={tg_id}"}
+        return {
+            "status": "ok",
+            "message": f"AI response triggered for tg_id={tg_id}",
+            "direct_send_error": send_error,
+            "telegram_connected": telegram_client.is_connected,
+        }
     except Exception as e:
-        return {"status": "error", "error": str(e), "trace": traceback.format_exc()}
+        return {"status": "error", "error": str(e), "trace": traceback.format_exc(), "direct_send_error": send_error}
 
 
 @telegram_router.post("/reconnect")
