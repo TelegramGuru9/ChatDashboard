@@ -1305,6 +1305,42 @@ async def test_send_message(
     return {"status": "ok", "sent_to": sent, "failed": failed, "errors": errors}
 
 
+@telegram_router.post("/test-ai-reply")
+async def test_ai_reply(payload: Dict[str, Any] = Body(...)):
+    """
+    Manually trigger AI response for a telegram_user_id.
+    Use to debug why AI is not replying.
+    Returns the generated text or the error.
+    """
+    import traceback
+    from app.services.telegram.message_handler import message_processor
+    from app.db.database import db_manager
+    from app.db.models import User
+    from sqlalchemy import select as sa_select
+
+    tg_id = int(payload.get("telegram_id", 0))
+    text  = str(payload.get("text", "test")).strip()
+    if not tg_id:
+        raise HTTPException(status_code=400, detail="telegram_id required")
+
+    # Find user in DB
+    async with db_manager.get_session() as session:
+        res = await session.execute(sa_select(User).where(User.user_id == tg_id))
+        user = res.scalars().first()
+        if not user:
+            raise HTTPException(status_code=404, detail=f"User with telegram_id {tg_id} not found in DB")
+        user_id     = user.id
+        creator_id  = str(user.creator_id) if user.creator_id else None
+
+    try:
+        await message_processor._generate_and_send_ai_response(
+            user_id, tg_id, text, creator_id
+        )
+        return {"status": "ok", "message": f"AI response triggered for tg_id={tg_id}"}
+    except Exception as e:
+        return {"status": "error", "error": str(e), "trace": traceback.format_exc()}
+
+
 @telegram_router.post("/reconnect")
 async def reconnect_telegram():
     """Attempt to reconnect the Telegram session — re-runs full connect() from scratch."""
