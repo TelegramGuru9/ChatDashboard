@@ -559,8 +559,8 @@ class MessageProcessor:
                     return False
 
                 message = await self._store_message(session, user.id, telegram_message, text, has_media)
-                if not message:
-                    return False
+                is_duplicate = message is None
+                # Even if duplicate (already synced), still trigger AI for live events
 
                 user.total_messages = (user.total_messages or 0) + 1
                 user.total_interactions = (user.total_interactions or 0) + 1
@@ -578,7 +578,7 @@ class MessageProcessor:
             try:
                 import main as _main
                 _main._broadcast_new_message(str(user_id), {
-                    "id": str(message.id),
+                    "id": str(message.id) if message else str(user_id),
                     "text": text,
                     "direction": "incoming",
                     "is_ai_generated": False,
