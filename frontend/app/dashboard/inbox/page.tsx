@@ -486,11 +486,19 @@ function InboxContent() {
       es.onmessage = (evt) => {
         try {
           const data = JSON.parse(evt.data);
-          if (data.type === 'connected' || data.user_id !== selected.user_id) return;
+          if (data.type === 'connected') return;
           const msg = data.message;
           if (!msg?.id) return;
-          setMessages(prev => prev.some(m => String(m.id) === String(msg.id)) ? prev : [...prev, { ...msg, id: String(msg.id) }]);
-          setConvos(prev => sortByRecent(prev.map(c => c.user_id === selected.user_id ? { ...c, last_message: msg.text, last_message_direction: msg.direction, last_message_at: msg.created_at } : c)));
+          // Always update the left chat list for whichever user got the message
+          setConvos(prev => sortByRecent(prev.map(c =>
+            c.user_id === data.user_id
+              ? { ...c, last_message: msg.text, last_message_direction: msg.direction, last_message_at: msg.created_at }
+              : c
+          )));
+          // Only append to the open message thread if it's the selected chat
+          if (data.user_id === selected.user_id) {
+            setMessages(prev => prev.some(m => String(m.id) === String(msg.id)) ? prev : [...prev, { ...msg, id: String(msg.id) }]);
+          }
         } catch {}
       };
       es.onerror = () => { es?.close(); setTimeout(connect, 3000); };

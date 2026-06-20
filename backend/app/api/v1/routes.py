@@ -598,14 +598,29 @@ async def get_user_photo(user_id: UUID, session: AsyncSession = Depends(get_db))
 
         try:
             import io, base64
+            # Force-resolve the entity so Telethon caches the access hash.
+            # Priority: username (always resolvable) > cached user_id > raw int fallback.
+            # New sessions have an empty entity cache, so raw integer IDs fail without
+            # a prior sync or live message from the user.
+            entity = user.user_id  # final fallback
+            if user.username:
+                try:
+                    entity = await telegram_client.client.get_entity(f"@{user.username}")
+                except Exception:
+                    pass
+            else:
+                try:
+                    entity = await telegram_client.client.get_entity(user.user_id)
+                except Exception:
+                    pass  # will fail for un-cached users without username
             bio = io.BytesIO()
-            path = await telegram_client.client.download_profile_photo(user.user_id, file=bio)
+            path = await telegram_client.client.download_profile_photo(entity, file=bio)
             if path is None:
                 return {"photo_url": None}
             bio.seek(0)
             b64 = base64.b64encode(bio.read()).decode()
             data_url = f"data:image/jpeg;base64,{b64}"
-            # Cache in extra_data
+            # Cache in extra_data so it survives future restarts
             new_extra = dict(extra)
             new_extra["tg_photo_url"] = data_url
             user.extra_data = new_extra
