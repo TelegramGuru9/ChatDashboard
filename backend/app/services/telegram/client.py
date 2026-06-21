@@ -112,18 +112,34 @@ class TelegramClientManager:
             return False
         except AuthKeyDuplicatedError:
             # Railway rolling deploy: old instance still holds the session.
-            # Wait 15 s for the old instance to be killed, then retry once.
-            logger.warning("AuthKeyDuplicatedError — old instance still connected. Retrying in 15 s…")
-            self._last_error = "AuthKeyDuplicated — retrying"
+            # Wait 15 s for the old instance to be killed, then retry ONCE.
+            # If it fails again, give up — session key is burned.
             if self.client:
                 try:
                     await self.client.disconnect()
                 except Exception:
                     pass
                 self.client = None
-            await asyncio.sleep(15)
-            logger.info("Retrying Telegram connect after AuthKeyDuplicatedError…")
-            return await self.connect()
+            if not getattr(self, "_dup_retried", False):
+                logger.warning("AuthKeyDuplicatedError — old instance still connected. Retrying in 15 s…")
+                self._last_error = "AuthKeyDuplicated — retrying once"
+                self._dup_retried = True
+                await asyncio.sleep(15)
+                logger.info("Retrying Telegram connect after AuthKeyDuplicatedError…")
+                result = await self.connect()
+                self._dup_retried = False
+                return result
+            else:
+                self._dup_retried = False
+                self._last_error = (
+                    "AuthKeyDuplicatedError on retry — session key is burned. "
+                    "Go to Railway → Variables → TELEGRAM_SESSION_STRING and paste a fresh session."
+                )
+                logger.error(
+                    "AuthKeyDuplicatedError on retry — session key burned. "
+                    "Giving up so the HTTP server can start. Generate a new TELEGRAM_SESSION_STRING."
+                )
+                return False
         except Exception as e:
             self._last_error = str(e)
             logger.error(f"Failed to connect to Telegram: {e}", exc_info=True)
