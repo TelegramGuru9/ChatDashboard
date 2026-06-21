@@ -1,6 +1,7 @@
 import logging
 import asyncio
 import os
+import signal
 from contextlib import asynccontextmanager
 from datetime import datetime
 
@@ -819,6 +820,29 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(creator_pool.startup_connect_all())
     except Exception as e:
         logger.warning(f"Telegram init failed: {e}")
+
+    # SIGTERM handler — Railway sends SIGTERM before killing the container.
+    # Explicitly disconnect Telegram so the auth key is released immediately,
+    # preventing AuthKeyDuplicatedError in the next deploy.
+    async def _on_sigterm():
+        logger.info("SIGTERM received — disconnecting Telegram before exit…")
+        try:
+            from app.services.telegram.client import telegram_client as _tc, creator_pool as _cp
+            await _tc.disconnect()
+            for _cid in list(_cp.all_connected()):
+                try:
+                    await _cp.disconnect_creator(_cid)
+                except Exception:
+                    pass
+            logger.info("✓ Telegram disconnected cleanly on SIGTERM")
+        except Exception as _e:
+            logger.error(f"SIGTERM cleanup error: {_e}")
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.add_signal_handler(signal.SIGTERM, lambda: asyncio.create_task(_on_sigterm()))
+    except Exception:
+        pass  # Windows / environments where add_signal_handler is unavailable
 
     yield  # ← app is serving HTTP requests; /health returns 200 immediately
 
