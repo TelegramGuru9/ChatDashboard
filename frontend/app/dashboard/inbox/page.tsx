@@ -478,10 +478,15 @@ function InboxContent() {
     }
   }, [selected]); // eslint-disable-line
 
+  // SSE — always connected regardless of which chat is open.
+  // Updates the left chat list for every incoming message.
+  // If the sender is not yet in the list (new contact), reloads convos from DB.
+  const selectedRef = useRef(selected);
+  useEffect(() => { selectedRef.current = selected; }, [selected]);
+
   useEffect(() => {
-    if (!selected) return;
     let es: EventSource | null = null;
-    const connect = () => {
+    const connectSSE = () => {
       es = new EventSource(`${api}/telegram/stream`);
       es.onmessage = (evt) => {
         try {
@@ -489,24 +494,41 @@ function InboxContent() {
           if (data.type === 'connected') return;
           const msg = data.message;
           if (!msg?.id) return;
-          // Always update the left chat list for whichever user got the message
-          setConvos(prev => sortByRecent(prev.map(c =>
-            c.user_id === data.user_id
-              ? { ...c, last_message: msg.text, last_message_direction: msg.direction, last_message_at: msg.created_at }
-              : c
-          )));
-          // Only append to the open message thread if it's the selected chat
-          if (data.user_id === selected.user_id) {
+
+          // Update left chat list — or reload if this user isn't in the list yet
+          setConvos(prev => {
+            const exists = prev.some(c => c.user_id === data.user_id);
+            if (!exists) {
+              // Brand-new contact — reload the full list from DB
+              loadConvos();
+              return prev;
+            }
+            return sortByRecent(prev.map(c =>
+              c.user_id === data.user_id
+                ? { ...c, last_message: msg.text, last_message_direction: msg.direction, last_message_at: msg.created_at }
+                : c
+            ));
+          });
+
+          // Append to open message thread only if it's the selected chat
+          const cur = selectedRef.current;
+          if (cur && data.user_id === cur.user_id) {
             setMessages(prev => prev.some(m => String(m.id) === String(msg.id)) ? prev : [...prev, { ...msg, id: String(msg.id) }]);
           }
         } catch {}
       };
-      es.onerror = () => { es?.close(); setTimeout(connect, 3000); };
+      es.onerror = () => { es?.close(); setTimeout(connectSSE, 3000); };
     };
-    connect();
+    connectSSE();
+    return () => { es?.close(); };
+  }, [api]); // eslint-disable-line
+
+  // Poll open chat messages every 3 s as a safety net for missed SSE events
+  useEffect(() => {
+    if (!selected) return;
     const safePoll = setInterval(() => loadMessages(selected.user_id, true), 3000);
-    return () => { es?.close(); clearInterval(safePoll); };
-  }, [selected, api]); // eslint-disable-line
+    return () => clearInterval(safePoll);
+  }, [selected]); // eslint-disable-line
 
   const filtered = (() => {
     let list = convos.filter(c => {
