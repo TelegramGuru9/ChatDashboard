@@ -93,8 +93,10 @@ class TelegramClientManager:
                 api_id=settings.TELEGRAM_API_ID,
                 api_hash=settings.TELEGRAM_API_HASH,
                 connection=ConnectionTcpAbridged,
-                auto_reconnect=True,
-                connection_retries=settings.TELEGRAM_REQUEST_RETRIES,
+                auto_reconnect=False,   # watchdog handles reconnect — disabling prevents
+                                        # zombie instances from re-grabbing the session
+                                        # after SIGTERM / Railway deploy
+                connection_retries=0,   # fail fast; watchdog retries at app level
                 retry_delay=1,
                 request_retries=settings.TELEGRAM_REQUEST_RETRIES,
             )
