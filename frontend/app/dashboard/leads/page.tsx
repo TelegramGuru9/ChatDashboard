@@ -230,7 +230,7 @@ export default function LeadsPage() {
                 <Card
                   key={lead.id}
                   className={cn("cursor-pointer transition-all duration-150 hover:border-primary/40")}
-                  onClick={() => router.push('/dashboard/inbox')}
+                  onClick={() => router.push(`/dashboard/inbox?user=${lead.user_id}`)}
                 >
                   <CardContent className="py-3 px-4">
                     <div className="flex items-center gap-3.5">
