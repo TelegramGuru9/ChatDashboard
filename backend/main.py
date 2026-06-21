@@ -733,51 +733,60 @@ async def _startup_sync():
 
 async def _telegram_watchdog():
     """
-    Handles ALL Telegram connection — both the initial connect on startup AND
+    Handles ALL Telegram connection — initial connect on startup AND
     auto-reconnect if the session drops later.
 
-    IMPORTANT: the lifespan no longer calls connect() directly.
-    This means the app reaches yield (and /health) immediately, so Railway's
-    health-check succeeds within seconds. Telegram connects in this background
-    task a few seconds after the app is up.
-
-    On Railway rolling deploys the old instance can keep the session for
-    30–90 s (AuthKeyDuplicatedError). connect() now retries up to 2× with a
-    45 s gap, so the watchdog just needs to keep calling it until it works.
+    connect() now fails fast on AuthKeyDuplicatedError (old Railway instance
+    still holding the session). The watchdog polls every 15 s until the old
+    instance releases the session, then switches to a 30 s health check loop.
     """
     from app.services.telegram.client import telegram_client
     from app.services.telegram.message_handler import message_processor
 
     _tasks_started = False
     await asyncio.sleep(5)   # brief pause so DB seeds finish first
-    logger.info("[watchdog] Starting — will connect Telegram now")
+    logger.info("[watchdog] Starting — connecting Telegram in background")
 
+    def _start_bg_tasks():
+        nonlocal _tasks_started
+        if _tasks_started:
+            return
+        _tasks_started = True
+        asyncio.create_task(message_processor.start_processor())
+        asyncio.create_task(_startup_sync())
+        asyncio.create_task(_check_inactive_users())
+        asyncio.create_task(_daily_memory_loop())
+        logger.info("[watchdog] ✓ Background tasks started")
+
+    # ── Phase 1: connect loop — retry every 15 s until connected ─────────────
+    while not telegram_client.is_connected:
+        try:
+            logger.info("[watchdog] Attempting Telegram connect…")
+            ok = await telegram_client.connect()
+            if ok:
+                logger.info("[watchdog] ✓ Telegram connected")
+                _start_bg_tasks()
+                break
+            err = getattr(telegram_client, "_last_error", "")
+            logger.warning(f"[watchdog] connect() failed ({err}) — retrying in 15 s")
+        except Exception as _e:
+            logger.error(f"[watchdog] connect error: {_e}")
+        await asyncio.sleep(15)
+
+    # ── Phase 2: health loop — reconnect if session drops ────────────────────
     while True:
+        await asyncio.sleep(30)
         try:
             if not telegram_client.is_connected:
-                logger.info("[watchdog] Telegram not connected — calling connect()…")
+                logger.warning("[watchdog] Session dropped — reconnecting…")
                 ok = await telegram_client.connect()
                 if ok:
-                    logger.info("[watchdog] ✓ Telegram connected")
-                    if not _tasks_started:
-                        _tasks_started = True
-                        asyncio.create_task(message_processor.start_processor())
-                        asyncio.create_task(_startup_sync())
-                        asyncio.create_task(_check_inactive_users())
-                        asyncio.create_task(_daily_memory_loop())
-                        logger.info("[watchdog] Background tasks started")
+                    logger.info("[watchdog] ✓ Session restored")
+                    _start_bg_tasks()
                 else:
-                    logger.warning("[watchdog] connect() failed — will retry in 30 s")
-            else:
-                if not _tasks_started:
-                    _tasks_started = True
-                    asyncio.create_task(message_processor.start_processor())
-                    asyncio.create_task(_startup_sync())
-                    asyncio.create_task(_check_inactive_users())
-                    asyncio.create_task(_daily_memory_loop())
+                    logger.warning("[watchdog] Reconnect failed — will retry in 30 s")
         except Exception as _e:
-            logger.error(f"[watchdog] Error: {_e}")
-        await asyncio.sleep(30)
+            logger.error(f"[watchdog] health-loop error: {_e}")
 
 
 @asynccontextmanager
