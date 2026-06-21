@@ -727,9 +727,22 @@ async def _daily_memory_loop():
 
 
 async def _startup_sync():
-    """Skipped on startup to prevent Railway crashes — use /api/v1/telegram/sync manually."""
-    logger.info("Startup sync disabled — use POST /api/v1/telegram/sync to sync manually")
-    return
+    """Run once after Telegram connects — syncs last 50 messages for up to 200 chats."""
+    from app.services.telegram.client import telegram_client
+    if not telegram_client.is_connected or not telegram_client.client:
+        logger.warning("[StartupSync] Skipped — Telegram not connected")
+        return
+    await asyncio.sleep(3)   # tiny pause so event handlers settle
+    logger.info("[StartupSync] Starting one-time chat sync (last 50 msgs, up to 200 chats)…")
+    try:
+        users, msgs, dialogs = await _do_sync(
+            telegram_client.client,
+            limit_per_chat=50,
+            max_dialogs=200,
+        )
+        logger.info(f"[StartupSync] ✓ Done — {dialogs} chats, {users} new users, {msgs} new msgs")
+    except Exception as e:
+        logger.error(f"[StartupSync] Error: {e}", exc_info=True)
 
 
 async def _telegram_watchdog():
@@ -745,7 +758,13 @@ async def _telegram_watchdog():
     from app.services.telegram.message_handler import message_processor
 
     _tasks_started = False
-    await asyncio.sleep(5)   # brief pause so DB seeds finish first
+    # ── Wait for old Railway instance to fully die ────────────────────────────
+    # Railway rolling deploy: new instance starts while old one is still alive.
+    # Old instance holds the Telegram session. Our SIGTERM handler disconnects
+    # it, but that takes ~5-20s. Waiting 50s here ensures the old instance has
+    # fully exited before we attempt our first connect — preventing the
+    # AuthKeyDuplicatedError loop that burns the session key.
+    await asyncio.sleep(50)
     logger.info("[watchdog] Starting — connecting Telegram in background")
 
     def _start_bg_tasks():
@@ -759,7 +778,13 @@ async def _telegram_watchdog():
         asyncio.create_task(_daily_memory_loop())
         logger.info("[watchdog] ✓ Background tasks started")
 
-    # ── Phase 1: connect loop — retry every 15 s until connected ─────────────
+    # ── Phase 1: connect loop with exponential back-off ──────────────────────
+    # CRITICAL: rapid retries on AuthKeyDuplicatedError burn the session key
+    # and block the phone number from receiving new login codes.
+    # We use exponential back-off so Telegram's servers see far fewer attempts.
+    _dup_streak = 0
+    _retry_delay = 20   # first retry after 20 s
+
     while not telegram_client.is_connected:
         try:
             logger.info("[watchdog] Attempting Telegram connect…")
@@ -767,12 +792,37 @@ async def _telegram_watchdog():
             if ok:
                 logger.info("[watchdog] ✓ Telegram connected")
                 _start_bg_tasks()
+                _dup_streak = 0
                 break
             err = getattr(telegram_client, "_last_error", "")
-            logger.warning(f"[watchdog] connect() failed ({err}) — retrying in 15 s")
+            is_dup = "AuthKeyDuplicatedError" in err
+
+            if is_dup:
+                _dup_streak += 1
+                # 30 → 60 → 120 → 300 s cap — stops burning the session key
+                _retry_delay = min(30 * (2 ** (_dup_streak - 1)), 300)
+                if _dup_streak >= 5:
+                    logger.critical(
+                        f"[watchdog] 🔴 AuthKeyDuplicated {_dup_streak}× in a row — "
+                        "the session key may be burned. "
+                        "Go to Railway → Variables → replace TELEGRAM_SESSION_STRING "
+                        "with a freshly generated one, then redeploy."
+                    )
+                else:
+                    logger.warning(
+                        f"[watchdog] AuthKeyDuplicated (streak={_dup_streak}) "
+                        f"— backing off {_retry_delay}s to protect session key"
+                    )
+            else:
+                _dup_streak = 0
+                _retry_delay = 20
+                logger.warning(f"[watchdog] connect() failed ({err}) — retrying in {_retry_delay}s")
+
         except Exception as _e:
             logger.error(f"[watchdog] connect error: {_e}")
-        await asyncio.sleep(15)
+            _retry_delay = 20
+
+        await asyncio.sleep(_retry_delay)
 
     # ── Phase 2: health loop — reconnect if session drops ────────────────────
     while True:
