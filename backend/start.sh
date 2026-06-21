@@ -8,4 +8,4 @@ if [ -n "$TELEGRAM_SESSION_BASE64" ]; then
     echo "Telegram session restored from env var"
 fi
 
-exec uvicorn main:app --host 0.0.0.0 --port "${PORT:-8000}" --workers 1
+exec uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1

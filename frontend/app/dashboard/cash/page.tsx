@@ -27,19 +27,11 @@ export default function CashAlarmPage() {
   const { withCreator } = useCreator();
   const api = getApi();
 
-  // Flow 1 — Package sent (cash_notify_users)
   const [users,   setUsers]   = useState<string[]>([]);
   const [input,   setInput]   = useState('');
   const [loading, setLoading] = useState(true);
   const [saving,  setSaving]  = useState(false);
   const [saved,   setSaved]   = useState(false);
-
-  // Flow 2 — Sales Completed (sales_notify_users)
-  const [salesUsers,   setSalesUsers]   = useState<string[]>([]);
-  const [salesInput,   setSalesInput]   = useState('');
-  const [salesLoading, setSalesLoading] = useState(true);
-  const [salesSaving,  setSalesSaving]  = useState(false);
-  const [salesSaved,   setSalesSaved]   = useState(false);
 
   // Per-button test status
   const [btnStatus, setBtnStatus] = useState<Record<string, BtnStatus>>({});
@@ -59,16 +51,6 @@ export default function CashAlarmPage() {
     finally { setLoading(false); }
   }, [api, withCreator]);
 
-  const loadSalesUsers = useCallback(async () => {
-    setSalesLoading(true);
-    try {
-      const res  = await fetch(withCreator(`${api}/config/sales_notify_users`));
-      const data = await res.json();
-      if (Array.isArray(data?.value) && data.value.length > 0) setSalesUsers(data.value);
-    } catch {}
-    finally { setSalesLoading(false); }
-  }, [api, withCreator]);
-
   /* ── Load package names ─────────────────────────────────────────────────── */
   const loadPackages = useCallback(async () => {
     try {
@@ -85,9 +67,9 @@ export default function CashAlarmPage() {
     } catch {}
   }, [api, withCreator]);
 
-  useEffect(() => { loadUsers(); loadSalesUsers(); loadPackages(); }, [loadUsers, loadSalesUsers, loadPackages]);
+  useEffect(() => { loadUsers(); loadPackages(); }, [loadUsers, loadPackages]);
 
-  /* ── Notify user management — Flow 1 ───────────────────────────────────── */
+  /* ── Notify user management ─────────────────────────────────────────────── */
   const addUser = () => {
     const u = input.trim().replace(/^@/, '');
     if (u && !users.includes(u)) setUsers(prev => [...prev, u]);
@@ -104,25 +86,6 @@ export default function CashAlarmPage() {
       setSaved(true); setTimeout(() => setSaved(false), 3000);
     } catch {}
     setSaving(false);
-  };
-
-  /* ── Notify user management — Flow 2 (Sales Completed) ─────────────────── */
-  const addSalesUser = () => {
-    const u = salesInput.trim().replace(/^@/, '');
-    if (u && !salesUsers.includes(u)) setSalesUsers(prev => [...prev, u]);
-    setSalesInput('');
-  };
-  const removeSalesUser = (u: string) => setSalesUsers(prev => prev.filter(x => x !== u));
-  const saveSalesUsers = async () => {
-    setSalesSaving(true);
-    try {
-      await fetch(withCreator(`${api}/config/sales_notify_users`), {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(salesUsers),
-      });
-      setSalesSaved(true); setTimeout(() => setSalesSaved(false), 3000);
-    } catch {}
-    setSalesSaving(false);
   };
 
   /* ── Fire a test alarm ──────────────────────────────────────────────────── */
@@ -195,13 +158,6 @@ export default function CashAlarmPage() {
     },
   ];
 
-  const salesTestEvent: TestEvent = {
-    id:         'sale',
-    label:      'Sales Completed',
-    previewMsg: '✅ Zahlung bestätigt — Sale abgeschlossen!\n👤 Telegram ID: 123456',
-    color:      'border-green-200 bg-green-50/50',
-  };
-
   const inputCls = "w-full bg-muted border border-border rounded-xl px-3 py-2 text-sm outline-none focus:border-primary/50 transition-colors";
 
   return (
@@ -229,7 +185,7 @@ export default function CashAlarmPage() {
               {[
                 { color: 'text-blue-400',   label: 'Listennachricht',  text: 'Bot sendet die Listennachricht → "Warm Lead - Liste angefragt"' },
                 { color: 'text-purple-400', label: 'Paket 1 / 2 / 3', text: 'Bot sendet ein Paket-Keyword-Match → "HOT Lead — [Paketname] gesendet"' },
-                { color: 'text-green-400',  label: 'Sales Completed',  text: 'Staff klickt "Payment Collected" im Chat → "Sales Completed" Alarm (eigene User-Liste)' },
+                { color: 'text-yellow-400', label: 'Kauf bestätigt',   text: 'Lead bestätigt Zahlung → "Kauf bestätigt" (wie bisher)' },
               ].map(({ color, label, text }) => (
                 <div key={label} className="flex items-start gap-3">
                   <div className={cn("w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 mt-0.5 border", color, `border-current/30 bg-current/10`)}>
@@ -373,146 +329,6 @@ export default function CashAlarmPage() {
             )}
           </CardContent>
         </Card>
-
-        {/* ══ FLOW 2 — Sales Completed ══ */}
-        <div className="border-t border-border pt-6 space-y-4">
-          <div className="flex items-start gap-4">
-            <div className="w-10 h-10 rounded-xl bg-green-500/15 border border-green-500/30 flex items-center justify-center flex-shrink-0">
-              <span className="text-green-400 text-lg font-bold">✅</span>
-            </div>
-            <div>
-              <h2 className="text-lg font-bold tracking-tight">Flow 2 — Sales Completed</h2>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                Wird ausgelöst wenn du im Chat auf <strong>"Payment Collected"</strong> klickst — separate User-Liste.
-              </p>
-            </div>
-          </div>
-
-          {/* Sales notify users */}
-          <Card className="border-green-500/20">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold text-muted-foreground">Sales-Team Benachrichtigungs-User</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {salesLoading ? (
-                <div className="py-6 text-center text-muted-foreground text-sm">Laden…</div>
-              ) : (
-                <>
-                  <div className="space-y-2 min-h-[40px]">
-                    {salesUsers.length === 0 && (
-                      <div className="py-6 text-center text-muted-foreground text-sm rounded-xl border border-dashed border-border">
-                        Noch keine User — füge unten einen Telegram-Username hinzu
-                      </div>
-                    )}
-                    {salesUsers.map(u => (
-                      <div key={u} className="flex items-center justify-between bg-muted rounded-xl px-4 py-3 group">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-7 h-7 rounded-full bg-green-500/15 flex items-center justify-center">
-                            <span className="text-green-400 text-xs font-bold">✅</span>
-                          </div>
-                          <span className="font-semibold text-sm">@{u}</span>
-                        </div>
-                        <button
-                          onClick={() => removeSalesUser(u)}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-red-500/10 text-red-400"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="flex gap-2">
-                    <input
-                      value={salesInput}
-                      onChange={e => setSalesInput(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && addSalesUser()}
-                      placeholder="@username oder username"
-                      className={cn(inputCls, "flex-1")}
-                    />
-                    <Button onClick={addSalesUser} size="sm" className="px-4 bg-green-500 text-white hover:bg-green-400 font-bold">
-                      <Plus size={15} className="mr-1" /> Add
-                    </Button>
-                  </div>
-
-                  <Button
-                    onClick={saveSalesUsers}
-                    disabled={salesSaving}
-                    className={cn("w-full py-4 font-semibold transition-colors", salesSaved ? "bg-green-500 hover:bg-green-500" : "")}
-                  >
-                    {salesSaved ? '✓ Gespeichert' : salesSaving ? 'Speichern…' : '💾 Sales-User-Liste speichern'}
-                  </Button>
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Sales test button */}
-          <Card className="border-green-500/20">
-            <CardHeader className="pb-2">
-              <div className="flex items-center gap-2">
-                <Send size={15} className="text-green-400" />
-                <CardTitle className="text-sm font-semibold">Test — Sales Completed Alarm</CardTitle>
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Schickt eine echte "Sales Completed" Nachricht an alle konfigurierten Sales-User.
-              </p>
-            </CardHeader>
-            <CardContent>
-              {(() => {
-                const ev = salesTestEvent;
-                const st = btnStatus[ev.id] || 'idle';
-                const result = btnResult[ev.id] || '';
-                return (
-                  <div className={cn("rounded-2xl border p-4 space-y-3", ev.color)}>
-                    <div>
-                      <div className="text-xs text-muted-foreground mb-1">Vorschau Telegram-Nachricht:</div>
-                      <div className="font-mono text-xs leading-relaxed bg-black/5 rounded-xl px-3 py-2 whitespace-pre-line text-green-700">
-                        {'💰💰💰 SALES COMPLETED 💰💰💰 (TEST)\n\n'}{ev.previewMsg}
-                      </div>
-                    </div>
-                    <Button
-                      onClick={() => fireTest(ev.id)}
-                      disabled={st === 'sending'}
-                      size="sm"
-                      className={cn(
-                        "w-full font-semibold gap-2 transition-colors",
-                        st === 'success' ? "bg-green-500 hover:bg-green-500 text-white" :
-                        st === 'error'   ? "bg-red-500 hover:bg-red-500 text-white" :
-                        "bg-green-500 text-white hover:bg-green-400"
-                      )}
-                    >
-                      {st === 'sending' ? (
-                        <><RefreshCw size={13} className="animate-spin" /> Senden…</>
-                      ) : st === 'success' ? (
-                        <>✓ Gesendet!</>
-                      ) : st === 'error' ? (
-                        <>✗ Fehler</>
-                      ) : (
-                        <><Send size={13} /> Test — Sales Completed</>
-                      )}
-                    </Button>
-                    {result && (
-                      <div className={cn(
-                        "px-3 py-2 rounded-xl text-xs border",
-                        st === 'success' || result.startsWith('✓')
-                          ? "bg-green-500/10 border-green-500/25 text-green-600"
-                          : "bg-red-500/10 border-red-500/25 text-red-500"
-                      )}>
-                        {result}
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-              {salesUsers.length === 0 && (
-                <div className="text-xs text-muted-foreground text-center pt-3">
-                  ⚠️ Füge zuerst einen Sales-User hinzu und speichere, bevor du testest
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
 
       </div>
     </DashboardLayout>

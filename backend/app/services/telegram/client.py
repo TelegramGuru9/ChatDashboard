@@ -45,7 +45,7 @@ class TelegramClientManager:
 
     # ── Public connect API ────────────────────────────────────────────────
 
-    async def connect(self, _retry: int = 0) -> bool:
+    async def connect(self) -> bool:
         """Connect using env-var credentials (default creator / legacy mode)."""
         self._last_error: str = ""
         # Fix 6: disconnect existing client before creating a new one to prevent ghost clients
@@ -112,13 +112,9 @@ class TelegramClientManager:
             return False
         except AuthKeyDuplicatedError:
             # Railway rolling deploy: old instance still holds the session.
-            # Retry once (max) after 15 s — by then the old instance is gone.
-            if _retry >= 1:
-                self._last_error = "AuthKeyDuplicatedError — retry limit reached. Session may still be held elsewhere."
-                logger.error(self._last_error)
-                return False
+            # Wait 15 s for the old instance to be killed, then retry once.
             logger.warning("AuthKeyDuplicatedError — old instance still connected. Retrying in 15 s…")
-            self._last_error = "AuthKeyDuplicated — retrying in 15 s"
+            self._last_error = "AuthKeyDuplicated — retrying"
             if self.client:
                 try:
                     await self.client.disconnect()
@@ -127,7 +123,7 @@ class TelegramClientManager:
                 self.client = None
             await asyncio.sleep(15)
             logger.info("Retrying Telegram connect after AuthKeyDuplicatedError…")
-            return await self.connect(_retry=_retry + 1)
+            return await self.connect()
         except Exception as e:
             self._last_error = str(e)
             logger.error(f"Failed to connect to Telegram: {e}", exc_info=True)

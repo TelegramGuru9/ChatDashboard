@@ -1055,18 +1055,14 @@ class MessageProcessor:
         telegram_id: int,
         event: str,          # "list_sent" | "package" | "sale"
         pkg_name: str = "",
-        notify_key: str = "cash_notify_users",
     ) -> None:
         """
-        Send a Cash Alarm notification to all configured notify users.
-        notify_key selects which config list to read:
-          "cash_notify_users"  — Flow 1 (package sent)
-          "sales_notify_users" — Flow 2 (payment collected / Sales Completed)
+        Send a Cash Alarm notification to all configured cash_notify_users.
         Call via asyncio.create_task() so it never blocks the main flow.
         """
         try:
             async with db_manager.get_session() as _cas:
-                _notify_raw = await _load_creator_config(notify_key, creator_id, _cas)
+                _notify_raw = await _load_creator_config("cash_notify_users", creator_id, _cas)
                 notify_users: list = _notify_raw if isinstance(_notify_raw, list) else []
 
             if not notify_users:
@@ -1084,16 +1080,10 @@ class MessageProcessor:
                     f"🔥 HOT Lead — {pkg_name} gesendet!\n"
                     f"👤 Telegram ID: {telegram_id}"
                 )
-            elif event == "sale":
-                msg = (
-                    "💰💰💰 SALES COMPLETED 💰💰💰\n\n"
-                    "✅ Zahlung bestätigt — Sale abgeschlossen!\n"
-                    f"👤 Telegram ID: {telegram_id}"
-                )
-            else:  # generic fallback
+            else:  # generic / sale
                 msg = (
                     "💵💵💵 $ CASH CASH CASH $ 💵💵💵\n\n"
-                    f"🎉 Event: {event}\n"
+                    f"🎉 Kauf bestätigt!\n"
                     f"👤 Telegram ID: {telegram_id}"
                 )
 
