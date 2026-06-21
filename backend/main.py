@@ -733,42 +733,48 @@ async def _startup_sync():
 
 async def _telegram_watchdog():
     """
-    Background watchdog — runs forever and auto-reconnects Telegram if it drops.
+    Handles ALL Telegram connection — both the initial connect on startup AND
+    auto-reconnect if the session drops later.
 
-    On Railway rolling deploys, the initial connect() may fail with
-    AuthKeyDuplicatedError (old instance still alive). The connect() itself
-    already retries once after 15 s; this watchdog provides a second safety
-    net by re-trying the whole connect sequence every 30 s until it succeeds.
+    IMPORTANT: the lifespan no longer calls connect() directly.
+    This means the app reaches yield (and /health) immediately, so Railway's
+    health-check succeeds within seconds. Telegram connects in this background
+    task a few seconds after the app is up.
 
-    It also starts the processor / background tasks on the FIRST successful
-    connection so they still launch even when the startup connect() failed.
+    On Railway rolling deploys the old instance can keep the session for
+    30–90 s (AuthKeyDuplicatedError). connect() now retries up to 2× with a
+    45 s gap, so the watchdog just needs to keep calling it until it works.
     """
     from app.services.telegram.client import telegram_client
     from app.services.telegram.message_handler import message_processor
 
     _tasks_started = False
-    await asyncio.sleep(120)   # let startup connect() finish (may need up to 2×45s retries)
-    logger.info("[watchdog] Telegram watchdog started")
+    await asyncio.sleep(5)   # brief pause so DB seeds finish first
+    logger.info("[watchdog] Starting — will connect Telegram now")
 
     while True:
         try:
             if not telegram_client.is_connected:
-                logger.warning("[watchdog] Telegram disconnected — attempting reconnect…")
+                logger.info("[watchdog] Telegram not connected — calling connect()…")
                 ok = await telegram_client.connect()
                 if ok:
-                    logger.info("[watchdog] ✓ Telegram reconnected")
+                    logger.info("[watchdog] ✓ Telegram connected")
                     if not _tasks_started:
                         _tasks_started = True
                         asyncio.create_task(message_processor.start_processor())
+                        asyncio.create_task(_startup_sync())
                         asyncio.create_task(_check_inactive_users())
                         asyncio.create_task(_daily_memory_loop())
-                        logger.info("[watchdog] Background tasks started after reconnect")
+                        logger.info("[watchdog] Background tasks started")
                 else:
-                    logger.warning("[watchdog] Reconnect failed — will retry in 30 s")
+                    logger.warning("[watchdog] connect() failed — will retry in 30 s")
             else:
                 if not _tasks_started:
-                    # Connected (either from startup or prior watchdog reconnect)
                     _tasks_started = True
+                    asyncio.create_task(message_processor.start_processor())
+                    asyncio.create_task(_startup_sync())
+                    asyncio.create_task(_check_inactive_users())
+                    asyncio.create_task(_daily_memory_loop())
         except Exception as _e:
             logger.error(f"[watchdog] Error: {_e}")
         await asyncio.sleep(30)
@@ -793,27 +799,19 @@ async def lifespan(app: FastAPI):
         from app.services.telegram.client import telegram_client, creator_pool
         from app.services.telegram.message_handler import message_processor
 
-        # Default creator client — uses env-var session
+        # Register message handler (instant, no network call)
         telegram_client.on("message_new", message_processor.process_incoming_message)
-        connected = await telegram_client.connect()
-        if connected:
-            logger.info("Telegram connected ✓ (default creator)")
-            asyncio.create_task(message_processor.start_processor())
-            asyncio.create_task(_startup_sync())
-            asyncio.create_task(_check_inactive_users())
-            asyncio.create_task(_daily_memory_loop())
-        else:
-            logger.warning("Telegram NOT connected on startup — watchdog will retry every 30 s")
 
-        # Watchdog: auto-reconnect if Telegram drops (Railway rolling deploys etc.)
+        # Watchdog handles connect() + all background tasks — never blocks lifespan
+        # so /health responds immediately and Railway health-check passes.
         asyncio.create_task(_telegram_watchdog())
 
-        # Non-default creators — connect from stored session strings
+        # Non-default creators — connect from stored session strings (also background)
         asyncio.create_task(creator_pool.startup_connect_all())
     except Exception as e:
         logger.warning(f"Telegram init failed: {e}")
 
-    yield
+    yield  # ← app is serving HTTP requests; /health returns 200 immediately
 
     try:
         from app.services.telegram.client import telegram_client, creator_pool
