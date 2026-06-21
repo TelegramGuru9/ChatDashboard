@@ -131,20 +131,22 @@ class TelegramClientManager:
             return False
         except AuthKeyDuplicatedError:
             # Railway rolling deploy: old instance still holds the session.
-            # Retry once (max) after 15 s — by then the old instance is gone.
-            if _retry >= 1:
-                self._last_error = "AuthKeyDuplicatedError — retry limit reached. Session may still be held elsewhere."
+            # Retry up to 2 times, waiting 45 s each time — Railway can take
+            # 30-60 s for the old instance to fully exit.
+            if _retry >= 2:
+                self._last_error = "AuthKeyDuplicatedError — retry limit reached. Session held by another process."
                 logger.error(self._last_error)
                 return False
-            logger.warning("AuthKeyDuplicatedError — old instance still connected. Retrying in 15 s…")
-            self._last_error = "AuthKeyDuplicated — retrying in 15 s"
+            wait = 45
+            logger.warning(f"AuthKeyDuplicatedError — old instance still connected. Retrying in {wait} s… (attempt {_retry + 1}/2)")
+            self._last_error = f"AuthKeyDuplicated — retrying in {wait} s"
             if self.client:
                 try:
                     await self.client.disconnect()
                 except Exception:
                     pass
                 self.client = None
-            await asyncio.sleep(15)
+            await asyncio.sleep(wait)
             logger.info("Retrying Telegram connect after AuthKeyDuplicatedError…")
             return await self._connect_inner(_retry=_retry + 1)  # lock already held
         except Exception as e:

@@ -747,7 +747,7 @@ async def _telegram_watchdog():
     from app.services.telegram.message_handler import message_processor
 
     _tasks_started = False
-    await asyncio.sleep(20)   # let startup settle first
+    await asyncio.sleep(120)   # let startup connect() finish (may need up to 2×45s retries)
     logger.info("[watchdog] Telegram watchdog started")
 
     while True:
