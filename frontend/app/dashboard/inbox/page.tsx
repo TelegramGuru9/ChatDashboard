@@ -130,7 +130,9 @@ function InboxContent() {
   const [broadcastMsg,    setBroadcastMsg]    = useState('hey wie gehts dir so 😊');
   const [broadcasting,    setBroadcasting]    = useState(false);
   const [broadcastResult, setBroadcastResult] = useState('');
-  const [resetting,   setResetting]     = useState(false);
+  const [resetting,          setResetting]          = useState(false);
+  const [paymentCollecting,  setPaymentCollecting]  = useState(false);
+  const [paymentCollected,   setPaymentCollected]   = useState(false);
   const [photoCache,  setPhotoCache]    = useState<Record<string, string | null>>({});
   const [packages,    setPackages]      = useState<PkgConfig[]>([]);
   const [pkgOpen,     setPkgOpen]       = useState(false);
@@ -239,6 +241,21 @@ function InboxContent() {
     } catch (e) {
       alert(`Fehler beim Löschen:\n${e instanceof Error ? e.message : e}`);
     } finally { setResetting(false); }
+  };
+
+  const markPaymentCollected = async () => {
+    if (!selected) return;
+    if (!confirm('Zahlung als eingegangen markieren?\n\nDies setzt den Lead auf BUYER und sendet den "Sales Completed" Alarm an dein Team.')) return;
+    setPaymentCollecting(true);
+    try {
+      const res = await fetch(withCreator(`${api}/users/${selected.user_id}/payment-collected`), { method: 'POST' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setPaymentCollected(true);
+      setInsights(prev => prev ? { ...prev, lead_label: 'BUYER', purchase_status: prev.purchase_status === 'REPEAT_BUYER' || prev.purchase_status === 'VIP' ? prev.purchase_status : 'BOUGHT_ONCE' } : prev);
+      setTimeout(() => setPaymentCollected(false), 4000);
+    } catch (e) {
+      alert(`Fehler:\n${e instanceof Error ? e.message : e}`);
+    } finally { setPaymentCollecting(false); }
   };
 
   const toggleChatAI = async (e: React.MouseEvent, userId: string, current: boolean | undefined) => {
@@ -704,7 +721,7 @@ function InboxContent() {
               return (
                 <div
                   key={c.user_id}
-                  onClick={() => { setSelected(c); fetchPhoto(c.user_id); }}
+                  onClick={() => { setSelected(c); fetchPhoto(c.user_id); setPaymentCollected(false); }}
                   className={cn(
                     "flex items-center gap-2.5 px-3.5 py-2.5 cursor-pointer border-b border-border/40 transition-colors",
                     active ? "bg-primary/10" : "hover:bg-muted/40"
@@ -1077,6 +1094,20 @@ function InboxContent() {
                         className="w-full bg-muted border border-border rounded-xl px-3 py-2 text-xs outline-none resize-y font-inherit leading-relaxed"
                       />
                     </div>
+
+                    {/* Payment Collected */}
+                    <button
+                      onClick={markPaymentCollected}
+                      disabled={paymentCollecting}
+                      className={cn(
+                        "w-full py-3 rounded-xl border text-xs font-bold transition-all",
+                        paymentCollected
+                          ? "bg-green-500/20 border-green-500/50 text-green-400"
+                          : "bg-green-500/10 border-green-500/30 text-green-400 hover:bg-green-500/20 disabled:opacity-50"
+                      )}
+                    >
+                      {paymentCollecting ? '💰 Wird verarbeitet…' : paymentCollected ? '✅ Sales Completed!' : '💰 Payment Collected'}
+                    </button>
 
                     {/* Reset */}
                     <button

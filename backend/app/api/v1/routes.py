@@ -511,6 +511,58 @@ async def update_user_insights(
         raise HTTPException(status_code=500, detail="Failed to update insights")
 
 
+@user_router.post("/{user_id}/payment-collected")
+async def mark_payment_collected(
+    user_id: UUID,
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    Mark a user as a confirmed buyer (BUYER label) and fire the
+    'Sales Completed' cash alarm to the sales_notify_users list.
+    Called when staff clicks the 'Payment Collected' button in the chat panel.
+    """
+    try:
+        result = await session.execute(select(User).where(User.id == user_id))
+        user = result.scalars().first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Set lead stage to BUYER
+        extra = dict(user.extra_data or {})
+        extra["lead_label"] = "BUYER"
+        # Upgrade purchase_status if not already at a higher tier
+        current_ps = extra.get("purchase_status", "")
+        if current_ps not in ("REPEAT_BUYER", "VIP"):
+            extra["purchase_status"] = "BOUGHT_ONCE"
+        extra["sale_completed_at"] = datetime.now(timezone.utc).isoformat()
+        user.extra_data = extra
+        await session.commit()
+
+        # Fire the Sales Completed alarm in the background
+        telegram_id = user.telegram_id
+        creator_id = str(user.creator_id) if user.creator_id else None
+        try:
+            from app.services.telegram.message_handler import message_processor
+            import asyncio as _asyncio
+            _asyncio.create_task(
+                message_processor._fire_cash_alarm(
+                    creator_id=creator_id,
+                    telegram_id=telegram_id,
+                    event="sale",
+                    notify_key="sales_notify_users",
+                )
+            )
+        except Exception as _ae:
+            logger.warning(f"payment-collected: could not fire sales alarm: {_ae}")
+
+        return {"status": "ok", "lead_label": "BUYER", "user_id": str(user_id)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in payment-collected: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to mark payment collected")
+
+
 @user_router.post("/generate-memories")
 async def generate_all_memories(
     creator_id: Optional[str] = Query(None),
@@ -1177,25 +1229,34 @@ async def test_cash_alarm(
             "💵💵💵 $ CASH CASH CASH $ 💵💵💵\n\n"
             "🌡️ TEST — Warm Lead — Liste angefragt!"
         )
+        notify_key = "cash_notify_users"
     elif event_type.startswith("package"):
         pkg_label = package_name or event_type.replace("_", " ").title()
         cash_msg = (
             "💵💵💵 $ CASH CASH CASH $ 💵💵💵\n\n"
             f"🔥 TEST — HOT Lead — {pkg_label} gesendet!"
         )
+        notify_key = "cash_notify_users"
+    elif event_type == "sale":
+        cash_msg = (
+            "💰💰💰 SALES COMPLETED 💰💰💰\n\n"
+            "✅ TEST — Zahlung bestätigt — Sale abgeschlossen!"
+        )
+        notify_key = "sales_notify_users"
     else:
         cash_msg = "💵💵💵 $ CASH CASH CASH $ 💵💵💵\n\n🎉 TEST — Kauf simuliert!"
         if package_name:
             cash_msg += f"\n📦 Paket: {package_name}"
         if amount:
             cash_msg += f"\n💰 Betrag: €{amount}"
+        notify_key = "cash_notify_users"
 
     # Load notify users from DB (scoped to creator if provided)
     notify_users: list = []
     try:
         async with db_manager.get_session() as session:
             from sqlalchemy import select as sa_select
-            q = sa_select(Config).where(Config.key == "cash_notify_users")
+            q = sa_select(Config).where(Config.key == notify_key)
             if creator_id:
                 q = q.where(Config.creator_id == creator_id)
             cfg_res = await session.execute(q)
@@ -1209,7 +1270,7 @@ async def test_cash_alarm(
     if not notify_users:
         raise HTTPException(
             status_code=400,
-            detail="No cash_notify_users configured — add users in the Cash Alarm page first.",
+            detail=f"No {notify_key} configured — add users in the Cash Alarm page first.",
         )
 
     # Resolve Telegram client (creator-scoped or global fallback)
@@ -1935,6 +1996,16 @@ async def connect_creator(cid: str, payload: Dict[str, Any] = Body(default={})):
                 await session.commit()
 
             if c.is_default:
+                # If already connected, return immediately — do NOT reconnect.
+                # Reconnecting while live causes AuthKeyDuplicatedError which kills the session.
+                if telegram_client.is_connected:
+                    try:
+                        me = await telegram_client.client.get_me()
+                        name = f"{getattr(me,'first_name','') or ''} {getattr(me,'last_name','') or ''}".strip()
+                        return {"status": "connected", "account_name": name or c.display_name or c.name, "creator_id": cid}
+                    except Exception:
+                        pass  # fall through to reconnect if get_me() fails
+
                 # Default creator ALWAYS uses the telegram_client singleton (env-var session).
                 # Never use the pool for the default creator — that would create a duplicate
                 # connection from the same session key → AuthKeyDuplicatedError.
@@ -1958,6 +2029,12 @@ async def connect_creator(cid: str, payload: Dict[str, Any] = Body(default={})):
                 return {"status": "connected", "account_name": account_name, "creator_id": cid}
 
             # Non-default creator — use pool
+            # If already connected, return immediately without reconnecting.
+            if creator_pool.is_connected(cid):
+                account = creator_pool.get_account(cid) or {}
+                account_name = account.get("name") or account.get("username") or c.display_name or c.name
+                return {"status": "connected", "account_name": account_name, "creator_id": cid}
+
             api_id  = int(getattr(__import__("app.core.config", fromlist=["settings"]), "settings").TELEGRAM_API_ID or 0)
             api_hash = getattr(__import__("app.core.config", fromlist=["settings"]), "settings").TELEGRAM_API_HASH or ""
 
