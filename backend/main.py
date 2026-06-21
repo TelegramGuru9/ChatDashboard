@@ -1,7 +1,6 @@
 import logging
 import asyncio
 import os
-import signal
 from contextlib import asynccontextmanager
 from datetime import datetime
 
@@ -727,117 +726,9 @@ async def _daily_memory_loop():
 
 
 async def _startup_sync():
-    """Run once after Telegram connects — syncs last 50 messages for up to 200 chats."""
-    from app.services.telegram.client import telegram_client
-    if not telegram_client.is_connected or not telegram_client.client:
-        logger.warning("[StartupSync] Skipped — Telegram not connected")
-        return
-    await asyncio.sleep(3)   # tiny pause so event handlers settle
-    logger.info("[StartupSync] Starting one-time chat sync (last 50 msgs, up to 200 chats)…")
-    try:
-        users, msgs, dialogs = await _do_sync(
-            telegram_client.client,
-            limit_per_chat=50,
-            max_dialogs=200,
-        )
-        logger.info(f"[StartupSync] ✓ Done — {dialogs} chats, {users} new users, {msgs} new msgs")
-    except Exception as e:
-        logger.error(f"[StartupSync] Error: {e}", exc_info=True)
-
-
-async def _telegram_watchdog():
-    """
-    Handles ALL Telegram connection — initial connect on startup AND
-    auto-reconnect if the session drops later.
-
-    connect() now fails fast on AuthKeyDuplicatedError (old Railway instance
-    still holding the session). The watchdog polls every 15 s until the old
-    instance releases the session, then switches to a 30 s health check loop.
-    """
-    from app.services.telegram.client import telegram_client
-    from app.services.telegram.message_handler import message_processor
-
-    _tasks_started = False
-    # ── Wait for old Railway instance to fully die ────────────────────────────
-    # Railway rolling deploy: new instance starts while old one is still alive.
-    # Old instance holds the Telegram session. Our SIGTERM handler disconnects
-    # it, but that takes ~5-20s. Waiting 50s here ensures the old instance has
-    # fully exited before we attempt our first connect — preventing the
-    # AuthKeyDuplicatedError loop that burns the session key.
-    await asyncio.sleep(50)
-    logger.info("[watchdog] Starting — connecting Telegram in background")
-
-    def _start_bg_tasks():
-        nonlocal _tasks_started
-        if _tasks_started:
-            return
-        _tasks_started = True
-        asyncio.create_task(message_processor.start_processor())
-        asyncio.create_task(_startup_sync())
-        asyncio.create_task(_check_inactive_users())
-        asyncio.create_task(_daily_memory_loop())
-        logger.info("[watchdog] ✓ Background tasks started")
-
-    # ── Phase 1: connect loop with exponential back-off ──────────────────────
-    # CRITICAL: rapid retries on AuthKeyDuplicatedError burn the session key
-    # and block the phone number from receiving new login codes.
-    # We use exponential back-off so Telegram's servers see far fewer attempts.
-    _dup_streak = 0
-    _retry_delay = 20   # first retry after 20 s
-
-    while not telegram_client.is_connected:
-        try:
-            logger.info("[watchdog] Attempting Telegram connect…")
-            ok = await telegram_client.connect()
-            if ok:
-                logger.info("[watchdog] ✓ Telegram connected")
-                _start_bg_tasks()
-                _dup_streak = 0
-                break
-            err = getattr(telegram_client, "_last_error", "")
-            is_dup = "AuthKeyDuplicatedError" in err
-
-            if is_dup:
-                _dup_streak += 1
-                # 30 → 60 → 120 → 300 s cap — stops burning the session key
-                _retry_delay = min(30 * (2 ** (_dup_streak - 1)), 300)
-                if _dup_streak >= 5:
-                    logger.critical(
-                        f"[watchdog] 🔴 AuthKeyDuplicated {_dup_streak}× in a row — "
-                        "the session key may be burned. "
-                        "Go to Railway → Variables → replace TELEGRAM_SESSION_STRING "
-                        "with a freshly generated one, then redeploy."
-                    )
-                else:
-                    logger.warning(
-                        f"[watchdog] AuthKeyDuplicated (streak={_dup_streak}) "
-                        f"— backing off {_retry_delay}s to protect session key"
-                    )
-            else:
-                _dup_streak = 0
-                _retry_delay = 20
-                logger.warning(f"[watchdog] connect() failed ({err}) — retrying in {_retry_delay}s")
-
-        except Exception as _e:
-            logger.error(f"[watchdog] connect error: {_e}")
-            _retry_delay = 20
-
-        await asyncio.sleep(_retry_delay)
-
-    # ── Phase 2: health loop — reconnect if session drops ────────────────────
-    while True:
-        await asyncio.sleep(30)
-        try:
-            if not telegram_client.is_connected:
-                logger.warning("[watchdog] Session dropped — reconnecting…")
-                ok = await telegram_client.connect()
-                if ok:
-                    logger.info("[watchdog] ✓ Session restored")
-                    _start_bg_tasks()
-                else:
-                    logger.warning("[watchdog] Reconnect failed — will retry in 30 s")
-        except Exception as _e:
-            logger.error(f"[watchdog] health-loop error: {_e}")
+    """Skipped on startup to prevent Railway crashes — use /api/v1/telegram/sync manually."""
+    logger.info("Startup sync disabled — use POST /api/v1/telegram/sync to sync manually")
+    return
 
 
 @asynccontextmanager
@@ -859,42 +750,24 @@ async def lifespan(app: FastAPI):
         from app.services.telegram.client import telegram_client, creator_pool
         from app.services.telegram.message_handler import message_processor
 
-        # Register message handler (instant, no network call)
+        # Default creator client — uses env-var session
         telegram_client.on("message_new", message_processor.process_incoming_message)
+        connected = await telegram_client.connect()
+        if connected:
+            logger.info("Telegram connected ✓ (default creator)")
+            asyncio.create_task(message_processor.start_processor())
+            asyncio.create_task(_startup_sync())
+            asyncio.create_task(_check_inactive_users())
+            asyncio.create_task(_daily_memory_loop())
+        else:
+            logger.warning("Telegram NOT connected — session may be expired.")
 
-        # Watchdog handles connect() + all background tasks — never blocks lifespan
-        # so /health responds immediately and Railway health-check passes.
-        asyncio.create_task(_telegram_watchdog())
-
-        # Non-default creators — connect from stored session strings (also background)
+        # Non-default creators — connect from stored session strings
         asyncio.create_task(creator_pool.startup_connect_all())
     except Exception as e:
         logger.warning(f"Telegram init failed: {e}")
 
-    # SIGTERM handler — Railway sends SIGTERM before killing the container.
-    # Explicitly disconnect Telegram so the auth key is released immediately,
-    # preventing AuthKeyDuplicatedError in the next deploy.
-    async def _on_sigterm():
-        logger.info("SIGTERM received — disconnecting Telegram before exit…")
-        try:
-            from app.services.telegram.client import telegram_client as _tc, creator_pool as _cp
-            await _tc.disconnect()
-            for _cid in list(_cp.all_connected()):
-                try:
-                    await _cp.disconnect_creator(_cid)
-                except Exception:
-                    pass
-            logger.info("✓ Telegram disconnected cleanly on SIGTERM")
-        except Exception as _e:
-            logger.error(f"SIGTERM cleanup error: {_e}")
-
-    try:
-        loop = asyncio.get_running_loop()
-        loop.add_signal_handler(signal.SIGTERM, lambda: asyncio.create_task(_on_sigterm()))
-    except Exception:
-        pass  # Windows / environments where add_signal_handler is unavailable
-
-    yield  # ← app is serving HTTP requests; /health returns 200 immediately
+    yield
 
     try:
         from app.services.telegram.client import telegram_client, creator_pool

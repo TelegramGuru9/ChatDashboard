@@ -35,7 +35,6 @@ class TelegramClientManager:
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = 5
         self._reconnect_delay = 5
-        self._connect_lock = asyncio.Lock()   # prevents concurrent connect() calls racing each other
 
         self._handlers: dict[str, list[Callable]] = {
             "message_new": [],
@@ -47,25 +46,7 @@ class TelegramClientManager:
     # ── Public connect API ────────────────────────────────────────────────
 
     async def connect(self, _retry: int = 0) -> bool:
-        """Connect using env-var credentials (default creator / legacy mode).
-
-        If another connect() is already in progress (e.g. startup vs frontend
-        auto-reconnect racing) we wait for it to finish and return its result —
-        rather than starting a second concurrent session which would cause
-        AuthKeyDuplicatedError.
-        """
-        # --- concurrency guard ---
-        if _retry == 0 and self._connect_lock.locked():
-            logger.info("connect() already in progress — waiting for it to finish…")
-            async with self._connect_lock:
-                pass  # just wait; the other caller set _is_connected
-            return self._is_connected
-
-        async with self._connect_lock:
-            return await self._connect_inner(_retry=_retry)
-
-    async def _connect_inner(self, _retry: int = 0) -> bool:
-        """Actual connect logic — always called with _connect_lock held."""
+        """Connect using env-var credentials (default creator / legacy mode)."""
         self._last_error: str = ""
         # Fix 6: disconnect existing client before creating a new one to prevent ghost clients
         if self.client:
@@ -93,10 +74,8 @@ class TelegramClientManager:
                 api_id=settings.TELEGRAM_API_ID,
                 api_hash=settings.TELEGRAM_API_HASH,
                 connection=ConnectionTcpAbridged,
-                auto_reconnect=False,   # watchdog handles reconnect — disabling prevents
-                                        # zombie instances from re-grabbing the session
-                                        # after SIGTERM / Railway deploy
-                connection_retries=0,   # fail fast; watchdog retries at app level
+                auto_reconnect=True,
+                connection_retries=settings.TELEGRAM_REQUEST_RETRIES,
                 retry_delay=1,
                 request_retries=settings.TELEGRAM_REQUEST_RETRIES,
             )
@@ -132,18 +111,23 @@ class TelegramClientManager:
             logger.error(self._last_error)
             return False
         except AuthKeyDuplicatedError:
-            # Another instance (old Railway deploy) still holds the session.
-            # Fail fast and let the watchdog retry — it polls every 15 s until
-            # the old instance releases the session (which can take 30–120 s).
-            self._last_error = "AuthKeyDuplicatedError — session held by another instance, retrying soon"
-            logger.warning(self._last_error)
+            # Railway rolling deploy: old instance still holds the session.
+            # Retry once (max) after 15 s — by then the old instance is gone.
+            if _retry >= 1:
+                self._last_error = "AuthKeyDuplicatedError — retry limit reached. Session may still be held elsewhere."
+                logger.error(self._last_error)
+                return False
+            logger.warning("AuthKeyDuplicatedError — old instance still connected. Retrying in 15 s…")
+            self._last_error = "AuthKeyDuplicated — retrying in 15 s"
             if self.client:
                 try:
                     await self.client.disconnect()
                 except Exception:
                     pass
                 self.client = None
-            return False
+            await asyncio.sleep(15)
+            logger.info("Retrying Telegram connect after AuthKeyDuplicatedError…")
+            return await self.connect(_retry=_retry + 1)
         except Exception as e:
             self._last_error = str(e)
             logger.error(f"Failed to connect to Telegram: {e}", exc_info=True)
