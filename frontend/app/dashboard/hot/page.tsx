@@ -49,7 +49,7 @@ function LeadCard({ u, accent }: { u: LeadUser; accent: string }) {
   const initials = (displayName(u)[0] || '?').toUpperCase();
   return (
     <Link
-      href={`/dashboard/inbox?user=${u.telegram_id || u.id}`}
+      href={`/dashboard/inbox?user=${u.id}`}
       className={cn(
         'block rounded-2xl border p-4 transition-shadow hover:shadow-md cursor-pointer',
         accent,

@@ -465,8 +465,12 @@ function InboxContent() {
 
   useEffect(() => {
     if (!autoSelectUserId || convos.length === 0) return;
-    const target = convos.find(c => c.user_id === autoSelectUserId);
-    if (target) setSelected(target);
+    // Match by UUID (primary) or by telegram_id string (fallback for /hot links)
+    const target = convos.find(c =>
+      c.user_id === autoSelectUserId ||
+      String(c.telegram_id) === autoSelectUserId
+    );
+    if (target) { setSelected(target); fetchPhoto(target.user_id); }
   }, [autoSelectUserId, convos]); // eslint-disable-line
 
   // Pre-fetch photos — throttled 5 at a time with 200ms spacing to avoid

@@ -35,6 +35,7 @@ class TelegramClientManager:
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = 5
         self._reconnect_delay = 5
+        self._connect_lock = asyncio.Lock()   # prevents concurrent connect() calls racing each other
 
         self._handlers: dict[str, list[Callable]] = {
             "message_new": [],
@@ -46,7 +47,25 @@ class TelegramClientManager:
     # ── Public connect API ────────────────────────────────────────────────
 
     async def connect(self, _retry: int = 0) -> bool:
-        """Connect using env-var credentials (default creator / legacy mode)."""
+        """Connect using env-var credentials (default creator / legacy mode).
+
+        If another connect() is already in progress (e.g. startup vs frontend
+        auto-reconnect racing) we wait for it to finish and return its result —
+        rather than starting a second concurrent session which would cause
+        AuthKeyDuplicatedError.
+        """
+        # --- concurrency guard ---
+        if _retry == 0 and self._connect_lock.locked():
+            logger.info("connect() already in progress — waiting for it to finish…")
+            async with self._connect_lock:
+                pass  # just wait; the other caller set _is_connected
+            return self._is_connected
+
+        async with self._connect_lock:
+            return await self._connect_inner(_retry=_retry)
+
+    async def _connect_inner(self, _retry: int = 0) -> bool:
+        """Actual connect logic — always called with _connect_lock held."""
         self._last_error: str = ""
         # Fix 6: disconnect existing client before creating a new one to prevent ghost clients
         if self.client:
@@ -127,7 +146,7 @@ class TelegramClientManager:
                 self.client = None
             await asyncio.sleep(15)
             logger.info("Retrying Telegram connect after AuthKeyDuplicatedError…")
-            return await self.connect(_retry=_retry + 1)
+            return await self._connect_inner(_retry=_retry + 1)  # lock already held
         except Exception as e:
             self._last_error = str(e)
             logger.error(f"Failed to connect to Telegram: {e}", exc_info=True)
