@@ -9,7 +9,7 @@ import logging
 import asyncio
 from typing import Optional, Callable, Any, Dict, Tuple
 from telethon import TelegramClient, events
-from telethon.errors import SessionPasswordNeededError, AuthKeyUnregisteredError
+from telethon.errors import SessionPasswordNeededError, AuthKeyUnregisteredError, AuthKeyDuplicatedError
 from telethon.network import ConnectionTcpAbridged
 from telethon.sessions import StringSession
 from pathlib import Path
@@ -110,6 +110,20 @@ class TelegramClientManager:
             self._last_error = "Session key invalid or expired — generate a new TELEGRAM_SESSION_STRING"
             logger.error(self._last_error)
             return False
+        except AuthKeyDuplicatedError:
+            # Railway rolling deploy: old instance still holds the session.
+            # Wait 15 s for the old instance to be killed, then retry once.
+            logger.warning("AuthKeyDuplicatedError — old instance still connected. Retrying in 15 s…")
+            self._last_error = "AuthKeyDuplicated — retrying"
+            if self.client:
+                try:
+                    await self.client.disconnect()
+                except Exception:
+                    pass
+                self.client = None
+            await asyncio.sleep(15)
+            logger.info("Retrying Telegram connect after AuthKeyDuplicatedError…")
+            return await self.connect()
         except Exception as e:
             self._last_error = str(e)
             logger.error(f"Failed to connect to Telegram: {e}", exc_info=True)
