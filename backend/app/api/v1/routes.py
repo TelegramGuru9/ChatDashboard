@@ -1414,6 +1414,7 @@ async def telegram_status():
     # Diagnostic: surface config issues even before reconnect attempt
     diag: dict = {}
     if not connected:
+        from app.core.config import settings
         has_api_id    = bool(settings.TELEGRAM_API_ID)
         has_api_hash  = bool(settings.TELEGRAM_API_HASH)
         has_session   = bool(settings.TELEGRAM_SESSION_STRING)
