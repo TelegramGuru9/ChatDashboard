@@ -579,60 +579,76 @@ async def reset_user_conversation(
 
 @user_router.get("/{user_id}/photo")
 async def get_user_photo(user_id: UUID, session: AsyncSession = Depends(get_db)):
-    """Fetch Telegram profile photo for a user and return as base64 data URL."""
+    """Fetch Telegram profile photo for a user and return as base64 data URL.
+    DB session is released BEFORE the Telegram download so it never holds
+    a connection during the slow network operation.
+    """
     try:
         result = await session.execute(select(User).where(User.id == user_id))
         user = result.scalars().first()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Check cached photo URL in extra_data
+        # Check cached photo — return immediately, no Telegram call needed
         extra = user.extra_data or {}
         cached = extra.get("tg_photo_url")
         if cached:
             return {"photo_url": cached}
 
-        from app.services.telegram.client import telegram_client
-        if not telegram_client.is_connected or not user.user_id:
-            return {"photo_url": None}
-
-        try:
-            import io, base64
-            # Force-resolve the entity so Telethon caches the access hash.
-            # Priority: username (always resolvable) > cached user_id > raw int fallback.
-            # New sessions have an empty entity cache, so raw integer IDs fail without
-            # a prior sync or live message from the user.
-            entity = user.user_id  # final fallback
-            if user.username:
-                try:
-                    entity = await telegram_client.client.get_entity(f"@{user.username}")
-                except Exception:
-                    pass
-            else:
-                try:
-                    entity = await telegram_client.client.get_entity(user.user_id)
-                except Exception:
-                    pass  # will fail for un-cached users without username
-            bio = io.BytesIO()
-            path = await telegram_client.client.download_profile_photo(entity, file=bio)
-            if path is None:
-                return {"photo_url": None}
-            bio.seek(0)
-            b64 = base64.b64encode(bio.read()).decode()
-            data_url = f"data:image/jpeg;base64,{b64}"
-            # Cache in extra_data so it survives future restarts
-            new_extra = dict(extra)
-            new_extra["tg_photo_url"] = data_url
-            user.extra_data = new_extra
-            await session.commit()
-            return {"photo_url": data_url}
-        except Exception:
-            return {"photo_url": None}
+        # Snapshot what we need then CLOSE the DB session before Telegram I/O
+        tg_user_id  = user.user_id
+        tg_username = user.username
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error fetching photo for {user_id}: {e}")
+        return {"photo_url": None}
+    finally:
+        # Release connection back to pool NOW — before any Telegram work
+        await session.close()
+
+    # ── Telegram download (no DB connection held) ────────────────────────────
+    from app.services.telegram.client import telegram_client
+    if not telegram_client.is_connected or not tg_user_id:
+        return {"photo_url": None}
+
+    try:
+        import io, base64
+        entity = tg_user_id
+        if tg_username:
+            try:
+                entity = await telegram_client.client.get_entity(f"@{tg_username}")
+            except Exception:
+                pass
+        else:
+            try:
+                entity = await telegram_client.client.get_entity(tg_user_id)
+            except Exception:
+                pass
+        bio = io.BytesIO()
+        path = await telegram_client.client.download_profile_photo(entity, file=bio)
+        if path is None:
+            return {"photo_url": None}
+        bio.seek(0)
+        b64 = base64.b64encode(bio.read()).decode()
+        data_url = f"data:image/jpeg;base64,{b64}"
+
+        # Cache result in a fresh DB session (brief, no Telegram I/O)
+        try:
+            async with db_manager.get_session() as cache_session:
+                res2 = await cache_session.execute(select(User).where(User.id == user_id))
+                u2 = res2.scalars().first()
+                if u2:
+                    ed = dict(u2.extra_data or {})
+                    ed["tg_photo_url"] = data_url
+                    u2.extra_data = ed
+                    await cache_session.commit()
+        except Exception:
+            pass  # cache failure is non-fatal
+
+        return {"photo_url": data_url}
+    except Exception:
         return {"photo_url": None}
 
 
