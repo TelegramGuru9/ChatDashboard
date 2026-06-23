@@ -1391,9 +1391,14 @@ async def test_ai_reply(payload: Dict[str, Any] = Body(...)):
 
 @telegram_router.post("/reconnect")
 async def reconnect_telegram():
-    """Attempt to reconnect the Telegram session — re-runs full connect() from scratch."""
+    """Attempt to reconnect the Telegram session — skips if already connected."""
     from app.services.telegram.client import telegram_client
     try:
+        # Already connected — don't disconnect/reconnect unnecessarily
+        if telegram_client.is_connected:
+            me = await telegram_client.client.get_me()
+            name = f"{getattr(me,'first_name','') or ''} {getattr(me,'last_name','') or ''}".strip()
+            return {"status": "connected", "account": f"{name} (@{me.username})"}
         success = await telegram_client.connect()
         if success:
             me = await telegram_client.client.get_me()
@@ -1952,6 +1957,14 @@ async def connect_creator(cid: str, payload: Dict[str, Any] = Body(default={})):
                 # Default creator ALWAYS uses the telegram_client singleton (env-var session).
                 # Never use the pool for the default creator — that would create a duplicate
                 # connection from the same session key → AuthKeyDuplicatedError.
+
+                # If already connected — return immediately, do NOT disconnect/reconnect.
+                if telegram_client.is_connected:
+                    me = await telegram_client.client.get_me()
+                    name = f"{getattr(me,'first_name','') or ''} {getattr(me,'last_name','') or ''}".strip()
+                    account_name = name or getattr(me, "username", "") or c.name
+                    return {"status": "connected", "account_name": account_name, "creator_id": cid}
+
                 if session_str and session_str != getattr(__import__("app.core.config", fromlist=["settings"]), "settings").TELEGRAM_SESSION_STRING:
                     # A new session string was saved in DB — update env-var singleton to use it
                     telegram_client.client = None
