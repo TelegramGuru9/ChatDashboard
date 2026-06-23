@@ -409,39 +409,19 @@ function InboxContent() {
     loadConvos();
   }, []); // eslint-disable-line
 
-  // Step 2: check Telegram status + auto-reconnect once the creator is known.
-  // Runs separately so a slow/hanging reconnect never blocks the chat list.
+  // Step 2: check Telegram status only — no auto-reconnect on page load.
+  // Single-creator setup: TELEGRAM_SESSION_STRING is static in Railway env vars.
+  // Reconnect is done manually via the ↺ Reconnect button or Railway redeploy.
   useEffect(() => {
     if (!creatorId) return;
     (async () => {
-      let connected = await checkStatus();
-
-      // Try to reconnect from saved session
-      if (!connected) {
-        setSyncStatus('Reconnecting…');
-        try {
-          const d = await fetch(`${api}/creators/${creatorId}/connect`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
-          }).then(r => r.json());
-          const ok = d.status === 'connected' || d.status === 'reconnected';
-          if (ok) {
-            connected = true;
-            setTgConnected(true);
-            if (d.account_name || d.account) setTgAccount(d.account_name || d.account || '');
-            setSyncStatus('');
-          } else {
-            // Session expired — user must re-authenticate via phone+SMS
-            setSyncStatus('⚠ Session expired — use 📱 Auth on the Creators page');
-          }
-        } catch (e: any) {
-          setSyncStatus(`⚠ Reconnect failed: ${e?.message || 'unknown error'}`);
-        }
-      }
-
-      // If connected and still no chats in DB, run a full sync to pull them in
+      const connected = await checkStatus();
       if (connected) {
         const count = await loadConvos();
         if (count === 0) await sync(true);
+      } else {
+        loadConvos();
+        setSyncStatus('⚠ Telegram not connected — click ↺ Reconnect');
       }
     })();
   }, [creatorId]); // eslint-disable-line

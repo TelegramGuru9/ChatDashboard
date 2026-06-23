@@ -779,8 +779,7 @@ async def lifespan(app: FastAPI):
             logger.error("All Telegram connect attempts failed — check TELEGRAM_SESSION_STRING in Railway Variables")
 
         asyncio.create_task(_connect_telegram_bg())
-        # Non-default creators — connect from stored session strings
-        asyncio.create_task(creator_pool.startup_connect_all())
+        # Single-creator setup — no pool startup needed
     except Exception as e:
         logger.warning(f"Telegram init failed: {e}")
 

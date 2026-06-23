@@ -1954,35 +1954,14 @@ async def connect_creator(cid: str, payload: Dict[str, Any] = Body(default={})):
                 await session.commit()
 
             if c.is_default:
-                # Default creator ALWAYS uses the telegram_client singleton (env-var session).
-                # Never use the pool for the default creator — that would create a duplicate
-                # connection from the same session key → AuthKeyDuplicatedError.
-
-                # If already connected — return immediately, do NOT disconnect/reconnect.
+                # Single-creator setup: session is static in Railway env vars.
+                # This endpoint only reports status — use POST /telegram/reconnect to reconnect.
                 if telegram_client.is_connected:
                     me = await telegram_client.client.get_me()
                     name = f"{getattr(me,'first_name','') or ''} {getattr(me,'last_name','') or ''}".strip()
                     account_name = name or getattr(me, "username", "") or c.name
                     return {"status": "connected", "account_name": account_name, "creator_id": cid}
-
-                if session_str and session_str != getattr(__import__("app.core.config", fromlist=["settings"]), "settings").TELEGRAM_SESSION_STRING:
-                    # A new session string was saved in DB — update env-var singleton to use it
-                    telegram_client.client = None
-                    telegram_client._is_connected = False
-                    import os
-                    os.environ["TELEGRAM_SESSION_STRING"] = session_str
-                    from app.core.config import settings as _s
-                    _s.TELEGRAM_SESSION_STRING = session_str
-                success = await telegram_client.connect()
-                if not success:
-                    reason = getattr(telegram_client, "_last_error", "") or "Session invalid or missing"
-                    raise HTTPException(status_code=400, detail=f"Connection failed — {reason}")
-                me = await telegram_client.client.get_me()
-                name = f"{getattr(me,'first_name','') or ''} {getattr(me,'last_name','') or ''}".strip()
-                account_name = name or getattr(me, "username", "") or c.name
-                c.display_name = account_name
-                await session.commit()
-                return {"status": "connected", "account_name": account_name, "creator_id": cid}
+                return {"status": "not_connected", "detail": "Use POST /api/v1/telegram/reconnect to connect"}
 
             # Non-default creator — use pool
             api_id  = int(getattr(__import__("app.core.config", fromlist=["settings"]), "settings").TELEGRAM_API_ID or 0)
