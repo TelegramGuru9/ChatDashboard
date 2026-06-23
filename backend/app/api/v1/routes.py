@@ -941,9 +941,22 @@ async def sync_telegram_chats(
 
     try:
         import main as app_main
-        u, m, total = await app_main._do_sync(tg_client, limit_per_chat, max_dialogs, creator_id=resolved_creator_id)
-        asyncio.create_task(app_main._sync_telegram_folders(tg_client))
-        return {"status": "ok", "synced_users": u, "synced_messages": m, "total_dialogs": total}
+
+        async def _run_sync_bg():
+            try:
+                u, m, total = await app_main._do_sync(
+                    tg_client, limit_per_chat, max_dialogs, creator_id=resolved_creator_id
+                )
+                logger.info(f"Background sync complete: {total} dialogs, {u} new users, {m} new messages")
+                asyncio.create_task(app_main._sync_telegram_folders(tg_client))
+            except Exception as _ex:
+                logger.error(f"Background sync failed: {_ex}", exc_info=True)
+
+        asyncio.create_task(_run_sync_bg())
+        return {
+            "status": "started",
+            "message": "Sync running in background — check Railway logs for progress",
+        }
     except Exception as ex:
         logger.error(f"Sync failed: {ex}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(ex))
