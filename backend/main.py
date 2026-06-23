@@ -753,19 +753,30 @@ async def lifespan(app: FastAPI):
         telegram_client.on("message_new", message_processor.process_incoming_message)
 
         async def _connect_telegram_bg():
-            """Connect in background so health check is never blocked."""
-            try:
-                connected = await telegram_client.connect()
-                if connected:
-                    logger.info("Telegram connected ✓ (default creator)")
-                    asyncio.create_task(message_processor.start_processor())
-                    asyncio.create_task(_startup_sync())
-                    asyncio.create_task(_check_inactive_users())
-                    asyncio.create_task(_daily_memory_loop())
-                else:
-                    logger.warning("Telegram NOT connected — session may be expired or still rolling over.")
-            except Exception as _e:
-                logger.warning(f"Telegram background connect failed: {_e}")
+            """
+            Connect in background so health check is never blocked.
+            Retries several times with increasing delays to survive Railway
+            rolling deploys (old instance holds session for up to ~60s).
+            """
+            delays = [0, 30, 60, 90]   # retry at 0s, 30s, 60s, 90s after startup
+            for attempt, wait in enumerate(delays):
+                if wait:
+                    logger.info(f"Telegram connect attempt {attempt+1}/{len(delays)} in {wait}s…")
+                    await asyncio.sleep(wait)
+                try:
+                    connected = await telegram_client.connect()
+                    if connected:
+                        logger.info(f"Telegram connected ✓ (attempt {attempt+1})")
+                        asyncio.create_task(message_processor.start_processor())
+                        asyncio.create_task(_startup_sync())
+                        asyncio.create_task(_check_inactive_users())
+                        asyncio.create_task(_daily_memory_loop())
+                        return
+                    else:
+                        logger.warning(f"Telegram connect attempt {attempt+1} failed — {getattr(telegram_client, '_last_error', '')}")
+                except Exception as _e:
+                    logger.warning(f"Telegram connect attempt {attempt+1} error: {_e}")
+            logger.error("All Telegram connect attempts failed — check TELEGRAM_SESSION_STRING in Railway Variables")
 
         asyncio.create_task(_connect_telegram_bg())
         # Non-default creators — connect from stored session strings
