@@ -74,7 +74,7 @@ class TelegramClientManager:
                 api_id=settings.TELEGRAM_API_ID,
                 api_hash=settings.TELEGRAM_API_HASH,
                 connection=ConnectionTcpAbridged,
-                auto_reconnect=True,
+                auto_reconnect=False,   # prevent old Railway instance re-grabbing session on SIGTERM
                 connection_retries=settings.TELEGRAM_REQUEST_RETRIES,
                 retry_delay=1,
                 request_retries=settings.TELEGRAM_REQUEST_RETRIES,

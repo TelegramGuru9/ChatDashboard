@@ -750,18 +750,24 @@ async def lifespan(app: FastAPI):
         from app.services.telegram.client import telegram_client, creator_pool
         from app.services.telegram.message_handler import message_processor
 
-        # Default creator client — uses env-var session
         telegram_client.on("message_new", message_processor.process_incoming_message)
-        connected = await telegram_client.connect()
-        if connected:
-            logger.info("Telegram connected ✓ (default creator)")
-            asyncio.create_task(message_processor.start_processor())
-            asyncio.create_task(_startup_sync())
-            asyncio.create_task(_check_inactive_users())
-            asyncio.create_task(_daily_memory_loop())
-        else:
-            logger.warning("Telegram NOT connected — session may be expired.")
 
+        async def _connect_telegram_bg():
+            """Connect in background so health check is never blocked."""
+            try:
+                connected = await telegram_client.connect()
+                if connected:
+                    logger.info("Telegram connected ✓ (default creator)")
+                    asyncio.create_task(message_processor.start_processor())
+                    asyncio.create_task(_startup_sync())
+                    asyncio.create_task(_check_inactive_users())
+                    asyncio.create_task(_daily_memory_loop())
+                else:
+                    logger.warning("Telegram NOT connected — session may be expired or still rolling over.")
+            except Exception as _e:
+                logger.warning(f"Telegram background connect failed: {_e}")
+
+        asyncio.create_task(_connect_telegram_bg())
         # Non-default creators — connect from stored session strings
         asyncio.create_task(creator_pool.startup_connect_all())
     except Exception as e:
