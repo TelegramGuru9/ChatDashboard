@@ -1733,15 +1733,18 @@ class MessageProcessor:
             if _user_msg_count <= 10:
                 system_prompt += (
                     f"\n\nEARLY CONVERSATION RULE (mandatory, message {_user_msg_count} of the first 10): "
-                    f"This is the very beginning of the chat. Your ONLY goal right now is to make "
-                    f"the person feel seen and to show genuine curiosity about them. "
-                    f"Write MAX 1-2 short sentences. "
-                    f"Do NOT mention content, packages, videos, photos, links, offers, or anything you sell. "
-                    f"Do NOT tease, hint at, or imply that you have content to sell. "
-                    f"Just respond naturally to what they said and ask ONE simple question about them "
-                    f"(their day, mood, where they're from, what they're up to — anything human). "
-                    f"Tone: warm, casual, flirty if natural, but NOT pushy. "
-                    f"Think: how would you text a stranger you just matched with on an app?"
+                    f"Early stage — your ONLY job is to make the person feel seen. "
+                    f"MAX 1-2 short sentences, lowercase. "
+                    f"FORBIDDEN right now: mentioning content, packages, videos, photos, offers, "
+                    f"links, Snapchat, OnlyFans, or anything you sell. "
+                    f"ALSO FORBIDDEN: sales-discovery questions like 'was hat dich angesprochen', "
+                    f"'was hat dich hierher gebracht', 'wie bist du auf mich gekommen', "
+                    f"'was interessiert dich', or ANY question about WHY they're here or what they want. "
+                    f"WHAT TO DO INSTEAD: react to exactly what they wrote, then ask ONE relaxed "
+                    f"personal question about their life, day, mood, or personality. "
+                    f"BAD EXAMPLE: 'freut mich dass du den weg hierher gefunden hast! was hat dich angesprochen?' "
+                    f"GOOD EXAMPLE: 'haha hey 😄 wie läuft dein tag so?' or 'oh schön :) woher kommst du?' "
+                    f"Think: you just matched with someone cute — keep it light and real."
                 )
 
             # ── Hard payment rule: NEVER ask for email or PayPal address ──────
@@ -1787,15 +1790,23 @@ class MessageProcessor:
             _p_name = _p_name or "the creator"
             system_prompt += (
                 f"\n\nWRITING STYLE — GHOST MODE (mandatory): "
-                f"Write exactly like {_p_name} texts — short, direct, natural. "
-                f"BANNED PHRASES (never use in any language): "
+                f"Write exactly like {_p_name} texts — short, direct, real. "
+                f"BANNED PHRASES — ENGLISH (never use): "
                 f"'Certainly', 'Of course', 'I\\'d be happy to', 'Great question', "
                 f"'Absolutely', 'Feel free to', 'Don\\'t hesitate', 'I appreciate', "
                 f"'Thank you for reaching out', 'Let me know if you need anything', "
-                f"'Hope that helps', 'Ich helfe dir gern', 'Natürlich', "
-                f"'Selbstverständlich'. "
-                f"No corporate tone, no assistant tone, no formal openers. "
-                f"Write like you\\'re texting from your phone."
+                f"'Hope that helps', 'What attracted you', 'What drew you here', "
+                f"'I\\'m glad you found me', 'Welcome'. "
+                f"BANNED PHRASES — GERMAN (never use): "
+                f"'Natürlich', 'Selbstverständlich', 'Ich helfe dir gern', "
+                f"'Schön dass du den Weg hierher gefunden hast', "
+                f"'Freut mich dass du', 'Willkommen', 'Danke für deine Nachricht', "
+                f"'Was hat dich angesprochen', 'Was hat dich dazu gebracht', "
+                f"'Wie kann ich dir helfen', 'Gerne', 'Kein Problem'. "
+                f"No corporate tone, no customer-service tone, no formal openers. "
+                f"No sales-funnel questions ('what attracted you', 'what made you click'). "
+                f"Write like you\\'re texting a person you just matched with — "
+                f"curious about THEM, not about what they want to buy."
             )
 
             # ── Recent-replies context: inject last 3 bot messages so Claude ──
@@ -2339,13 +2350,21 @@ class MessageProcessor:
                         u2.extra_data = ex2
 
                 await session.commit()
+                # Refresh to get the auto-generated DB UUID so the SSE broadcast
+                # uses the same id that the history API will return. Without this,
+                # the SSE would broadcast with tg_msg_id (int) while the poll
+                # fetches the same message with its UUID → dedup fails → duplicates.
+                await session.refresh(ai_msg)
+                _db_msg_uuid = str(ai_msg.id)
+
             asyncio.create_task(self._update_lead_funnel(user_id, "ai_reply"))
 
             # ── Broadcast via SSE ───────────────────────────────────────────
             try:
                 import main as _main
                 _main._broadcast_new_message(str(user_id), {
-                    "id": str(tg_msg_id),
+                    "id": _db_msg_uuid,          # DB UUID — matches history API
+                    "message_id": tg_msg_id,      # Telegram int ID (for reference)
                     "text": ai_text,
                     "direction": "outgoing",
                     "is_ai_generated": True,
