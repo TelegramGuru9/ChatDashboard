@@ -1746,18 +1746,21 @@ class MessageProcessor:
                     "Do not say 'I will send you' or 'I can send you' about any paid content."
                 )
 
-            # ── PACKAGE RULE: prevent Claude from verbally listing packages ──
-            # The backend sends the package menu as a real Telegram message;
-            # Claude must not duplicate or promise it in plain text.
+            # ── PACKAGE RULE: prevent Claude from describing or reproducing package text ──
+            # The backend sends every package message in its exact pre-configured form.
+            # Claude must never reproduce, paraphrase, or invent any part of it.
             system_prompt += (
-                "\n\nPACKAGE RULE (absolute): If the user asks about packages, prices, content, "
-                "videos, photos, offers, links, checkout, or buying — do NOT list, describe, "
-                "promise, or imply sending packages in your text reply. The backend sends "
-                "packages separately and automatically. Write only ONE short teaser sentence at "
-                "most (e.g. 'hab da was geiles für dich' or 'schick ich dir gleich'). "
+                "\n\nPACKAGE RULE (absolute, non-negotiable): NEVER describe, list, paraphrase, "
+                "reproduce, or invent any package name, price, description, link, wording, or "
+                "checkout detail in your text reply — not even a single sentence. "
+                "The backend delivers all package information automatically in its exact "
+                "pre-configured form with the correct links and formatting. "
+                "Your job is ONLY to write a short conversational teaser (1 sentence max, "
+                "e.g. 'hab da was geiles für dich 😏' or 'schick ich dir gleich'). "
                 "NEVER write phrases like 'here are my packages', 'hier sind meine pakete', "
-                "'ich habe folgende angebote', or any list of package names, prices, or "
-                "descriptions."
+                "'ich habe folgende angebote', or any list/description of package names, prices, "
+                "descriptions, or payment links. The wording of every package message is locked "
+                "and controlled by the backend — you cannot see it and must not attempt to reproduce it."
             )
 
             # ── GHOST MODE: natural persona writing style (non-negotiable) ────────
@@ -1922,9 +1925,12 @@ class MessageProcessor:
                 if p_link:
                     # Get atomic order number for this creator
                     _order_num = await self._next_order_number(creator_id)
-                    # Use package-configured bot message if set, otherwise minimal fallback
+                    # Priority: package_text → keyword pre-message → preview description → description
+                    # The `message` field is the verbatim text configured for keyword triggers
+                    # and doubles as the pre-message for AI-driven sales flows.
                     _pkg_text = (
                         _si_pkg.get("package_text", "").strip()
+                        or _si_pkg.get("message", "").strip()
                         or _si_pkg.get("package_preview_description", "").strip()
                         or _si_pkg.get("description", "").strip()
                     )
@@ -2025,6 +2031,7 @@ class MessageProcessor:
                         _order_num2 = await self._next_order_number(creator_id)
                         _sel_pkg_text = (
                             _sel.get("package_text", "").strip()
+                            or _sel.get("message", "").strip()
                             or _sel.get("package_preview_description", "").strip()
                             or _sel.get("description", "").strip()
                         )
@@ -2101,9 +2108,9 @@ class MessageProcessor:
                             f"No payment link configured — ask them to contact you directly."
                         )
 
-            # ── asking_details → ground Claude in the configured description ──
-            # The bot MUST use only the admin-configured preview description.
-            # It must NOT invent details.
+            # ── asking_details → send configured description VERBATIM, bypass Claude ──
+            # The bot MUST send the admin-configured text exactly as written.
+            # Claude must NEVER paraphrase, summarise, or invent package details.
             elif _si == "asking_details":
                 _desc_pkg = _si_pkg
                 if not _desc_pkg and user_extra.get("selected_package_id"):
@@ -2115,21 +2122,58 @@ class MessageProcessor:
                     _desc_pkg = _active_pkgs[0]
                 if _desc_pkg:
                     _preview = (
-                        _desc_pkg.get("package_preview_description")
-                        or _desc_pkg.get("description")
-                        or ""
+                        _desc_pkg.get("package_preview_description", "").strip()
+                        or _desc_pkg.get("message", "").strip()   # use keyword pre-message as fallback
+                        or _desc_pkg.get("description", "").strip()
                     )
                     if _preview:
-                        system_prompt += (
-                            f"\n\nCONTENT QUESTION: User asks what they will see in "
-                            f"'{_desc_pkg.get('name', 'the package')}'.\n"
-                            f"Answer using ONLY this configured description — DO NOT invent or add "
-                            f"any details beyond what is written here:\n"
-                            f"\"{_preview}\"\n"
-                            f"Keep tone in persona. Sentence limit applies. "
-                            f"Do not mention file names or internal keywords."
+                        # Send the pre-configured text VERBATIM — no Claude involved
+                        logger.info(
+                            f"[sales-flow] asking_details → sending configured description "
+                            f"verbatim for tg={telegram_id}, pkg='{_desc_pkg.get('name', '')}'"
                         )
-                        logger.debug(f"[sales-flow] asking_details → injected preview description")
+                        try:
+                            from telethon.tl.functions.messages import SetTypingRequest
+                            from telethon.tl.types import SendMessageTypingAction
+                            await tg_client.client(
+                                SetTypingRequest(peer=telegram_id, action=SendMessageTypingAction())
+                            )
+                        except Exception:
+                            pass
+                        await _human_typing_delay(_preview, persona_data)
+                        _det_tg_id = await self._send_with_retry(tg_client, telegram_id, _preview)
+                        if _det_tg_id:
+                            async with db_manager.get_session() as _ds:
+                                _ds.add(Message(
+                                    message_id=_det_tg_id, user_id=user_id, text=_preview,
+                                    direction="outgoing", has_media=False, is_ai_generated=False,
+                                    extra_data={
+                                        "source": "asking_details_verbatim",
+                                        "package_id": str(_desc_pkg.get("id", "")),
+                                    },
+                                    created_at=_naive_utc(),
+                                ))
+                                await _ds.commit()
+                            self._log_action(
+                                "send_pkg_detail", user_id, telegram_id, _si, "success",
+                                f"pkg={_desc_pkg.get('name', '')}"
+                            )
+                            try:
+                                import main as _main
+                                _main._broadcast_new_message(str(user_id), {
+                                    "id": str(_det_tg_id), "text": _preview,
+                                    "direction": "outgoing", "is_ai_generated": False,
+                                    "created_at": _naive_utc().isoformat(),
+                                })
+                            except Exception:
+                                pass
+                        else:
+                            self._log_action(
+                                "send_pkg_detail", user_id, telegram_id, _si, "failed",
+                                f"pkg={_desc_pkg.get('name', '')}"
+                            )
+                        return  # verbatim sent — do NOT call Claude
+                    # No configured description → fall through to Claude (edge case)
 
             # ── payment_confirmed → tag BUYER + fire cash notifications ────────
             elif _si == "payment_confirmed":
@@ -2181,11 +2225,11 @@ class MessageProcessor:
             # ── Post-process: strip dashes + enforce sentence limit ────────
             ai_text = _clean_response(ai_text)
 
-            # Fix 4: Package promise guard — strip verbal package listings from
-            # Claude's output when no package-menu backend action was executed.
-            # This catches the case where Claude says "hier sind meine pakete..."
-            # despite the PACKAGE RULE in the system prompt.
-            if _si == "browsing" and _PACKAGE_PROMISE_RE.search(ai_text):
+            # Package promise guard — strip verbal package listings from Claude's output
+            # for ANY intent. Claude must never reproduce, paraphrase, or promise packages.
+            # Applies to all intents (not just browsing) so any AI response that slips
+            # through and contains package descriptions is caught and cleaned here.
+            if _PACKAGE_PROMISE_RE.search(ai_text):
                 logger.warning(
                     f"[package-guard] stripped package promise from Claude output for tg={telegram_id} | "
                     f"original='{ai_text[:80]}'"
