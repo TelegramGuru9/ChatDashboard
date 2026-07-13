@@ -1727,6 +1727,23 @@ class MessageProcessor:
                     f"Count carefully. If you are about to write more, stop after sentence {max_sents_cfg}."
                 )
 
+            # ── Early-conversation rule: no sales push in first 10 messages ────
+            # The opening exchange must feel like a real person texting, not a sales pitch.
+            # Keep it short, warm, and curious — let the user do the talking first.
+            if _user_msg_count <= 10:
+                system_prompt += (
+                    f"\n\nEARLY CONVERSATION RULE (mandatory, message {_user_msg_count} of the first 10): "
+                    f"This is the very beginning of the chat. Your ONLY goal right now is to make "
+                    f"the person feel seen and to show genuine curiosity about them. "
+                    f"Write MAX 1-2 short sentences. "
+                    f"Do NOT mention content, packages, videos, photos, links, offers, or anything you sell. "
+                    f"Do NOT tease, hint at, or imply that you have content to sell. "
+                    f"Just respond naturally to what they said and ask ONE simple question about them "
+                    f"(their day, mood, where they're from, what they're up to — anything human). "
+                    f"Tone: warm, casual, flirty if natural, but NOT pushy. "
+                    f"Think: how would you text a stranger you just matched with on an app?"
+                )
+
             # ── Hard payment rule: NEVER ask for email or PayPal address ──────
             # Always injected; strengthened if system_settings.never_ask_for_email is True
             system_prompt += (
