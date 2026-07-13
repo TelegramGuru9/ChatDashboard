@@ -498,10 +498,13 @@ def _detect_sales_intent(
                 matched_pkg, matched_idx = pkg, i
                 break
     if not matched_pkg:
+        # Ordinal matching — only when the word appears NEXT TO "paket/package/option"
+        # to avoid false-positives like "das erste Delfinrudel" or "das erste Mal"
+        # triggering a package send in a completely unrelated conversation.
         _ORDS = [
-            ["das erste", "ersten", "first", "1st", "paket eins"],
-            ["das zweite", "zweiten", "second", "2nd", "paket zwei"],
-            ["das dritte", "dritten", "third", "3rd", "paket drei"],
+            ["paket eins", "paket 1", "das erste paket", "package one", "option eins"],
+            ["paket zwei", "paket 2", "das zweite paket", "package two", "option zwei"],
+            ["paket drei", "paket 3", "das dritte paket", "package three", "option drei"],
         ]
         for i, ords in enumerate(_ORDS):
             if i < len(packages) and any(o in t for o in ords):
@@ -1791,7 +1794,17 @@ class MessageProcessor:
             system_prompt += (
                 f"\n\nWRITING STYLE — GHOST MODE (mandatory): "
                 f"Write exactly like {_p_name} texts — short, direct, real. "
-                f"BANNED PHRASES — ENGLISH (never use): "
+                f"\n\nONE THOUGHT RULE (critical): Each reply = ONE idea only. "
+                f"Do NOT chain: reaction + explanation + recommendation + question all in one message. "
+                f"Pick the ONE most natural thing to say, say it, stop. "
+                f"BAD: 'mindhunter musst du schauen, geht um fbi profiler die serienkiller interviewen, "
+                f"richtig spannend ist von david fincher, mega gut gemacht. bist du eher sportlich oder chill?' "
+                f"GOOD: 'mindhunter ist krass, schau das unbedingt 🔥' "
+                f"or on a separate turn: 'bist du eher sportlich oder chill?' "
+                f"Real people send SHORT bursts — one thought, then wait. Never pack multiple "
+                f"clauses or topics into one message. If you used a comma to chain more than "
+                f"two thoughts → cut everything after the second one. "
+                f"\n\nBANNED PHRASES — ENGLISH (never use): "
                 f"'Certainly', 'Of course', 'I\\'d be happy to', 'Great question', "
                 f"'Absolutely', 'Feel free to', 'Don\\'t hesitate', 'I appreciate', "
                 f"'Thank you for reaching out', 'Let me know if you need anything', "
@@ -1804,7 +1817,6 @@ class MessageProcessor:
                 f"'Was hat dich angesprochen', 'Was hat dich dazu gebracht', "
                 f"'Wie kann ich dir helfen', 'Gerne', 'Kein Problem'. "
                 f"No corporate tone, no customer-service tone, no formal openers. "
-                f"No sales-funnel questions ('what attracted you', 'what made you click'). "
                 f"Write like you\\'re texting a person you just matched with — "
                 f"curious about THEM, not about what they want to buy."
             )
