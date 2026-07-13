@@ -1820,11 +1820,19 @@ class MessageProcessor:
                 f"text='{incoming_text[:60]}{'...' if len(incoming_text) > 60 else ''}'"
             )
 
-            # ── package_interest → send the configured package menu directly ─
+            # ── package_interest → send preset list_message, fall back to menu ─
             # "was kostet", "deine pakete", "what do you have", etc.
-            # Bypasses Claude entirely — sends the real menu from config.
+            # Bypasses Claude entirely. Always uses the admin-configured list_message
+            # text if one is set — never the hardcoded generated menu.
             if _si == "package_interest" and _active_pkgs and system_settings.get("use_package_keywords", True):
-                menu_text = self._build_package_menu_text(_active_pkgs)
+                # Prefer the configured list_message text (set in admin panel).
+                # Only fall back to the auto-generated menu if no text is configured.
+                if _list_active and _list_msg_text:
+                    menu_text = _list_msg_text
+                    logger.info(f"[sales-flow] package_interest → using configured list_message verbatim")
+                else:
+                    menu_text = self._build_package_menu_text(_active_pkgs)
+                    logger.info(f"[sales-flow] package_interest → no list_message configured, using auto menu")
                 try:
                     from telethon.tl.functions.messages import SetTypingRequest
                     from telethon.tl.types import SendMessageTypingAction

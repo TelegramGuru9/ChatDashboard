@@ -190,8 +190,10 @@ function InboxContent() {
       if (append) {
         if (data.length > 0) {
           setMessages(prev => {
-            const ids = new Set(prev.map(m => m.id));
-            const fresh = data.filter(m => !ids.has(m.id));
+            // Stringify both sides — SSE stores ids as strings, API returns numbers.
+            // Without this, ids.has(123) fails when the Set contains "123".
+            const ids = new Set(prev.map(m => String(m.id)));
+            const fresh = data.filter(m => !ids.has(String(m.id)));
             return fresh.length > 0 ? [...prev, ...fresh] : prev;
           });
         }
