@@ -1703,6 +1703,51 @@ class MessageProcessor:
                         # Note: no cash alarm for list_sent — alarm fires only when a package is sent
                         return  # do not also call AI
 
+            # ── Compute mirror-style context from the actual incoming message ──
+            # These drive the STYLE BLOCK injected before the persona so they
+            # can't be overridden by persona writing examples.
+            _user_word_count = len(incoming_text.split())
+            _user_char_count = len(incoming_text)
+            _user_has_emoji  = bool(re.search(
+                r'[\U0001F000-\U0001FFFF\U00002600-\U000027BF\U0000FE00-\U0000FEFF'
+                r'\U00002702-\U000027B0\U0001F900-\U0001F9FF]',
+                incoming_text
+            ))
+            # Count how many of the last 4 bot messages ended with a question mark
+            _recent_bot_texts = [m.text or "" for m in recent
+                                 if m.direction == "outgoing" and m.text][-4:]
+            _recent_q_count   = sum(1 for t in _recent_bot_texts if t.strip().endswith("?"))
+            _force_no_question = _recent_q_count >= 2
+
+            # ── STYLE BLOCK: injected BEFORE the persona so it wins ────────────
+            if _user_word_count <= 4:
+                _len_rule = f"Their message was {_user_word_count} words. Reply in {_user_word_count}–{_user_word_count + 3} words MAX. Absolutely no longer."
+            elif _user_word_count <= 10:
+                _len_rule = f"Their message was {_user_word_count} words. Reply in at most {_user_word_count + 4} words. One short sentence only."
+            else:
+                _len_rule = "Reply in 1–2 short sentences. Match their length, never exceed it significantly."
+
+            _emoji_rule = (
+                "They used an emoji → you may use AT MOST 1, at the very end."
+                if _user_has_emoji else
+                "They used NO emoji → use ZERO emojis. None. Not even one."
+            )
+            _q_rule = (
+                "Do NOT end with a question. You have asked too many questions recently. React only."
+                if _force_no_question else
+                "Only add a question if it flows completely naturally. Many replies should have NO question at all."
+            )
+
+            _style_block = (
+                "STYLE RULES — ABSOLUTE (these override all persona instructions below):\n"
+                f"LENGTH: {_len_rule}\n"
+                f"EMOJI: {_emoji_rule}\n"
+                f"QUESTION: {_q_rule}\n"
+                "ENERGY: Match their energy exactly — never higher. No 'mega', 'krass', 'wow', 'omg', '!!'. "
+                "Casual reply to casual message. Flat is fine.\n"
+                "LEAD: React to what they said. Do not steer or lead. Let them drive the conversation.\n\n"
+            )
+
             # ── ABSOLUTE OUTPUT RULE — injected first, before everything else ──
             # This prevents internal reasoning / placeholder tokens from leaking
             # into the actual Telegram message sent to the user.
@@ -1718,6 +1763,7 @@ class MessageProcessor:
                 "or write any placeholder for it. "
                 "Do not write 'Internal Summary:', 'Action:', 'Language:', or any similar prefix. "
                 "Start directly with the conversational message text.\n\n"
+                + _style_block
                 + system_prompt
             )
 
@@ -1804,22 +1850,6 @@ class MessageProcessor:
                 f"Real people send SHORT bursts — one thought, then wait. Never pack multiple "
                 f"clauses or topics into one message. If you used a comma to chain more than "
                 f"two thoughts → cut everything after the second one. "
-                f"\n\nMIRROR RULE (mandatory): Match the other person's message length and energy exactly. "
-                f"If they write 3 words → you write 3-5 words. "
-                f"If they write one sentence → you write one sentence. "
-                f"If they write casually with typos/lowercase → stay equally casual. "
-                f"Never respond with more words than they used unless they wrote something long first. "
-                f"\n\nQUESTION RULE (mandatory): Do NOT ask a question in every message. "
-                f"Maximum one question every 2-3 replies. Many replies should be pure reactions "
-                f"with no question at all — just a comment, a laugh, a short observation. "
-                f"When you do ask, ask ONE simple question, never two. "
-                f"\n\nENERGY RULE (mandatory): Do not be enthusiastic by default. "
-                f"Match the actual mood of the conversation. "
-                f"BANNED energy words (never use unless the person used them first): "
-                f"'mega', 'krass', 'wow', 'omg', 'oh wow', 'das ist ja so cool', "
-                f"'wahnsinn', 'unglaublich', 'richtig spannend', 'mega gut'. "
-                f"React naturally — sometimes just 'haha ja' or 'echt?' is the right reply. "
-                f"Prefer reacting over leading. Let them drive the conversation. "
                 f"\n\nBANNED PHRASES — ENGLISH (never use): "
                 f"'Certainly', 'Of course', 'I\\'d be happy to', 'Great question', "
                 f"'Absolutely', 'Feel free to', 'Don\\'t hesitate', 'I appreciate', "
