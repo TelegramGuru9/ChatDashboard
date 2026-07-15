@@ -1397,6 +1397,82 @@ class MessageProcessor:
             import random
             return f"OFFER-{random.randint(1, 999999):06d}"
 
+    async def _send_package_list_delayed(
+        self,
+        tg_client,
+        telegram_id: int,
+        user_id: UUID,
+        creator_id: Optional[str],
+        active_pkgs: list,
+        list_active: bool,
+        list_msg_text: str,
+        persona_data: dict,
+        system_settings: dict,
+        automessages: list,
+        delay_secs: float = 3.0,
+    ) -> None:
+        """
+        Wait `delay_secs` then send the package list as a follow-up message.
+        Used by the teaser-loop guard: when Claude writes a "hang on / coming right up"
+        phrase, this fires automatically so the bot actually delivers what it promised.
+        """
+        try:
+            await asyncio.sleep(delay_secs)
+            menu_text = list_msg_text if (list_active and list_msg_text) \
+                        else self._build_package_menu_text(active_pkgs)
+            try:
+                from telethon.tl.functions.messages import SetTypingRequest
+                from telethon.tl.types import SendMessageTypingAction
+                await tg_client.client(
+                    SetTypingRequest(peer=telegram_id, action=SendMessageTypingAction())
+                )
+            except Exception:
+                pass
+            await _human_typing_delay(menu_text, persona_data)
+            _t_id = await self._send_with_retry(tg_client, telegram_id, menu_text)
+            if _t_id:
+                async with db_manager.get_session() as _ts:
+                    _ts.add(Message(
+                        message_id=_t_id, user_id=user_id, text=menu_text,
+                        direction="outgoing", has_media=False, is_ai_generated=False,
+                        extra_data={"source": "teaser_followup"},
+                        created_at=_naive_utc(),
+                    ))
+                    if system_settings.get("auto_status_change", True):
+                        _t_u_res = await _ts.execute(select(User).where(User.id == user_id))
+                        _t_u = _t_u_res.scalars().first()
+                        if _t_u:
+                            _t_ex = dict(_t_u.extra_data or {})
+                            if _t_ex.get("lead_label") not in ("HOT", "BUYER"):
+                                _t_ex["lead_label"] = "WARM"
+                            _t_u.extra_data = _t_ex
+                    await _ts.commit()
+                try:
+                    import main as _main
+                    _main._broadcast_new_message(str(user_id), {
+                        "id": str(_t_id), "text": menu_text,
+                        "direction": "outgoing", "is_ai_generated": False,
+                        "created_at": _naive_utc().isoformat(),
+                    })
+                except Exception:
+                    pass
+                asyncio.create_task(self._update_lead_funnel(user_id, "price_inquiry"))
+                # Fire after_package_sent automessages
+                await self._fire_automessages(
+                    "after_list_sent", automessages, tg_client, telegram_id, user_id, persona_data
+                )
+                self._log_action(
+                    "send_pkg_list_teaser", user_id, telegram_id,
+                    "teaser_guard", "success", f"packages={len(active_pkgs)}"
+                )
+            else:
+                self._log_action(
+                    "send_pkg_list_teaser", user_id, telegram_id,
+                    "teaser_guard", "failed", "send_with_retry returned None"
+                )
+        except Exception as exc:
+            logger.error(f"[teaser-guard] _send_package_list_delayed failed for tg={telegram_id}: {exc}")
+
     def _resolve_tg_client(self, creator_id: Optional[str]):
         """Return the right TelegramClientManager for this creator."""
         if creator_id:
@@ -1601,6 +1677,81 @@ class MessageProcessor:
                     return  # configured welcome message sent — no AI
                 # else fall through to AI persona reply
 
+            # ── Positive hint response: if the bot recently dropped a content hint
+            # and the user responds with interest → send the package list immediately.
+            # This enables context-aware package delivery without relying on sales keywords.
+            if not _is_first_message and _active_pkgs and system_settings.get("use_package_keywords", True):
+                _hint_check_msgs = [m for m in recent[-6:] if m.direction == "outgoing" and m.text]
+                # Matches natural ways a creator might drop a hint about new content
+                _HINT_DETECT_RE = re.compile(
+                    r'(hab.*aufgenommen|hab.*gedreht|hab gerade.*gemacht|just.*shot|just.*filmed|'
+                    r'gerade was|hab da was|was geiles gemacht|etwas gedreht|kurz was gedreht|'
+                    r'falls du.*neugierig|want to see|willst du.*sehen|hab was für dich|'
+                    r'gerade fertig|frisch gedreht|frisch aufgenommen)',
+                    re.IGNORECASE
+                )
+                _recent_bot_was_hint = any(
+                    _HINT_DETECT_RE.search(m.text) for m in _hint_check_msgs
+                )
+                if _recent_bot_was_hint:
+                    _POSITIVE_RESPONSE = [
+                        "ja", "klar", "zeig", "zeig mal", "gerne", "yes", "ok", "okay",
+                        "auf jeden", "why not", "👀", "🔥", "😏", "😍", "sicher", "natürlich",
+                        "unbedingt", "auf jeden fall", "show me", "let's see", "lass sehen",
+                        "immer", "jetzt", "schick", "los", "bitte", "please", "yep", "yup",
+                        "sure", "nice", "wow", "omg", "wirklich", "echt", "lol ja",
+                    ]
+                    _inc_lower_hint = incoming_text.lower()
+                    if any(r in _inc_lower_hint for r in _POSITIVE_RESPONSE):
+                        logger.info(
+                            f"[hint-response] positive reply to content hint → "
+                            f"sending package list for tg={telegram_id}"
+                        )
+                        _hint_menu = _list_msg_text if (_list_active and _list_msg_text) \
+                                     else self._build_package_menu_text(_active_pkgs)
+                        try:
+                            from telethon.tl.functions.messages import SetTypingRequest
+                            from telethon.tl.types import SendMessageTypingAction
+                            await tg_client.client(
+                                SetTypingRequest(peer=telegram_id, action=SendMessageTypingAction())
+                            )
+                        except Exception:
+                            pass
+                        await _human_typing_delay(_hint_menu, persona_data)
+                        _hint_tg_id = await self._send_with_retry(tg_client, telegram_id, _hint_menu)
+                        if _hint_tg_id:
+                            async with db_manager.get_session() as _hs:
+                                _hs.add(Message(
+                                    message_id=_hint_tg_id, user_id=user_id, text=_hint_menu,
+                                    direction="outgoing", has_media=False, is_ai_generated=False,
+                                    extra_data={"source": "hint_response", "intent": "hint_positive"},
+                                    created_at=_naive_utc(),
+                                ))
+                                if system_settings.get("auto_status_change", True):
+                                    _h_u_res = await _hs.execute(select(User).where(User.id == user_id))
+                                    _h_u = _h_u_res.scalars().first()
+                                    if _h_u:
+                                        _h_ex = dict(_h_u.extra_data or {})
+                                        if _h_ex.get("lead_label") not in ("HOT", "BUYER"):
+                                            _h_ex["lead_label"] = "WARM"
+                                        _h_u.extra_data = _h_ex
+                                await _hs.commit()
+                            try:
+                                import main as _main
+                                _main._broadcast_new_message(str(user_id), {
+                                    "id": str(_hint_tg_id), "text": _hint_menu,
+                                    "direction": "outgoing", "is_ai_generated": False,
+                                    "created_at": _naive_utc().isoformat(),
+                                })
+                            except Exception:
+                                pass
+                            asyncio.create_task(self._update_lead_funnel(user_id, "price_inquiry"))
+                            self._log_action(
+                                "send_pkg_list_hint", user_id, telegram_id,
+                                "hint_response", "success", f"packages={len(_active_pkgs)}"
+                            )
+                        return  # package list sent — skip keyword checks and AI
+
             if system_settings.get("use_package_keywords", True) and not _is_first_message:
                 _inc_lower = incoming_text.lower()
 
@@ -1776,24 +1927,50 @@ class MessageProcessor:
                     f"Count carefully. If you are about to write more, stop after sentence {max_sents_cfg}."
                 )
 
-            # ── Early-conversation rule: no sales push in first 10 messages ────
-            # The opening exchange must feel like a real person texting, not a sales pitch.
-            # Keep it short, warm, and curious — let the user do the talking first.
-            if _user_msg_count <= 10:
+            # ── Early-conversation rule: 3-phase approach ─────────────────────
+            # Phase 1 (msgs 1-2):  Pure chat. Zero sales. Build rapport first.
+            # Phase 2 (msgs 3-8):  Drop ONE natural hint about content if not done yet.
+            # Phase 3 (msgs 9+):   No restriction (hint already sent, PACKAGE RULE covers the rest).
+            _recent_all_bot = [m.text or "" for m in recent if m.direction == "outgoing" and m.text]
+            _HINT_SENT_RE = re.compile(
+                r'(hab.*aufgenommen|hab.*gedreht|hab gerade.*gemacht|just.*shot|just.*filmed|'
+                r'gerade was|hab da was|was geiles gemacht|etwas gedreht|kurz was gedreht|'
+                r'falls du.*neugierig|want to see|willst du.*sehen|hab was für dich|'
+                r'gerade fertig|frisch gedreht|frisch aufgenommen)',
+                re.IGNORECASE
+            )
+            _hint_was_sent = any(_HINT_SENT_RE.search(t) for t in _recent_all_bot[-8:])
+
+            if _user_msg_count <= 2:
                 system_prompt += (
                     f"\n\nEARLY CONVERSATION RULE (mandatory, message {_user_msg_count} of the first 10): "
-                    f"Early stage — your ONLY job is to make the person feel seen. "
+                    f"Very early — your ONLY job is to make the person feel seen. "
                     f"MAX 1-2 short sentences, lowercase. "
-                    f"FORBIDDEN right now: mentioning content, packages, videos, photos, offers, "
-                    f"links, Snapchat, OnlyFans, or anything you sell. "
-                    f"ALSO FORBIDDEN: sales-discovery questions like 'was hat dich angesprochen', "
-                    f"'was hat dich hierher gebracht', 'wie bist du auf mich gekommen', "
-                    f"'was interessiert dich', or ANY question about WHY they're here or what they want. "
-                    f"WHAT TO DO INSTEAD: react to exactly what they wrote, then ask ONE relaxed "
-                    f"personal question about their life, day, mood, or personality. "
-                    f"BAD EXAMPLE: 'freut mich dass du den weg hierher gefunden hast! was hat dich angesprochen?' "
-                    f"GOOD EXAMPLE: 'haha hey 😄 wie läuft dein tag so?' or 'oh schön :) woher kommst du?' "
-                    f"Think: you just matched with someone cute — keep it light and real."
+                    f"FORBIDDEN: ANY mention of content, packages, videos, photos, offers, links, or selling. "
+                    f"FORBIDDEN questions: 'was hat dich angesprochen', 'was interessiert dich', "
+                    f"'wie bist du auf mich gekommen' — never ask why they're here. "
+                    f"WHAT TO DO: react to what they wrote, then ask ONE casual question about their day/life/mood. "
+                    f"Example: 'hey :) wie läuft dein tag?' or 'oh cool, woher kommst du?' "
+                    f"Think: cute match — keep it real and curious, not salesy."
+                )
+            elif _user_msg_count <= 8 and not _hint_was_sent:
+                system_prompt += (
+                    f"\n\nEARLY HINT RULE (message {_user_msg_count}): "
+                    f"The rapport is building — NOW drop ONE subtle, low-pressure hint that you create content. "
+                    f"Make it sound spontaneous, as if you just remembered. Weave it into your reply naturally. "
+                    f"EXAMPLES (adapt tone to match your persona): "
+                    f"'hab übrigens gerade was aufgenommen, falls du mal neugierig bist 😏' | "
+                    f"'btw hab heute noch was gedreht, wird heiß 🔥' | "
+                    f"'just finished filming something new... want to see? 😉' | "
+                    f"'gerade kurz was gedreht — ziemlich heiß geworden 😌' "
+                    f"After the hint: do NOT push for a purchase. Leave it open and let them respond. "
+                    f"STILL FORBIDDEN: listing packages by name, prices, payment links, or explicit descriptions."
+                )
+            elif _user_msg_count <= 10:
+                system_prompt += (
+                    f"\n\nEARLY CONVERSATION RULE (message {_user_msg_count}): "
+                    f"Keep the vibe relaxed. The hint was already dropped — no need to push. "
+                    f"Stay curious about them. React to what they said. No sales pressure."
                 )
 
             # ── Hard payment rule: NEVER ask for email or PayPal address ──────
@@ -2019,12 +2196,13 @@ class MessageProcessor:
                 if p_link:
                     # Get atomic order number for this creator
                     _order_num = await self._next_order_number(creator_id)
-                    # Priority: package_text → keyword pre-message → preview description → description
-                    # The `message` field is the verbatim text configured for keyword triggers
-                    # and doubles as the pre-message for AI-driven sales flows.
+                    # Priority: package_text → preview description → description
+                    # NOTE: `message` field is intentionally excluded here — it already
+                    # contains the full Stripe link text. Adding it to pay_msg (which ALSO
+                    # prepends an order number and appends a button) would create duplicate
+                    # links and broken formatting.
                     _pkg_text = (
                         _si_pkg.get("package_text", "").strip()
-                        or _si_pkg.get("message", "").strip()
                         or _si_pkg.get("package_preview_description", "").strip()
                         or _si_pkg.get("description", "").strip()
                     )
@@ -2123,9 +2301,10 @@ class MessageProcessor:
                     _sel_price = f"{_sel.get('price', '')} {_sel.get('currency', '€')}".strip()
                     if _sel_link:
                         _order_num2 = await self._next_order_number(creator_id)
+                        # Same rule as selecting_package: exclude `message` field to
+                        # avoid duplicate Stripe links + order number conflicts.
                         _sel_pkg_text = (
                             _sel.get("package_text", "").strip()
-                            or _sel.get("message", "").strip()
                             or _sel.get("package_preview_description", "").strip()
                             or _sel.get("description", "").strip()
                         )
@@ -2435,6 +2614,42 @@ class MessageProcessor:
             self._log_action("send_ai_reply", user_id, telegram_id, _si, "success",
                              f"tg_msg_id={tg_msg_id}")
             logger.info(f"AI stats: {self._stats}")
+
+            # ── Teaser loop guard ─────────────────────────────────────────────
+            # If Claude sent a "hang on" / "coming right up" phrase that promises
+            # content without actually delivering it, auto-send the package list
+            # 3 seconds later so the bot never gets stuck in an empty teaser loop.
+            _TEASER_RE = re.compile(
+                r'(hab da was|schick.{0,10}gleich|zeig.{0,10}gleich|warte ab|'
+                r'hab.{0,15}für dich|just a sec|coming right up|hang on|'
+                r'got something|schicke.{0,10}gleich|kommt gleich|bin gleich|'
+                r'gleich mehr|warte kurz|moment mal|check.{0,10}mal)',
+                re.IGNORECASE
+            )
+            if (
+                _TEASER_RE.search(ai_text)
+                and _active_pkgs
+                and system_settings.get("use_package_keywords", True)
+            ):
+                logger.info(
+                    f"[teaser-guard] teaser phrase detected → scheduling package list "
+                    f"for tg={telegram_id} in 3s"
+                )
+                asyncio.create_task(
+                    self._send_package_list_delayed(
+                        tg_client=tg_client,
+                        telegram_id=telegram_id,
+                        user_id=user_id,
+                        creator_id=creator_id,
+                        active_pkgs=_active_pkgs,
+                        list_active=_list_active,
+                        list_msg_text=_list_msg_text,
+                        persona_data=persona_data,
+                        system_settings=system_settings,
+                        automessages=_automessages,
+                        delay_secs=3.0,
+                    )
+                )
 
         except Exception as e:
             logger.error(f"AI response failed for tg_id={telegram_id}: {e}", exc_info=True)
