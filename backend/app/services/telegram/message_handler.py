@@ -708,6 +708,11 @@ class MessageProcessor:
         self._stats = {"processed": 0, "failed": 0, "ai_responses": 0}
         self.debouncer = MessageDebouncer()
         self._action_lock = _ActionLock()
+        # Cooldown: tracks the last time a package list was sent per user_id.
+        # Used to prevent double-sends when multiple code paths (teaser guard +
+        # hint-positive response) both try to send the list for the same turn.
+        self._pkg_list_cooldown: dict = {}  # str(user_id) -> float (monotonic timestamp)
+        self._PKG_LIST_COOLDOWN_SECS = 30
 
     async def process_incoming_message(self, event_data: Dict[str, Any]) -> bool:
         try:
@@ -1415,9 +1420,22 @@ class MessageProcessor:
         Wait `delay_secs` then send the package list as a follow-up message.
         Used by the teaser-loop guard: when Claude writes a "hang on / coming right up"
         phrase, this fires automatically so the bot actually delivers what it promised.
+
+        Cooldown guard: if the hint-positive response detection (or any other code path)
+        already sent the package list while this task was sleeping, we skip the send to
+        prevent a duplicate message in the user's chat.
         """
         try:
             await asyncio.sleep(delay_secs)
+            # Cooldown check — another code path may have already sent the list
+            _last_sent = self._pkg_list_cooldown.get(str(user_id), 0)
+            _now = asyncio.get_event_loop().time()
+            if _now - _last_sent < self._PKG_LIST_COOLDOWN_SECS:
+                logger.info(
+                    f"[teaser-guard] package list already sent {_now - _last_sent:.1f}s ago "
+                    f"— skipping duplicate for tg={telegram_id}"
+                )
+                return
             menu_text = list_msg_text if (list_active and list_msg_text) \
                         else self._build_package_menu_text(active_pkgs)
             try:
@@ -1432,12 +1450,13 @@ class MessageProcessor:
             _t_id = await self._send_with_retry(tg_client, telegram_id, menu_text)
             if _t_id:
                 async with db_manager.get_session() as _ts:
-                    _ts.add(Message(
+                    _t_msg = Message(
                         message_id=_t_id, user_id=user_id, text=menu_text,
                         direction="outgoing", has_media=False, is_ai_generated=False,
                         extra_data={"source": "teaser_followup"},
                         created_at=_naive_utc(),
-                    ))
+                    )
+                    _ts.add(_t_msg)
                     if system_settings.get("auto_status_change", True):
                         _t_u_res = await _ts.execute(select(User).where(User.id == user_id))
                         _t_u = _t_u_res.scalars().first()
@@ -1447,17 +1466,21 @@ class MessageProcessor:
                                 _t_ex["lead_label"] = "WARM"
                             _t_u.extra_data = _t_ex
                     await _ts.commit()
+                    await _ts.refresh(_t_msg)
+                    _t_uuid = str(_t_msg.id)
+                self._pkg_list_cooldown[str(user_id)] = asyncio.get_event_loop().time()
                 try:
                     import main as _main
                     _main._broadcast_new_message(str(user_id), {
-                        "id": str(_t_id), "text": menu_text,
+                        "id": _t_uuid,          # DB UUID — matches history API
+                        "message_id": _t_id,    # Telegram int (reference)
+                        "text": menu_text,
                         "direction": "outgoing", "is_ai_generated": False,
                         "created_at": _naive_utc().isoformat(),
                     })
                 except Exception:
                     pass
                 asyncio.create_task(self._update_lead_funnel(user_id, "price_inquiry"))
-                # Fire after_package_sent automessages
                 await self._fire_automessages(
                     "after_list_sent", automessages, tg_client, telegram_id, user_id, persona_data
                 )
@@ -1721,12 +1744,13 @@ class MessageProcessor:
                         _hint_tg_id = await self._send_with_retry(tg_client, telegram_id, _hint_menu)
                         if _hint_tg_id:
                             async with db_manager.get_session() as _hs:
-                                _hs.add(Message(
+                                _hint_msg = Message(
                                     message_id=_hint_tg_id, user_id=user_id, text=_hint_menu,
                                     direction="outgoing", has_media=False, is_ai_generated=False,
                                     extra_data={"source": "hint_response", "intent": "hint_positive"},
                                     created_at=_naive_utc(),
-                                ))
+                                )
+                                _hs.add(_hint_msg)
                                 if system_settings.get("auto_status_change", True):
                                     _h_u_res = await _hs.execute(select(User).where(User.id == user_id))
                                     _h_u = _h_u_res.scalars().first()
@@ -1736,10 +1760,16 @@ class MessageProcessor:
                                             _h_ex["lead_label"] = "WARM"
                                         _h_u.extra_data = _h_ex
                                 await _hs.commit()
+                                await _hs.refresh(_hint_msg)
+                                _hint_uuid = str(_hint_msg.id)
+                            # Mark cooldown so teaser guard doesn't send a duplicate
+                            self._pkg_list_cooldown[str(user_id)] = asyncio.get_event_loop().time()
                             try:
                                 import main as _main
                                 _main._broadcast_new_message(str(user_id), {
-                                    "id": str(_hint_tg_id), "text": _hint_menu,
+                                    "id": _hint_uuid,           # DB UUID — matches history API
+                                    "message_id": _hint_tg_id,  # Telegram int (reference)
+                                    "text": _hint_menu,
                                     "direction": "outgoing", "is_ai_generated": False,
                                     "created_at": _naive_utc().isoformat(),
                                 })
@@ -1869,12 +1899,13 @@ class MessageProcessor:
                     _bl_tg_id = await self._send_with_retry(tg_client, telegram_id, _browse_list)
                     if _bl_tg_id:
                         async with db_manager.get_session() as _bls:
-                            _bls.add(Message(
+                            _bl_msg = Message(
                                 message_id=_bl_tg_id, user_id=user_id, text=_browse_list,
                                 direction="outgoing", has_media=False, is_ai_generated=False,
                                 extra_data={"source": "keyword_browse_list"},
                                 created_at=_naive_utc(),
-                            ))
+                            )
+                            _bls.add(_bl_msg)
                             if system_settings.get("auto_status_change", True):
                                 _bl_u_res = await _bls.execute(select(User).where(User.id == user_id))
                                 _bl_u = _bl_u_res.scalars().first()
@@ -1884,10 +1915,15 @@ class MessageProcessor:
                                         _bl_ex["lead_label"] = "WARM"
                                     _bl_u.extra_data = _bl_ex
                             await _bls.commit()
+                            await _bls.refresh(_bl_msg)
+                            _bl_uuid = str(_bl_msg.id)
+                        self._pkg_list_cooldown[str(user_id)] = asyncio.get_event_loop().time()
                         try:
                             import main as _main
                             _main._broadcast_new_message(str(user_id), {
-                                "id": str(_bl_tg_id), "text": _browse_list,
+                                "id": _bl_uuid,            # DB UUID — matches history API
+                                "message_id": _bl_tg_id,   # Telegram int (reference)
+                                "text": _browse_list,
                                 "direction": "outgoing", "is_ai_generated": False,
                                 "created_at": _naive_utc().isoformat(),
                             })
