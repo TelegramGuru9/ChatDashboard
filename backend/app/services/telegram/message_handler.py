@@ -1755,11 +1755,52 @@ class MessageProcessor:
             if system_settings.get("use_package_keywords", True) and not _is_first_message:
                 _inc_lower = incoming_text.lower()
 
-                # 1. Per-package keyword → send that package's message verbatim
+                # 1. Per-package keyword → send that package's message verbatim,
+                # BUT ONLY when the user shows clear selection intent alongside the keyword.
+                # "Hast du geile Videos?" → keyword match, but no selection intent → list first.
+                # "ich will die Videos" / "Paket 1" → keyword + intent → send package directly.
+                # This prevents generic curiosity phrases from triggering a purchase message
+                # before the user has seen the options and chosen one.
+                _SELECTION_INTENT_SIGNALS = [
+                    # German — explicit buy / selection
+                    "ich nehme", "ich will", "nehme ich", "das nehme", "ich hätte gerne",
+                    "ich kaufe", "ich bestelle", "ich möchte das", "nehm ich", "kauf ich",
+                    "möchte ich", "will ich haben", "will ich nehmen", "ich möchte kaufen",
+                    "gib mir", "schick mir paket", "schick mir das",
+                    # English — explicit buy / selection
+                    "i'll take", "i want this", "i want that", "i'll go with",
+                    "give me package", "i'd like this", "i want to buy",
+                    # Package identifiers — ordinal or numbered
+                    "paket 1", "paket 2", "paket 3", "paket 4", "paket 5",
+                    "package 1", "package 2", "package 3",
+                    "das erste paket", "das zweite paket", "das dritte paket",
+                    "option 1", "option 2", "option 3",
+                ]
+                # Also check if any package NAME is mentioned (dynamic)
+                _pkg_names_lower = [
+                    (p.get("name") or "").lower().strip()
+                    for p in _active_pkgs if (p.get("name") or "").strip()
+                ]
+
+                _has_selection_intent = (
+                    any(sig in _inc_lower for sig in _SELECTION_INTENT_SIGNALS)
+                    or any(name and name in _inc_lower for name in _pkg_names_lower)
+                )
+
+                _keyword_matched_pkg = None   # track a keyword match without intent
                 for _pkg in _active_pkgs:
                     _pkg_msg = str(_pkg.get("message", "")).strip()
                     _pkg_kws = [k.strip().lower() for k in str(_pkg.get("keywords", "")).split(",") if k.strip()]
                     if _pkg_kws and _pkg_msg and any(k in _inc_lower for k in _pkg_kws):
+                        if not _has_selection_intent:
+                            # Keyword matched but user is just browsing → remember this
+                            # and fall through to the list send below.
+                            _keyword_matched_pkg = _pkg
+                            logger.info(
+                                f"[pkg-keyword] keyword match for '{_pkg.get('name', '')}' but "
+                                f"no selection intent → showing list first for tg={telegram_id}"
+                            )
+                            break  # stop looping; will be handled after the loop
                         await _human_typing_delay(_pkg_msg, persona_data)
                         _ptid = await self._send_with_retry(tg_client, telegram_id, _pkg_msg)
                         if _ptid:
@@ -1810,6 +1851,54 @@ class MessageProcessor:
                             )
                         )
                         return  # do not also call AI
+
+                # 1b. Keyword matched but no selection intent → send list first
+                # (user is browsing / curious, not ready to buy a specific package yet)
+                if _keyword_matched_pkg and _active_pkgs:
+                    _browse_list = _list_msg_text if (_list_active and _list_msg_text) \
+                                   else self._build_package_menu_text(_active_pkgs)
+                    try:
+                        from telethon.tl.functions.messages import SetTypingRequest
+                        from telethon.tl.types import SendMessageTypingAction
+                        await tg_client.client(
+                            SetTypingRequest(peer=telegram_id, action=SendMessageTypingAction())
+                        )
+                    except Exception:
+                        pass
+                    await _human_typing_delay(_browse_list, persona_data)
+                    _bl_tg_id = await self._send_with_retry(tg_client, telegram_id, _browse_list)
+                    if _bl_tg_id:
+                        async with db_manager.get_session() as _bls:
+                            _bls.add(Message(
+                                message_id=_bl_tg_id, user_id=user_id, text=_browse_list,
+                                direction="outgoing", has_media=False, is_ai_generated=False,
+                                extra_data={"source": "keyword_browse_list"},
+                                created_at=_naive_utc(),
+                            ))
+                            if system_settings.get("auto_status_change", True):
+                                _bl_u_res = await _bls.execute(select(User).where(User.id == user_id))
+                                _bl_u = _bl_u_res.scalars().first()
+                                if _bl_u:
+                                    _bl_ex = dict(_bl_u.extra_data or {})
+                                    if _bl_ex.get("lead_label") not in ("HOT", "BUYER"):
+                                        _bl_ex["lead_label"] = "WARM"
+                                    _bl_u.extra_data = _bl_ex
+                            await _bls.commit()
+                        try:
+                            import main as _main
+                            _main._broadcast_new_message(str(user_id), {
+                                "id": str(_bl_tg_id), "text": _browse_list,
+                                "direction": "outgoing", "is_ai_generated": False,
+                                "created_at": _naive_utc().isoformat(),
+                            })
+                        except Exception:
+                            pass
+                        asyncio.create_task(self._update_lead_funnel(user_id, "price_inquiry"))
+                        self._log_action(
+                            "send_browse_list", user_id, telegram_id, "keyword_browse", "success",
+                            f"triggered_by_pkg={_keyword_matched_pkg.get('name', '')}"
+                        )
+                    return  # list sent — no AI
 
                 # 2. List-message keyword → send list_message verbatim (keyword-only, no threshold)
                 if _list_active and _list_msg_text and _list_keywords:
